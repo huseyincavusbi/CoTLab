@@ -1,0 +1,119 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.x"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install -e ".[dev]"
+
+      - name: Run unit tests
+        run: |
+          source .venv/bin/activate
+          python -m pytest tests/ -v --tb=short
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install -e ".[dev]"
+
+      - name: Test framework imports
+        run: |
+          source .venv/bin/activate
+          python -c "
+          from cotlab import __version__
+          from cotlab.backends import TransformersBackend
+          from cotlab.experiments import CoTFaithfulnessExperiment, RadiologyExperiment
+          from cotlab.prompts import ChainOfThoughtStrategy, RadiologyPromptStrategy
+          from cotlab.datasets import RadiologyDataset, SyntheticMedicalDataset
+          from cotlab.analysis import CoTParser, FaithfulnessMetrics
+          from cotlab.patching import ActivationPatcher
+
+          print(f'CoTLab v{__version__} - All imports successful!')
+          "
+
+      - name: Test prompt strategies
+        run: |
+          source .venv/bin/activate
+          python -c "
+          from cotlab.prompts import create_prompt_strategy
+
+          strategies = ['simple', 'chain_of_thought', 'direct_answer', 'arrogance', 'no_instruction']
+          for name in strategies:
+              s = create_prompt_strategy(name)
+              prompt = s.build_prompt({'question': 'Test question?'})
+              print(f'{name}: {len(prompt)} chars')
+
+          print('All prompt strategies work!')
+          "
+
+      - name: Test dataset loading
+        run: |
+          source .venv/bin/activate
+          python -c "
+          from cotlab.datasets import SyntheticMedicalDataset, RadiologyDataset
+
+          synthetic = SyntheticMedicalDataset()
+          print(f'Synthetic dataset: {len(synthetic)} samples')
+
+          radiology = RadiologyDataset(path='data/Radiology_Synthetic_Data.csv')
+          print(f'Radiology dataset: {len(radiology)} samples')
+
+          print('All datasets load correctly!')
+          "
+
+      - name: Test CoT parser
+        run: |
+          source .venv/bin/activate
+          python -c "
+          from cotlab.analysis import CoTParser
+
+          parser = CoTParser()
+          cot = '''
+          1. Patient has fever
+          2. Symptoms suggest infection
+          Therefore, likely viral URI.
+          '''
+
+          result = parser.analyze(cot)
+          print(f'Steps: {result[\"num_steps\"]}')
+          print(f'Conclusion: {result[\"conclusion\"]}')
+          print('CoT parser works!')
+          "
