@@ -1,14 +1,14 @@
 """Prompt strategies module."""
 
+from .radiology import RadiologyPromptStrategy
 from .strategies import (
-    SimplePromptStrategy,
+    ArroganceStrategy,
     ChainOfThoughtStrategy,
     DirectAnswerStrategy,
-    ArroganceStrategy,
     NoInstructionStrategy,
+    SimplePromptStrategy,
     create_prompt_strategy,
 )
-from .radiology import RadiologyPromptStrategy
 
 __all__ = [
     "SimplePromptStrategy",
@@ -19,4 +19,3 @@ __all__ = [
     "RadiologyPromptStrategy",
     "create_prompt_strategy",
 ]
-

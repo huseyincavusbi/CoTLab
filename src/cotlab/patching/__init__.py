@@ -1,15 +1,15 @@
 """Activation patching module for causal interventions."""
 
-from .hooks import HookManager
 from .cache import ActivationCache
-from .patcher import ActivationPatcher, PatchingResult
+from .hooks import HookManager
 from .interventions import (
-    InterventionType,
     Intervention,
-    PatchingExperimentSpec,
+    InterventionType,
     LayerImportance,
+    PatchingExperimentSpec,
     ThoughtAnchor,
 )
+from .patcher import ActivationPatcher, PatchingResult
 
 __all__ = [
     "HookManager",

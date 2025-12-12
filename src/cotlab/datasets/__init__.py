@@ -1,11 +1,11 @@
 """Datasets module."""
 
 from .loaders import (
-    Sample,
     BaseDataset,
-    RadiologyDataset,
-    SyntheticMedicalDataset,
     PatchingPairsDataset,
+    RadiologyDataset,
+    Sample,
+    SyntheticMedicalDataset,
 )
 
 __all__ = [

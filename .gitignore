@@ -1,4 +1,4 @@
-# Virtual environments (at root only)
+# Virtual environments
 /cot/
 /cotlab/
 /.venv/

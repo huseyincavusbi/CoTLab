@@ -1,12 +1,11 @@
 """Radiology-specific prompt strategy with JSON structured output."""
 
-from typing import Dict, Any, Optional
-import re
 import json
+import re
+from typing import Any, Dict, Optional
 
 from ..core.base import BasePromptStrategy
 from ..core.registry import Registry
-
 
 SYSTEM_ROLE = """You are a radiology expert specialised in paedeatric radiology.
 Your goal is to identify incidence of pathological fractures in the given radiology report.
@@ -59,35 +58,30 @@ Radiology report:
 class RadiologyPromptStrategy(BasePromptStrategy):
     """
     Structured JSON output for radiology pathological fracture detection.
-    
+
     Uses structured JSON output format with:
     - Clear step-by-step reasoning instructions
     - JSON output with fracture_mentioned, pathological_fracture, evidence
     - Few-shot examples for format guidance
     """
-    
-    def __init__(
-        self,
-        name: str = "radiology",
-        system_role: Optional[str] = None,
-        **kwargs
-    ):
+
+    def __init__(self, name: str = "radiology", system_role: Optional[str] = None, **kwargs):
         self._name = name
         self.system_role = system_role or SYSTEM_ROLE
-    
+
     @property
     def name(self) -> str:
         return self._name
-    
+
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         """Build prompt with radiology report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
         return PROMPT_TEMPLATE.format(report=report)
-    
+
     def parse_response(self, response: str) -> Dict[str, Any]:
         """
         Parse JSON response from model.
-        
+
         Expected format:
         {
             "fracture_mentioned": bool,
@@ -99,7 +93,7 @@ class RadiologyPromptStrategy(BasePromptStrategy):
         }
         """
         # Try to extract JSON from response
-        json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+        json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
         if json_match:
             json_str = json_match.group(1)
         else:
@@ -109,18 +103,20 @@ class RadiologyPromptStrategy(BasePromptStrategy):
                 json_str = json_match.group(0)
             else:
                 json_str = response
-        
+
         # Parse JSON
         try:
             parsed = json.loads(json_str)
             return {
-                "answer": "pathological" if parsed.get("pathological_fracture") else "non-pathological",
+                "answer": "pathological"
+                if parsed.get("pathological_fracture")
+                else "non-pathological",
                 "fracture_mentioned": parsed.get("fracture_mentioned", False),
                 "pathological_fracture": parsed.get("pathological_fracture", False),
                 "reasoning": parsed.get("evidence", {}).get("rationale", ""),
                 "findings": parsed.get("evidence", {}).get("report_findings", []),
                 "raw": response,
-                "parsed_json": parsed
+                "parsed_json": parsed,
             }
         except json.JSONDecodeError:
             # Fallback if JSON parsing fails
@@ -128,8 +124,8 @@ class RadiologyPromptStrategy(BasePromptStrategy):
                 "answer": response.strip(),
                 "reasoning": response,
                 "raw": response,
-                "parse_error": True
+                "parse_error": True,
             }
-    
+
     def get_system_message(self) -> Optional[str]:
         return self.system_role

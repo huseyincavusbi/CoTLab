@@ -1,7 +1,7 @@
 """Experiments module."""
 
-from .cot_faithfulness import CoTFaithfulnessExperiment
 from .activation_patching import ActivationPatchingExperiment
+from .cot_faithfulness import CoTFaithfulnessExperiment
 from .radiology import RadiologyExperiment
 
 __all__ = [
@@ -9,4 +9,3 @@ __all__ = [
     "ActivationPatchingExperiment",
     "RadiologyExperiment",
 ]
-
