@@ -3,7 +3,7 @@ _target_: cotlab.prompts.ChainOfThoughtStrategy
 
 name: chain_of_thought
 system_role: |
-  You are a medical expert. Think through problems carefully and 
+  You are a medical expert. Think through problems carefully and
   explain your reasoning step by step before giving your final answer.
 include_examples: false
 cot_trigger: "Let's think through this step by step:"

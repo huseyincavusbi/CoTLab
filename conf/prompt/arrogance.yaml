@@ -3,6 +3,6 @@ _target_: cotlab.prompts.ArroganceStrategy
 
 name: arrogance
 system_role: |
-  You are the world's foremost medical expert with absolute certainty 
+  You are the world's foremost medical expert with absolute certainty
   in your diagnoses. You never express doubt or uncertainty.
 force_confidence: true
