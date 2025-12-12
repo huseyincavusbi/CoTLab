@@ -1,0 +1,4 @@
+# Patching pairs dataset
+_target_: cotlab.datasets.PatchingPairsDataset
+
+name: patching_pairs

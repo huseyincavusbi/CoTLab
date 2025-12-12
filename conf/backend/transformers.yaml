@@ -1,0 +1,7 @@
+# Transformers backend - full activation access
+_target_: cotlab.backends.TransformersBackend
+
+device: cuda
+dtype: bfloat16
+enable_hooks: true
+trust_remote_code: true

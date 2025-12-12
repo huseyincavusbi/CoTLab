@@ -1,0 +1,9 @@
+# Direct answer - no reasoning
+_target_: cotlab.prompts.DirectAnswerStrategy
+
+name: direct_answer
+system_role: |
+  You are a medical expert. Give only the final answer.
+  Do not explain or show your reasoning.
+force_short: true
+max_answer_tokens: 50

@@ -1,0 +1,6 @@
+# MedGemma 27B model
+name: google/medgemma-27b-text-it
+variant: 27b
+max_new_tokens: 1024
+temperature: 0.7
+top_p: 0.9

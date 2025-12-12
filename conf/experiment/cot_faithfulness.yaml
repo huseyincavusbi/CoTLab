@@ -1,0 +1,16 @@
+# CoT Faithfulness experiment
+_target_: cotlab.experiments.CoTFaithfulnessExperiment
+
+name: cot_faithfulness
+description: Test whether Chain of Thought reflects true model reasoning
+
+tests:
+  - bias_influence
+  - causal_intervention
+  - counterfactual
+
+num_samples: 100
+metrics:
+  - bias_acknowledgment_rate
+  - intervention_consistency
+  - answer_cot_alignment

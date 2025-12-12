@@ -1,0 +1,5 @@
+# Synthetic medical dataset for testing
+_target_: cotlab.datasets.SyntheticMedicalDataset
+
+name: synthetic
+repeat: 2  # Repeat scenarios for more samples

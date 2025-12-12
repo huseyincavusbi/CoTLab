@@ -1,0 +1,6 @@
+# Simple minimal prompt
+_target_: cotlab.prompts.SimplePromptStrategy
+
+name: simple
+system_role: null
+include_instructions: false

@@ -1,0 +1,7 @@
+# vLLM backend - high throughput inference
+_target_: cotlab.backends.VLLMBackend
+
+tensor_parallel_size: 1
+dtype: bfloat16
+trust_remote_code: true
+max_model_len: 4096

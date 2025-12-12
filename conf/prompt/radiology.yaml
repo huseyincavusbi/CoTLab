@@ -1,0 +1,4 @@
+# Radiology pathological fracture detection prompt
+_target_: cotlab.prompts.RadiologyPromptStrategy
+
+name: radiology

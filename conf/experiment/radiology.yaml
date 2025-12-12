@@ -1,0 +1,6 @@
+# Radiology pathological fracture experiment
+_target_: cotlab.experiments.RadiologyExperiment
+
+name: radiology
+description: Pathological fracture detection from radiology reports
+num_samples: 50

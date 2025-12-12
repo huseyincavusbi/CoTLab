@@ -1,0 +1,7 @@
+# Radiology dataset from synthetic reports
+_target_: cotlab.datasets.RadiologyDataset
+
+name: radiology
+path: data/Radiology_Synthetic_Data.csv
+text_column: Synthetic
+label_column: Flag

@@ -1,0 +1,21 @@
+defaults:
+  - backend: transformers
+  - model: medgemma_4b
+  - prompt: chain_of_thought
+  - dataset: radiology
+  - experiment: cot_faithfulness
+  - _self_
+
+# Global settings
+seed: 42
+verbose: true
+dry_run: false
+
+# Output configuration
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  output_subdir: null

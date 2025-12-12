@@ -1,0 +1,14 @@
+# Activation Patching experiment
+_target_: cotlab.experiments.ActivationPatchingExperiment
+
+name: activation_patching
+description: Layer-wise causal interventions to study CoT importance
+
+patching:
+  sweep_all_layers: true
+  target_positions: null  # null = all positions
+  intervention_types:
+    - patch
+    - zero
+
+num_samples: 50
