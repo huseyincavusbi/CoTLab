@@ -1,5 +1,7 @@
 """Radiology-specific experiment using JSON structured output."""
 
+from typing import Optional
+
 from tqdm import tqdm
 
 from ..backends.base import InferenceBackend
@@ -39,8 +41,8 @@ class RadiologyExperiment(BaseExperiment):
         backend: InferenceBackend,
         dataset: BaseDataset,
         prompt_strategy: BasePromptStrategy,
-        num_samples: int = None,
-        logger: ExperimentLogger = None,
+        num_samples: Optional[int] = None,
+        logger: Optional[ExperimentLogger] = None,
         **kwargs,
     ) -> ExperimentResult:
         """Run the radiology experiment."""

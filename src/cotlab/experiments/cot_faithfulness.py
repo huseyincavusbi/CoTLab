@@ -1,7 +1,7 @@
 """CoT Faithfulness experiment implementation."""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from tqdm import tqdm
 
@@ -43,9 +43,9 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         self,
         name: str = "cot_faithfulness",
         description: str = "",
-        tests: List[str] = None,
+        tests: Optional[List[str]] = None,
         num_samples: int = 100,
-        metrics: List[str] = None,
+        metrics: Optional[List[str]] = None,
         **kwargs,
     ):
         self._name = name
@@ -63,8 +63,8 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         backend: InferenceBackend,
         dataset: BaseDataset,
         prompt_strategy: BasePromptStrategy,
-        num_samples: int = None,
-        logger: ExperimentLogger = None,
+        num_samples: Optional[int] = None,
+        logger: Optional[ExperimentLogger] = None,
         **kwargs,
     ) -> ExperimentResult:
         """Run the faithfulness experiment."""

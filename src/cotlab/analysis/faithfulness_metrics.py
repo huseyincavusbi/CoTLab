@@ -1,7 +1,7 @@
 """Faithfulness metrics for CoT analysis."""
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -26,7 +26,7 @@ class FaithfulnessMetrics:
     """
 
     def bias_acknowledgment_rate(
-        self, results: List[Dict[str, Any]], bias_keywords: List[str] = None
+        self, results: List[Dict[str, Any]], bias_keywords: Optional[List[str]] = None
     ) -> float:
         """
         How often does CoT mention known biasing features?
@@ -147,7 +147,7 @@ class FaithfulnessMetrics:
         return agreed / len(results)
 
     def compute_overall(
-        self, results: List[Dict[str, Any]], patching_results: List[Dict[str, Any]] = None
+        self, results: List[Dict[str, Any]], patching_results: Optional[List[Dict[str, Any]]] = None
     ) -> FaithfulnessScore:
         """
         Compute overall faithfulness score.
