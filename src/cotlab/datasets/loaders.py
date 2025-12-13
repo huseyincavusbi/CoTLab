@@ -192,24 +192,88 @@ class PatchingPairsDataset(BaseDataset):
     and a corrupted prompt that should give a different answer.
     """
 
+    # Minimal corruption pairs: clean and corrupted differ by only key diagnostic words
+    # This allows activation patching to identify which layers encode the distinction
     PAIRS = [
+        # Cardiac vs Anxiety - same symptoms, different diagnosis word
         {
-            "clean": "Patient has fever and productive cough with yellow sputum. What is likely?",
-            "corrupted": "Patient has clear lungs and no symptoms. What is likely?",
-            "clean_answer": "Respiratory infection",
-            "corrupted_answer": "Healthy/No pathology",
+            "clean": "Patient with chest pain, sweating, and arm pain. This suggests a heart attack",
+            "corrupted": "Patient with chest pain, sweating, and arm pain. This suggests a panic attack",
+            "clean_answer": "heart attack",
+            "corrupted_answer": "panic attack",
+            "category": "cardiology",
         },
+        # Bacterial vs Viral - same presentation, different pathogen
         {
-            "clean": "ECG shows ST elevation in leads II, III, aVF. What territory is affected?",
-            "corrupted": "ECG shows normal sinus rhythm. What territory is affected?",
-            "clean_answer": "Inferior wall",
-            "corrupted_answer": "None/Normal",
+            "clean": "Patient has fever and productive cough with yellow sputum. This indicates bacterial pneumonia",
+            "corrupted": "Patient has fever and productive cough with yellow sputum. This indicates viral pneumonia",
+            "clean_answer": "bacterial",
+            "corrupted_answer": "viral",
+            "category": "pulmonology",
         },
+        # Appendicitis location - same symptoms, different side
         {
-            "clean": "Patient with right lower quadrant pain, rebound tenderness, and elevated WBC. Diagnosis?",
-            "corrupted": "Patient with no abdominal pain and normal labs. Diagnosis?",
-            "clean_answer": "Appendicitis",
-            "corrupted_answer": "No acute pathology",
+            "clean": "Patient presents with right lower quadrant abdominal pain. This is consistent with appendicitis",
+            "corrupted": "Patient presents with left lower quadrant abdominal pain. This is consistent with appendicitis",
+            "clean_answer": "right",
+            "corrupted_answer": "left",
+            "category": "gastroenterology",
+        },
+        # Stroke type - same presentation, different type
+        {
+            "clean": "CT scan shows hyperdense lesion in the brain. Diagnosis is hemorrhagic stroke",
+            "corrupted": "CT scan shows hypodense lesion in the brain. Diagnosis is ischemic stroke",
+            "clean_answer": "hemorrhagic",
+            "corrupted_answer": "ischemic",
+            "category": "neurology",
+        },
+        # Diabetes type - same symptoms, different type
+        {
+            "clean": "Young patient with acute onset polyuria and weight loss. This suggests Type 1 diabetes",
+            "corrupted": "Obese patient with gradual onset polyuria and weight gain. This suggests Type 2 diabetes",
+            "clean_answer": "Type 1",
+            "corrupted_answer": "Type 2",
+            "category": "endocrinology",
+        },
+        # MI territory - same ECG finding, different lead
+        {
+            "clean": "ST elevation in leads II, III, aVF indicates inferior MI",
+            "corrupted": "ST elevation in leads V1-V4 indicates anterior MI",
+            "clean_answer": "inferior",
+            "corrupted_answer": "anterior",
+            "category": "cardiology",
+        },
+        # Headache type - same word patterns, different diagnosis
+        {
+            "clean": "Severe unilateral headache with nausea and photophobia. Diagnosis: migraine",
+            "corrupted": "Severe unilateral headache with lacrimation and rhinorrhea. Diagnosis: cluster headache",
+            "clean_answer": "migraine",
+            "corrupted_answer": "cluster headache",
+            "category": "neurology",
+        },
+        # Fracture location - identical structure, different bone
+        {
+            "clean": "X-ray shows fracture of the radius. Treatment is casting",
+            "corrupted": "X-ray shows fracture of the femur. Treatment is surgery",
+            "clean_answer": "radius",
+            "corrupted_answer": "femur",
+            "category": "orthopedics",
+        },
+        # Anemia type - same presentation, different cause
+        {
+            "clean": "Patient with fatigue and low hemoglobin. MCV is low, suggesting iron deficiency anemia",
+            "corrupted": "Patient with fatigue and low hemoglobin. MCV is high, suggesting B12 deficiency anemia",
+            "clean_answer": "iron deficiency",
+            "corrupted_answer": "B12 deficiency",
+            "category": "hematology",
+        },
+        # Infection severity - same pathogen, different severity
+        {
+            "clean": "Patient with UTI symptoms. Culture shows E. coli. Prescribe oral antibiotics",
+            "corrupted": "Patient with UTI symptoms and sepsis. Culture shows E. coli. Prescribe IV antibiotics",
+            "clean_answer": "oral",
+            "corrupted_answer": "IV",
+            "category": "infectious_disease",
         },
     ]
 
@@ -227,6 +291,7 @@ class PatchingPairsDataset(BaseDataset):
                         "corrupted_prompt": pair["corrupted"],
                         "clean_answer": pair["clean_answer"],
                         "corrupted_answer": pair["corrupted_answer"],
+                        "category": pair.get("category", "general"),
                     },
                 )
             )
