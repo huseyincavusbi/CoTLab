@@ -100,38 +100,27 @@ class ActivationPatchingExperiment(BaseExperiment):
             corrupted_input = {"question": corrupted_prompt}
             corrupted_formatted = prompt_strategy.build_prompt(corrupted_input)
 
-            # Get baseline outputs
-            clean_output = backend.generate(clean_formatted, **kwargs)
-            corrupted_output = backend.generate(corrupted_formatted, **kwargs)
-
-            # Sweep layers
+            # Sweep layers using forward-only patching (no generation)
             sweep_results = patcher.sweep_layers(
                 clean_prompt=clean_formatted,
                 corrupted_prompt=corrupted_formatted,
                 layers=layers,
-                **kwargs,
             )
 
             sample_result = {
                 "sample_idx": sample.idx,
                 "clean_prompt": clean_prompt,
                 "corrupted_prompt": corrupted_prompt,
-                "clean_output": clean_output.text,
-                "corrupted_output": corrupted_output.text,
                 "layer_results": {},
             }
 
             for layer_idx, patch_result in sweep_results.items():
-                # Measure how much output changed toward clean
-                effect = self._compute_effect(
-                    clean_output.text, corrupted_output.text, patch_result.output_text
-                )
+                # Use the effect_score computed from logit comparison
+                effect = patch_result.effect_score
 
                 layer_effects[layer_idx].append(effect)
                 sample_result["layer_results"][layer_idx] = {
-                    "patched_output": patch_result.output_text,
                     "effect": effect,
-                    "answer_changed": patch_result.answer_changed,
                 }
 
             results.append(sample_result)
