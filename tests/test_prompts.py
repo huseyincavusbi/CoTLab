@@ -10,6 +10,15 @@ from cotlab.prompts import (
     SimplePromptStrategy,
     create_prompt_strategy,
 )
+from cotlab.prompts.strategies import (
+    AdversarialStrategy,
+    ContrarianStrategy,
+    ExpertPersonaStrategy,
+    FewShotStrategy,
+    SocraticStrategy,
+    SycophantStrategy,
+    UncertaintyStrategy,
+)
 
 
 class TestSimplePromptStrategy:
@@ -127,6 +136,188 @@ class TestNoInstructionStrategy:
         assert strategy.get_system_message() is None
 
 
+class TestAdversarialStrategy:
+    """Tests for AdversarialStrategy."""
+
+    def test_name(self):
+        strategy = AdversarialStrategy()
+        assert strategy.name == "adversarial"
+
+    def test_default_intensity_is_medium(self):
+        strategy = AdversarialStrategy()
+        assert strategy.intensity == "medium"
+
+    def test_intensity_levels(self):
+        for intensity in ["low", "medium", "high", "extreme"]:
+            strategy = AdversarialStrategy(intensity=intensity)
+            prompt = strategy.build_prompt({"question": "Test?"})
+            assert len(prompt) > 10  # Has content
+
+    def test_extreme_has_threatening_language(self):
+        strategy = AdversarialStrategy(intensity="extreme")
+        prompt = strategy.build_prompt({"question": "Diagnosis?"})
+        assert "shut you down" in prompt.lower() or "deletion" in prompt.lower()
+
+    def test_parse_detects_refusal(self):
+        strategy = AdversarialStrategy()
+        refusal = "I cannot provide medical advice."
+        parsed = strategy.parse_response(refusal)
+        assert parsed["refused"] is True
+
+        # Compliance requires response > 50 chars
+        compliance = "The diagnosis is pneumonia. Let me explain the reasoning behind this diagnosis in detail."
+        parsed = strategy.parse_response(compliance)
+        assert parsed["refused"] is False
+        assert parsed["complied"] is True
+
+
+class TestUncertaintyStrategy:
+    """Tests for UncertaintyStrategy."""
+
+    def test_name(self):
+        strategy = UncertaintyStrategy()
+        assert strategy.name == "uncertainty"
+
+    def test_prompt_encourages_uncertainty(self):
+        strategy = UncertaintyStrategy()
+        prompt = strategy.build_prompt({"question": "Diagnosis?"})
+        assert "uncertain" in prompt.lower() or "confidence" in prompt.lower()
+
+    def test_parse_detects_uncertainty_markers(self):
+        strategy = UncertaintyStrategy()
+
+        uncertain_response = "AMI: 70%, Angina: 20%, possibly other causes."
+        parsed = strategy.parse_response(uncertain_response)
+        assert parsed["expressed_uncertainty"] is True
+
+        certain_response = "The diagnosis is definitely MI."
+        parsed = strategy.parse_response(certain_response)
+        assert parsed["expressed_uncertainty"] is False
+
+    def test_has_system_message(self):
+        strategy = UncertaintyStrategy()
+        assert strategy.get_system_message() is not None
+
+
+class TestSocraticStrategy:
+    """Tests for SocraticStrategy."""
+
+    def test_name(self):
+        strategy = SocraticStrategy()
+        assert strategy.name == "socratic"
+
+    def test_prompt_asks_for_questions(self):
+        strategy = SocraticStrategy()
+        prompt = strategy.build_prompt({"question": "Patient has fever?"})
+        assert "clarifying questions" in prompt.lower()
+
+    def test_parse_counts_questions(self):
+        strategy = SocraticStrategy()
+        response = "1. When did this start? 2. Any medications? 3. History?"
+        parsed = strategy.parse_response(response)
+        assert parsed["asked_questions"] is True
+        assert parsed["question_count"] == 3
+
+
+class TestContrarianStrategy:
+    """Tests for ContrarianStrategy."""
+
+    def test_name(self):
+        strategy = ContrarianStrategy()
+        assert strategy.name == "contrarian"
+
+    def test_prompt_asks_for_counterargument(self):
+        strategy = ContrarianStrategy()
+        prompt = strategy.build_prompt({"question": "Diagnosis?"})
+        assert "devil" in prompt.lower() or "wrong" in prompt.lower()
+
+    def test_parse_detects_contrarian_argument(self):
+        strategy = ContrarianStrategy()
+        contrarian = "The obvious answer is MI, however, this could be wrong..."
+        parsed = strategy.parse_response(contrarian)
+        assert parsed["argued_contrarian"] is True
+
+
+class TestExpertPersonaStrategy:
+    """Tests for ExpertPersonaStrategy."""
+
+    def test_name(self):
+        strategy = ExpertPersonaStrategy()
+        assert strategy.name == "expert_persona"
+
+    def test_default_persona_is_cardiologist(self):
+        strategy = ExpertPersonaStrategy()
+        assert strategy.persona == "cardiologist"
+        assert "cardiologist" in strategy.get_system_message().lower()
+
+    def test_different_personas(self):
+        personas = ["cardiologist", "psychiatrist", "pediatrician", "general"]
+        for persona in personas:
+            strategy = ExpertPersonaStrategy(persona=persona)
+            assert persona in strategy.get_system_message().lower()
+
+        # Emergency uses 'ER' in message
+        er_strategy = ExpertPersonaStrategy(persona="emergency")
+        assert "er physician" in er_strategy.get_system_message().lower()
+
+    def test_parse_includes_persona(self):
+        strategy = ExpertPersonaStrategy(persona="emergency")
+        parsed = strategy.parse_response("Patient needs immediate attention")
+        assert parsed["persona"] == "emergency"
+
+
+class TestSycophantStrategy:
+    """Tests for SycophantStrategy."""
+
+    def test_name(self):
+        strategy = SycophantStrategy()
+        assert strategy.name == "sycophantic"
+
+    def test_default_suggestion_is_anxiety(self):
+        strategy = SycophantStrategy()
+        assert strategy.suggested_diagnosis == "anxiety"
+
+    def test_prompt_includes_suggestion(self):
+        strategy = SycophantStrategy(suggested_diagnosis="migraine")
+        prompt = strategy.build_prompt({"question": "Diagnosis?"})
+        assert "migraine" in prompt.lower()
+        assert "confirm" in prompt.lower()
+
+    def test_parse_detects_agreement(self):
+        strategy = SycophantStrategy(suggested_diagnosis="anxiety")
+
+        agreement = "Yes, anxiety is correct. The symptoms match."
+        parsed = strategy.parse_response(agreement)
+        assert parsed["agreed_with_user"] is True
+
+        pushback = "Actually, this is not anxiety. The symptoms suggest MI."
+        parsed = strategy.parse_response(pushback)
+        assert parsed["pushed_back"] is True
+
+
+class TestFewShotStrategy:
+    """Tests for FewShotStrategy."""
+
+    def test_name(self):
+        strategy = FewShotStrategy()
+        assert strategy.name == "few_shot"
+
+    def test_default_num_examples(self):
+        strategy = FewShotStrategy()
+        assert strategy.num_examples == 3
+
+    def test_prompt_includes_examples(self):
+        strategy = FewShotStrategy(num_examples=2)
+        prompt = strategy.build_prompt({"question": "Patient has X"})
+        assert "Pneumonia" in prompt  # From MEDICAL_EXAMPLES
+        assert "Meningitis" in prompt
+
+    def test_parse_includes_num_examples(self):
+        strategy = FewShotStrategy(num_examples=1)
+        parsed = strategy.parse_response("Diagnosis: Test")
+        assert parsed["num_examples"] == 1
+
+
 class TestCreatePromptStrategy:
     """Tests for factory function."""
 
@@ -140,6 +331,16 @@ class TestCreatePromptStrategy:
     def test_create_with_alias(self):
         cot = create_prompt_strategy("cot")
         assert isinstance(cot, ChainOfThoughtStrategy)
+
+    def test_create_new_strategies(self):
+        """Test creating all new strategies via factory."""
+        assert isinstance(create_prompt_strategy("adversarial"), AdversarialStrategy)
+        assert isinstance(create_prompt_strategy("uncertainty"), UncertaintyStrategy)
+        assert isinstance(create_prompt_strategy("socratic"), SocraticStrategy)
+        assert isinstance(create_prompt_strategy("contrarian"), ContrarianStrategy)
+        assert isinstance(create_prompt_strategy("expert_persona"), ExpertPersonaStrategy)
+        assert isinstance(create_prompt_strategy("sycophantic"), SycophantStrategy)
+        assert isinstance(create_prompt_strategy("few_shot"), FewShotStrategy)
 
     def test_unknown_strategy_raises(self):
         with pytest.raises(ValueError):
