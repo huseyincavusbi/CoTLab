@@ -6,6 +6,7 @@ from .cot_faithfulness import CoTFaithfulnessExperiment
 from .cot_heads import CoTHeadsExperiment
 from .full_layer_patching import FullLayerPatchingExperiment
 from .logit_lens import LogitLensExperiment
+from .multi_head_cot import MultiHeadCoTExperiment
 from .multi_head_patching import MultiHeadPatchingExperiment
 from .radiology import RadiologyExperiment
 from .steering_vectors import SteeringVectorsExperiment
@@ -22,4 +23,5 @@ __all__ = [
     "SteeringVectorsExperiment",
     "CoTHeadsExperiment",
     "LogitLensExperiment",
+    "MultiHeadCoTExperiment",
 ]
