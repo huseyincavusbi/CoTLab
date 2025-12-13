@@ -74,12 +74,14 @@ def main(cfg: DictConfig) -> None:
     print("=" * 60)
 
     try:
+        # num_samples is optional for some experiments
+        num_samples = OmegaConf.select(cfg, "experiment.num_samples", default=None)
         result = experiment.run(
             backend=backend,
             dataset=dataset,
             prompt_strategy=prompt_strategy,
-            num_samples=cfg.experiment.num_samples,
             logger=logger,
+            **(dict(num_samples=num_samples) if num_samples is not None else {}),
         )
 
         # Save results

@@ -94,6 +94,33 @@ class HookManager:
         "bloom": "input_layernorm",
     }
 
+    # Attention output projection modules for head-level patching
+    # These modules take concatenated head outputs and project back to hidden dim
+    ATTENTION_OUTPUT_POINTS = {
+        # GPT-2: attn.c_proj (output of all heads concatenated)
+        "gpt2": "attn.c_proj",
+        "gpt_neo": "attn.out_proj",
+        "gpt_neox": "attention.dense",
+        # Llama/Mistral: self_attn.o_proj
+        "llama": "self_attn.o_proj",
+        "mistral": "self_attn.o_proj",
+        "mixtral": "self_attn.o_proj",
+        "phi": "self_attn.dense",
+        "phi3": "self_attn.o_proj",
+        "qwen2": "self_attn.o_proj",
+        # Gemma: self_attn.o_proj
+        "gemma": "self_attn.o_proj",
+        "gemma2": "self_attn.o_proj",
+        "gemma3": "self_attn.o_proj",
+        "gemma3_text": "self_attn.o_proj",
+        # Falcon
+        "falcon": "self_attention.dense",
+        # OPT
+        "opt": "self_attn.out_proj",
+        # Bloom
+        "bloom": "self_attention.dense",
+    }
+
     def _build_layer_mapping(self) -> Dict[int, nn.Module]:
         """
         Auto-detect transformer layers using HF config model_type.
@@ -209,6 +236,39 @@ class HookManager:
 
         # Last resort: return the layer itself
         return layer_module
+
+    def get_attention_output_module(self, layer_idx: int) -> nn.Module:
+        """
+        Get the attention output projection module for a layer.
+
+        This is where individual head outputs are concatenated and projected.
+        Used for head-level patching interventions.
+        """
+        layer_module = self.get_layer_module(layer_idx)
+        model_type = getattr(self.model.config, "model_type", None)
+        attn_path = self.ATTENTION_OUTPUT_POINTS.get(model_type)
+
+        if attn_path:
+            # Navigate nested path like "self_attn.o_proj"
+            parts = attn_path.split(".")
+            module = layer_module
+            for part in parts:
+                if hasattr(module, part):
+                    module = getattr(module, part)
+                else:
+                    break
+            else:
+                return module
+
+        # Fallback: try common attention output names
+        for attn_name in ["self_attn", "attn", "attention"]:
+            if hasattr(layer_module, attn_name):
+                attn = getattr(layer_module, attn_name)
+                for proj_name in ["o_proj", "c_proj", "out_proj", "dense"]:
+                    if hasattr(attn, proj_name):
+                        return getattr(attn, proj_name)
+
+        raise ValueError(f"Could not find attention output module for layer {layer_idx}")
 
     def register_forward_hook(
         self, layer_idx: int, hook_fn: Callable[[nn.Module, Any, Any], Optional[Any]]
