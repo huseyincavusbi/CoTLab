@@ -1,0 +1,8 @@
+# Logit Lens Experiment
+_target_: cotlab.experiments.LogitLensExperiment
+
+name: logit_lens
+description: "Visualize layer-by-layer token predictions"
+target_layers: [0, 5, 10, 15, 20, 25, 30, 33]
+top_k: 5
+question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"

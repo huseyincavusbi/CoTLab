@@ -126,3 +126,61 @@ class TestExperimentImports:
         from cotlab.experiments import SteeringVectorsExperiment
 
         assert SteeringVectorsExperiment is not None
+
+    def test_import_cot_heads(self):
+        """Test CoTHeadsExperiment import."""
+        from cotlab.experiments import CoTHeadsExperiment
+
+        assert CoTHeadsExperiment is not None
+
+    def test_import_logit_lens(self):
+        """Test LogitLensExperiment import."""
+        from cotlab.experiments import LogitLensExperiment
+
+        assert LogitLensExperiment is not None
+
+
+class TestCoTHeadsExperiment:
+    """Tests for CoTHeadsExperiment."""
+
+    def test_init_defaults(self):
+        """Test default initialization."""
+        from cotlab.experiments import CoTHeadsExperiment
+
+        exp = CoTHeadsExperiment()
+        assert exp.name == "cot_heads"
+        assert len(exp.search_layers) == 20  # layers 10-29
+
+    def test_init_custom_layers(self):
+        """Test custom search layers."""
+        from cotlab.experiments import CoTHeadsExperiment
+
+        exp = CoTHeadsExperiment(search_layers=[5, 10, 15])
+        assert exp.search_layers == [5, 10, 15]
+
+
+class TestLogitLensExperiment:
+    """Tests for LogitLensExperiment."""
+
+    def test_init_defaults(self):
+        """Test default initialization."""
+        from cotlab.experiments import LogitLensExperiment
+
+        exp = LogitLensExperiment()
+        assert exp.name == "logit_lens"
+        assert exp.target_layers == [0, 5, 10, 15, 20, 25, 30, 33]
+        assert exp.top_k == 5
+
+    def test_init_custom_layers(self):
+        """Test custom target layers."""
+        from cotlab.experiments import LogitLensExperiment
+
+        exp = LogitLensExperiment(target_layers=[0, 10, 20])
+        assert exp.target_layers == [0, 10, 20]
+
+    def test_init_custom_top_k(self):
+        """Test custom top_k."""
+        from cotlab.experiments import LogitLensExperiment
+
+        exp = LogitLensExperiment(top_k=10)
+        assert exp.top_k == 10

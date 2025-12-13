@@ -1,0 +1,7 @@
+# CoT Heads Experiment
+_target_: cotlab.experiments.CoTHeadsExperiment
+
+name: cot_heads
+description: "Find attention heads encoding CoT reasoning"
+search_layers: [10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"
