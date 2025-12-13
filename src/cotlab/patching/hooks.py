@@ -35,27 +35,132 @@ class HookManager:
         self.handles: List[torch.utils.hooks.RemovableHandle] = []
         self._layer_modules = self._build_layer_mapping()
 
+    # Known layer paths by model_type from HF config
+    LAYER_PATHS = {
+        # GPT-2 family
+        "gpt2": "transformer.h",
+        "gpt_neo": "transformer.h",
+        "gpt_neox": "gpt_neox.layers",
+        # Llama/Mistral family
+        "llama": "model.layers",
+        "mistral": "model.layers",
+        "mixtral": "model.layers",
+        "phi": "model.layers",
+        "phi3": "model.layers",
+        "qwen2": "model.layers",
+        # Gemma family
+        "gemma": "model.layers",
+        "gemma2": "model.layers",
+        "gemma3": "model.layers",
+        "gemma3_text": "model.layers",
+        # BERT/RoBERTa (encoder)
+        "bert": "bert.encoder.layer",
+        "roberta": "roberta.encoder.layer",
+        # T5/BART (encoder-decoder)
+        "t5": "decoder.block",
+        "bart": "model.decoder.layers",
+        # Falcon
+        "falcon": "transformer.h",
+        # OPT
+        "opt": "model.decoder.layers",
+        # Bloom
+        "bloom": "transformer.h",
+    }
+
+    # Safe residual stream hook points (post-layer normalization)
+    # These are the output of the final norm in each layer block
+    RESIDUAL_HOOK_POINTS = {
+        # GPT-2: hook ln_2 (after attention, before MLP residual add)
+        "gpt2": "ln_2",
+        "gpt_neo": "ln_2",
+        "gpt_neox": "post_attention_layernorm",
+        # Llama/Mistral: hook post_attention_layernorm
+        "llama": "post_attention_layernorm",
+        "mistral": "post_attention_layernorm",
+        "mixtral": "post_attention_layernorm",
+        "phi": "post_attention_layernorm",
+        "phi3": "post_attention_layernorm",
+        "qwen2": "post_attention_layernorm",
+        # Gemma: hook post_feedforward_layernorm (after entire layer)
+        "gemma": "post_feedforward_layernorm",
+        "gemma2": "post_feedforward_layernorm",
+        "gemma3": "post_feedforward_layernorm",
+        "gemma3_text": "post_feedforward_layernorm",
+        # Falcon
+        "falcon": "ln_attn",
+        # OPT
+        "opt": "self_attn_layer_norm",
+        # Bloom
+        "bloom": "input_layernorm",
+    }
+
     def _build_layer_mapping(self) -> Dict[int, nn.Module]:
         """
-        Build mapping from layer indices to modules.
+        Auto-detect transformer layers using HF config model_type.
 
-        Supports Gemma/Llama-style architecture with model.layers[i]
+        Uses known layer paths for common architectures, with fallback
+        to regex-based auto-detection for unknown models.
         """
+        # Try to get model_type from config
+        model_type = getattr(self.model.config, "model_type", None)
+        layer_path = self.LAYER_PATHS.get(model_type)
+
+        if layer_path:
+            # Try known path first
+            layers = self._get_layers_from_path(layer_path)
+            if layers:
+                return layers
+            # If known path fails (e.g., multimodal model), try auto-detect
+
+        # Fallback: auto-detect using regex
+        return self._auto_detect_layers()
+
+    def _get_layers_from_path(self, layer_path: str) -> Dict[int, nn.Module]:
+        """Get layers from a known path like 'transformer.h' or 'model.layers'."""
         layers = {}
 
-        # Try common layer naming patterns
         for name, module in self.model.named_modules():
-            # Pattern 1: model.layers.X (Gemma, Llama)
-            if ".layers." in name:
-                # Extract layer number from path like "model.layers.5.mlp"
-                parts = name.split(".")
-                try:
-                    layer_idx = int(parts[parts.index("layers") + 1])
-                    # Store the layer block itself
-                    if name.endswith(f".layers.{layer_idx}"):
-                        layers[layer_idx] = module
-                except (ValueError, IndexError):
-                    continue
+            # Match pattern: layer_path.{number}
+            if name.startswith(layer_path + "."):
+                suffix = name[len(layer_path) + 1 :]
+                # Only match direct children (no dots in suffix)
+                if "." not in suffix and suffix.isdigit():
+                    layers[int(suffix)] = module
+
+        return layers
+
+    def _auto_detect_layers(self) -> Dict[int, nn.Module]:
+        """Fallback: auto-detect layers using regex pattern matching."""
+        import re
+
+        layers = {}
+        layer_priority = {}
+        layer_pattern = re.compile(r"^(.+?)\.(\d+)$")
+
+        for name, module in self.model.named_modules():
+            match = layer_pattern.match(name)
+            if not match:
+                continue
+
+            prefix = match.group(1)
+            layer_idx = int(match.group(2))
+
+            # Skip sublayers (modules with numbered children)
+            has_numbered_children = any(c.isdigit() for c, _ in module.named_children())
+            if has_numbered_children:
+                continue
+
+            # Prioritize language model layers
+            if "language_model" in prefix:
+                priority = 4
+            elif "layers" in prefix or "h" in prefix:
+                priority = 1 if ("vision" in prefix or "encoder" in prefix) else 3
+            else:
+                priority = 2
+
+            if layer_idx not in layer_priority or priority > layer_priority[layer_idx]:
+                layers[layer_idx] = module
+                layer_priority[layer_idx] = priority
 
         return layers
 
@@ -74,6 +179,36 @@ class HookManager:
         if layer_idx not in self._layer_modules:
             raise ValueError(f"Layer {layer_idx} not found. Available: {self.available_layers}")
         return self._layer_modules[layer_idx]
+
+    def get_residual_module(self, layer_idx: int) -> nn.Module:
+        """
+        Get the residual stream hook point for a layer.
+
+        Returns the post-layer normalization module (e.g., ln_2 for GPT-2,
+        post_feedforward_layernorm for Gemma3) which is safer for patching
+        than the full layer block.
+        """
+        layer_module = self.get_layer_module(layer_idx)
+        model_type = getattr(self.model.config, "model_type", None)
+        residual_name = self.RESIDUAL_HOOK_POINTS.get(model_type)
+
+        if residual_name:
+            # Try to get the specific residual hook point
+            if hasattr(layer_module, residual_name):
+                return getattr(layer_module, residual_name)
+
+        # Fallback: try common names
+        for name in [
+            "post_feedforward_layernorm",
+            "post_attention_layernorm",
+            "ln_2",
+            "layer_norm",
+        ]:
+            if hasattr(layer_module, name):
+                return getattr(layer_module, name)
+
+        # Last resort: return the layer itself
+        return layer_module
 
     def register_forward_hook(
         self, layer_idx: int, hook_fn: Callable[[nn.Module, Any, Any], Optional[Any]]
@@ -152,23 +287,110 @@ class HookManager:
                 hidden_states = output
                 rest = ()
 
-            patched = hidden_states.clone()
+            # Skip patching during autoregressive decoding (seq_len=1)
+            current_seq_len = hidden_states.shape[1]
+            if current_seq_len == 1:
+                if rest:
+                    return (hidden_states,) + rest
+                return hidden_states
+
+            # Create new tensor for patching to avoid in-place operations
+            # that can break model internals
+            source_seq_len = source_activation.shape[1]
+            target_seq_len = hidden_states.shape[1]
 
             if token_positions is None:
-                # Patch all positions up to min length
-                min_len = min(patched.shape[1], source_activation.shape[1])
-                patched[:, :min_len, :] = source_activation[:, :min_len, :]
+                # Replace with source activations (truncated/padded as needed)
+                if target_seq_len <= source_seq_len:
+                    # Use source directly (truncated if needed)
+                    patched = source_activation[:, :target_seq_len, :].contiguous()
+                else:
+                    # Need to pad: copy source then keep remaining from original
+                    patched = torch.cat(
+                        [source_activation, hidden_states[:, source_seq_len:, :]], dim=1
+                    )
             else:
-                # Patch specific positions
+                # Patch specific positions by building new tensor
+                patched = hidden_states.clone()
                 for pos in token_positions:
-                    if pos < patched.shape[1] and pos < source_activation.shape[1]:
-                        patched[:, pos, :] = source_activation[:, pos, :]
+                    if pos < target_seq_len and pos < source_seq_len:
+                        patched[:, pos : pos + 1, :] = source_activation[:, pos : pos + 1, :]
 
             if rest:
                 return (patched,) + rest
             return patched
 
         return self.register_forward_hook(layer_idx, patch_hook)
+
+    def register_residual_cache_hooks(
+        self, cache: "ActivationCache", layers: Optional[List[int]] = None, detach: bool = True
+    ) -> None:
+        """
+        Register hooks to cache activations from residual stream (post-layer norm).
+
+        This is safer than caching from the full layer block as it captures
+        the clean residual stream without internal layer state.
+        """
+        target_layers = layers if layers is not None else self.available_layers
+
+        for layer_idx in target_layers:
+            residual_module = self.get_residual_module(layer_idx)
+
+            def make_hook(idx: int):
+                def hook(module, input, output):
+                    activation = output
+                    if detach:
+                        activation = activation.detach().clone()
+                    cache.store(idx, activation)
+                    return output
+
+                return hook
+
+            handle = residual_module.register_forward_hook(make_hook(layer_idx))
+            self.handles.append(handle)
+
+    def register_residual_patch_hook(
+        self,
+        layer_idx: int,
+        source_activation: torch.Tensor,
+        token_positions: Optional[List[int]] = None,
+    ) -> torch.utils.hooks.RemovableHandle:
+        """
+        Register a patch hook on the residual stream (post-layer norm).
+
+        This is safer than patching the full layer block as it only modifies
+        the output of the normalization layer without affecting internal state.
+        """
+        residual_module = self.get_residual_module(layer_idx)
+
+        def patch_hook(module, input, output):
+            # Residual modules typically output a tensor directly (not tuple)
+            hidden_states = output
+
+            # Skip single-token decoding
+            if hidden_states.shape[1] == 1:
+                return hidden_states
+
+            # Match shapes
+            target_len = hidden_states.shape[1]
+            source_len = source_activation.shape[1]
+            min_len = min(target_len, source_len)
+
+            if token_positions is None:
+                # Patch overlapping positions
+                patched = hidden_states.clone()
+                patched[:, :min_len, :] = source_activation[:, :min_len, :]
+            else:
+                patched = hidden_states.clone()
+                for pos in token_positions:
+                    if pos < target_len and pos < source_len:
+                        patched[:, pos : pos + 1, :] = source_activation[:, pos : pos + 1, :]
+
+            return patched
+
+        handle = residual_module.register_forward_hook(patch_hook)
+        self.handles.append(handle)
+        return handle
 
     def remove_all_hooks(self) -> None:
         """Remove all registered hooks."""
