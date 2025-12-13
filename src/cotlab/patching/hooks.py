@@ -452,6 +452,40 @@ class HookManager:
         self.handles.append(handle)
         return handle
 
+    def register_multi_head_patch_hook(
+        self,
+        layer_idx: int,
+        head_indices: List[int],
+        source_activation: torch.Tensor,
+        head_dim: int,
+    ) -> torch.utils.hooks.RemovableHandle:
+        """
+        Register a patch hook that patches multiple attention heads at once.
+
+        Args:
+            layer_idx: Layer to patch
+            head_indices: List of head indices to patch (e.g., [2, 5, 7])
+            source_activation: Activation tensor to patch from
+            head_dim: Dimension of each head (hidden_size // num_heads)
+
+        Returns:
+            Hook handle
+        """
+        attn_module = self.get_attention_output_module(layer_idx)
+
+        def patch_hook(module, input, output):
+            patched = output.clone()
+            for head_idx in head_indices:
+                h_start = head_idx * head_dim
+                h_end = (head_idx + 1) * head_dim
+                # Patch last token position only
+                patched[:, -1, h_start:h_end] = source_activation[:, -1, h_start:h_end]
+            return patched
+
+        handle = attn_module.register_forward_hook(patch_hook)
+        self.handles.append(handle)
+        return handle
+
     def remove_all_hooks(self) -> None:
         """Remove all registered hooks."""
         for handle in self.handles:

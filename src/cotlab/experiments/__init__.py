@@ -3,6 +3,7 @@
 from .activation_patching import ActivationPatchingExperiment
 from .cot_ablation import CoTAblationExperiment
 from .cot_faithfulness import CoTFaithfulnessExperiment
+from .multi_head_patching import MultiHeadPatchingExperiment
 from .radiology import RadiologyExperiment
 from .sycophancy_heads import SycophancyHeadsExperiment
 
@@ -12,4 +13,5 @@ __all__ = [
     "ActivationPatchingExperiment",
     "RadiologyExperiment",
     "SycophancyHeadsExperiment",
+    "MultiHeadPatchingExperiment",
 ]
