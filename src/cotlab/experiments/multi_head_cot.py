@@ -36,10 +36,10 @@ class MultiHeadCoTExperiment(BaseExperiment):
     ):
         self._name = name
         self.description = description
-        # Key layers where reasoning should occur
-        self.target_layers = target_layers or [15, 20, 25]
-        # Heads to test per layer (all 8 by default)
-        self.heads_per_layer = heads_per_layer or list(range(8))
+        # None = auto-detect all layers at runtime
+        self._target_layers = target_layers
+        # Heads to test per layer (auto-detect from model)
+        self._heads_per_layer = heads_per_layer
         self.question = question
 
     @property
@@ -66,9 +66,21 @@ class MultiHeadCoTExperiment(BaseExperiment):
         hidden_size = config.hidden_size
         head_dim = hidden_size // num_heads
 
+        # Auto-detect all layers if not specified
+        if self._target_layers is None:
+            self.target_layers = list(range(backend.hook_manager.num_layers))
+        else:
+            self.target_layers = self._target_layers
+
+        # Auto-detect all heads if not specified
+        if self._heads_per_layer is None:
+            self.heads_per_layer = list(range(num_heads))
+        else:
+            self.heads_per_layer = self._heads_per_layer
+
         print(f"Model: {backend.model_name}")
-        print(f"Target layers: {self.target_layers}")
-        print(f"Heads per layer: {self.heads_per_layer}")
+        print(f"Target layers: {len(self.target_layers)} (all)")
+        print(f"Heads per layer: {len(self.heads_per_layer)} (all)")
 
         # 1. Setup Prompts
         cot_strategy = ChainOfThoughtStrategy()

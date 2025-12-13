@@ -35,8 +35,8 @@ class FullLayerCoTExperiment(BaseExperiment):
     ):
         self._name = name
         self.description = description
-        # Test key layers across the model
-        self.target_layers = target_layers or [5, 10, 15, 20, 25, 30]
+        # None = auto-detect all layers at runtime
+        self._target_layers_config = target_layers
         self.question = question
 
     @property
@@ -55,8 +55,15 @@ class FullLayerCoTExperiment(BaseExperiment):
         tokenizer = backend._tokenizer
         model = backend._model
 
+        # Auto-detect all layers if not specified
+        if self._target_layers_config is None:
+            target_layers = list(range(backend.hook_manager.num_layers))
+        else:
+            target_layers = self._target_layers_config
+        self.target_layers = target_layers
+
         print(f"Model: {backend.model_name}")
-        print(f"Target layers: {self.target_layers}")
+        print(f"Target layers: {len(target_layers)} layers")
 
         # 1. Setup Prompts
         cot_strategy = ChainOfThoughtStrategy()
