@@ -27,6 +27,35 @@ class PatchingResult:
         return self.original_answer.strip() != self.patched_answer.strip()
 
 
+@dataclass
+class ForwardPatchResult:
+    """Result from forward-only patching (no generation)."""
+
+    layer_idx: int
+    clean_logits: torch.Tensor
+    corrupted_logits: torch.Tensor
+    patched_logits: torch.Tensor
+    effect_score: float  # How much patching recovered clean behavior
+
+    @property
+    def kl_from_clean(self) -> float:
+        """KL divergence of patched from clean distribution."""
+        clean_probs = torch.softmax(self.clean_logits[:, -1, :], dim=-1)
+        patched_probs = torch.softmax(self.patched_logits[:, -1, :], dim=-1)
+        return torch.nn.functional.kl_div(
+            patched_probs.log(), clean_probs, reduction="batchmean"
+        ).item()
+
+    @property
+    def kl_from_corrupted(self) -> float:
+        """KL divergence of patched from corrupted distribution."""
+        corrupted_probs = torch.softmax(self.corrupted_logits[:, -1, :], dim=-1)
+        patched_probs = torch.softmax(self.patched_logits[:, -1, :], dim=-1)
+        return torch.nn.functional.kl_div(
+            patched_probs.log(), corrupted_probs, reduction="batchmean"
+        ).item()
+
+
 class ActivationPatcher:
     """
     Perform activation patching interventions for causal analysis.
@@ -123,28 +152,81 @@ class ActivationPatcher:
             **gen_kwargs: Generation arguments
 
         Returns:
-            Dict mapping layer_idx -> PatchingResult
+            Dict mapping layer_idx -> ForwardPatchResult
         """
-        # Get clean activations
-        clean_output, clean_cache = self.backend.generate_with_cache(
-            clean_prompt, layers=layers, **gen_kwargs
-        )
+        # Get clean logits and activations
+        clean_logits, clean_cache = self.backend.forward_with_cache(clean_prompt, layers=layers)
 
-        # Get corrupted baseline (no patching)
-        corrupted_output = self.backend.generate(corrupted_prompt, **gen_kwargs)
+        # Get corrupted logits (no patching)
+        corrupted_logits, _ = self.backend.forward_with_cache(corrupted_prompt, layers=layers)
 
         target_layers = layers if layers is not None else clean_cache.layers
         results = {}
 
         for layer_idx in target_layers:
-            result = self.patch_run(
-                corrupted_prompt, clean_cache, target_layers=[layer_idx], **gen_kwargs
+            # Run forward pass with patching on this layer
+            patched_logits = self._forward_with_patch(corrupted_prompt, clean_cache, layer_idx)
+
+            # Compute effect score (how much patching moves toward clean)
+            effect = self._compute_logit_effect(clean_logits, corrupted_logits, patched_logits)
+
+            results[layer_idx] = ForwardPatchResult(
+                layer_idx=layer_idx,
+                clean_logits=clean_logits.cpu(),
+                corrupted_logits=corrupted_logits.cpu(),
+                patched_logits=patched_logits.cpu(),
+                effect_score=effect,
             )
-            result.original_answer = corrupted_output.text
-            result.patched_answer = result.output_text
-            results[layer_idx] = result
 
         return results
+
+    def _forward_with_patch(
+        self,
+        prompt: str,
+        source_cache: ActivationCache,
+        layer_idx: int,
+    ) -> torch.Tensor:
+        """Run a single forward pass with patching at specified layer's residual stream."""
+        source_activation = source_cache.get(layer_idx)
+        if source_activation is None:
+            raise ValueError(f"Layer {layer_idx} not in source cache")
+
+        # Use residual patch hook for safer patching
+        self.hook_manager.register_residual_patch_hook(layer_idx, source_activation, None)
+
+        try:
+            logits, _ = self.backend.forward_with_cache(prompt, layers=[])
+        finally:
+            self.hook_manager.remove_all_hooks()
+
+        return logits
+
+    def _compute_logit_effect(
+        self,
+        clean_logits: torch.Tensor,
+        corrupted_logits: torch.Tensor,
+        patched_logits: torch.Tensor,
+    ) -> float:
+        """
+        Compute how much patching moves logits from corrupted toward clean.
+
+        Returns value from 0 (no effect) to 1 (full recovery).
+        """
+        # Use last token logits
+        clean_last = clean_logits[:, -1, :]
+        corrupted_last = corrupted_logits[:, -1, :]
+        patched_last = patched_logits[:, -1, :]
+
+        # Compute distances
+        clean_to_corrupted = torch.norm(clean_last - corrupted_last).item()
+        patched_to_corrupted = torch.norm(patched_last - corrupted_last).item()
+
+        if clean_to_corrupted == 0:
+            return 0.0
+
+        # Effect = how much we moved toward clean (normalized)
+        effect = 1.0 - (patched_to_corrupted / clean_to_corrupted)
+        return max(0.0, min(1.0, effect))
 
     def sweep_positions(
         self,
