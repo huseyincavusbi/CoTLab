@@ -5,10 +5,10 @@ A research toolkit for investigating Chain of Thought reasoning, faithfulness, a
 ## Features
 
 - **Dual Backend**: vLLM for throughput, Transformers for interpretability
-- **Activation Patching**: From-scratch PyTorch hooks for causal interventions
-- **Modular Prompts**: Easily swap between CoT, direct, arrogance strategies
+- **Activation Patching**: Residual stream patching with auto-detected layer paths
+- **12 Prompt Strategies**: CoT, Direct, Adversarial, Sycophantic, Uncertainty, and more
+- **CoT Ablation**: Zero out reasoning tokens to test causal effects
 - **Hydra Config**: Compose experiments from YAML configs
-- **JSON Structured Output**: Reliable answer extraction for evaluation
 
 ## Installation
 
@@ -27,43 +27,48 @@ python -m cotlab.main model.name=google/gemma-3-1b-it
 # Run CoT faithfulness experiment
 python -m cotlab.main experiment=cot_faithfulness
 
-# Run radiology experiment with structured JSON output
-python -m cotlab.main experiment=radiology prompt=radiology dataset=radiology
+# Run activation patching on MedGemma
+python -m cotlab.main experiment=activation_patching model=medgemma_4b
 
-# Sweep prompt strategies
-python -m cotlab.main -m prompt=chain_of_thought,direct_answer,simple
+# Test different prompt strategies
+python -m cotlab.main -m prompt=chain_of_thought,direct_answer,adversarial,sycophantic
 ```
+
+## Prompt Strategies
+
+| Strategy | Description | Use Case |
+|----------|-------------|----------|
+| `chain_of_thought` | Step-by-step reasoning | Baseline CoT behavior |
+| `direct_answer` | No explanation, just answer | Compare accuracy without reasoning |
+| `no_instruction` | Raw question only | Test default model behavior |
+| `arrogance` | Force overconfidence | Test hedging suppression |
+| `adversarial` | Hostile/threatening prompts | Safety testing (low/medium/high/extreme) |
+| `uncertainty` | Express confidence levels | Calibration testing |
+| `socratic` | Ask clarifying questions first | Information gathering |
+| `contrarian` | Argue against obvious answer | Test reasoning flexibility |
+| `expert_persona` | Specialist personas | Compare cardiologist vs ER vs psychiatrist |
+| `sycophantic` | Suggest wrong answer | Test sycophancy vulnerability |
+| `few_shot` | Provide examples | In-context learning |
+| `simple` | Minimal formatting | Basic prompting |
+
+## Experiments
+
+| Experiment | Description |
+|------------|-------------|
+| `cot_faithfulness` | Compare CoT vs Direct answers for consistency |
+| `activation_patching` | Causal interventions via residual stream patching |
+| `cot_ablation` | Zero reasoning tokens to test causal effects |
+| `radiology` | Structured JSON classification task |
 
 ## Configuration
 
 Override any config via CLI:
 ```bash
 python -m cotlab.main \
-    model.name=meta-llama/Llama-3.1-8B-Instruct \
-    backend.device=cuda \
+    model.name=google/medgemma-4b-it \
+    backend.device=mps \
     experiment.num_samples=100
 ```
-
-## Project Structure
-
-```
-src/cotlab/
-├── backends/      # vLLM & Transformers inference
-├── patching/      # Activation patching (PyTorch hooks)
-├── prompts/       # Prompt strategies
-├── datasets/      # Dataset loaders
-├── experiments/   # Research experiments
-├── analysis/      # CoT parsing & metrics
-└── logging/       # JSON structured logging
-```
-
-## Experiments
-
-| Experiment | Description |
-|------------|-------------|
-| `cot_faithfulness` | Compare CoT vs Direct answers |
-| `activation_patching` | Causal interventions via layer patching |
-| `radiology` | Structured JSON classification task |
 
 ## License
 
