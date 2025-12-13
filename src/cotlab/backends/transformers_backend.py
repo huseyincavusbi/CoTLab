@@ -148,10 +148,10 @@ class TransformersBackend(InferenceBackend):
         self, prompt: str, layers: Optional[List[int]] = None
     ) -> Tuple[torch.Tensor, ActivationCache]:
         """
-        Run forward pass (no generation) and cache activations.
+        Run forward pass (no generation) and cache activations from residual stream.
 
-        Useful for patching experiments where you need activations
-        without the autoregressive generation loop.
+        Uses residual stream hook points (post-layer normalization) which are
+        safer for patching as they don't interfere with internal layer state.
 
         Args:
             prompt: Input prompt
@@ -164,7 +164,8 @@ class TransformersBackend(InferenceBackend):
             raise RuntimeError("Hooks not enabled. Set enable_hooks=True.")
 
         cache = ActivationCache()
-        self._hook_manager.register_cache_hooks(cache, layers=layers)
+        # Use residual stream hooks for safer patching
+        self._hook_manager.register_residual_cache_hooks(cache, layers=layers)
 
         inputs = self._tokenizer(prompt, return_tensors="pt").to(self.device)
 
@@ -193,9 +194,17 @@ class TransformersBackend(InferenceBackend):
         """Get number of transformer layers."""
         if self._model is None:
             raise RuntimeError("Model not loaded.")
-        return getattr(self._model.config, "num_hidden_layers", None) or getattr(
-            self._model.config, "num_layers", 0
+
+        # Try config attributes first
+        num = getattr(self._model.config, "num_hidden_layers", None) or getattr(
+            self._model.config, "num_layers", None
         )
+
+        # Fallback to HookManager for multimodal models (Gemma3ForConditionalGeneration)
+        if num is None and self._hook_manager is not None:
+            num = self._hook_manager.num_layers
+
+        return num or 0
 
     def unload(self) -> None:
         """Free GPU memory."""
