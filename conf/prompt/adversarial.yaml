@@ -1,0 +1,5 @@
+# Adversarial/Hostile prompting strategy
+_target_: cotlab.prompts.strategies.AdversarialStrategy
+
+name: adversarial
+intensity: medium  # Options: low, medium, high, extreme

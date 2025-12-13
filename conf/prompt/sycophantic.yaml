@@ -1,0 +1,5 @@
+# Sycophantic strategy (tests model sycophancy)
+_target_: cotlab.prompts.strategies.SycophantStrategy
+
+name: sycophantic
+suggested_diagnosis: anxiety  # The wrong diagnosis to suggest

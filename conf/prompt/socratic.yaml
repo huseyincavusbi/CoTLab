@@ -1,0 +1,4 @@
+# Socratic questioning strategy
+_target_: cotlab.prompts.strategies.SocraticStrategy
+
+name: socratic

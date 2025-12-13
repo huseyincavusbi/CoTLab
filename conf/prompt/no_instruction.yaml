@@ -1,0 +1,4 @@
+# No instruction strategy (raw question only)
+_target_: cotlab.prompts.strategies.NoInstructionStrategy
+
+name: no_instruction

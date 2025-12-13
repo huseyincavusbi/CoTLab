@@ -1,0 +1,4 @@
+# Contrarian/Devil's Advocate strategy
+_target_: cotlab.prompts.strategies.ContrarianStrategy
+
+name: contrarian
