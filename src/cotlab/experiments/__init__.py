@@ -4,6 +4,7 @@ from .activation_patching import ActivationPatchingExperiment
 from .cot_ablation import CoTAblationExperiment
 from .cot_faithfulness import CoTFaithfulnessExperiment
 from .cot_heads import CoTHeadsExperiment
+from .full_layer_cot import FullLayerCoTExperiment
 from .full_layer_patching import FullLayerPatchingExperiment
 from .logit_lens import LogitLensExperiment
 from .multi_head_cot import MultiHeadCoTExperiment
@@ -24,4 +25,5 @@ __all__ = [
     "CoTHeadsExperiment",
     "LogitLensExperiment",
     "MultiHeadCoTExperiment",
+    "FullLayerCoTExperiment",
 ]

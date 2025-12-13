@@ -1,0 +1,7 @@
+# Full Layer CoT Patching Experiment
+_target_: cotlab.experiments.FullLayerCoTExperiment
+
+name: full_layer_cot
+description: "Patch full layers from CoT to Direct"
+target_layers: [5, 10, 15, 20, 25, 30]
+question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"
