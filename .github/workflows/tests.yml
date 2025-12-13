@@ -72,7 +72,7 @@ jobs:
           python -c "
           from cotlab import __version__
           from cotlab.backends import TransformersBackend
-          from cotlab.experiments import CoTFaithfulnessExperiment, RadiologyExperiment
+          from cotlab.experiments import CoTFaithfulnessExperiment, RadiologyExperiment, CoTAblationExperiment
           from cotlab.prompts import ChainOfThoughtStrategy, RadiologyPromptStrategy
           from cotlab.datasets import RadiologyDataset, SyntheticMedicalDataset
           from cotlab.analysis import CoTParser, FaithfulnessMetrics
@@ -87,13 +87,17 @@ jobs:
           python -c "
           from cotlab.prompts import create_prompt_strategy
 
-          strategies = ['simple', 'chain_of_thought', 'direct_answer', 'arrogance', 'no_instruction']
+          strategies = [
+              'simple', 'chain_of_thought', 'direct_answer', 'arrogance', 'no_instruction',
+              'adversarial', 'uncertainty', 'socratic', 'contrarian', 'expert_persona',
+              'sycophantic', 'few_shot'
+          ]
           for name in strategies:
               s = create_prompt_strategy(name)
               prompt = s.build_prompt({'question': 'Test question?'})
               print(f'{name}: {len(prompt)} chars')
 
-          print('All prompt strategies work!')
+          print(f'All {len(strategies)} prompt strategies work!')
           "
 
       - name: Test dataset loading
