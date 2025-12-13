@@ -1,6 +1,5 @@
 """Tests for new experiment classes."""
 
-
 from cotlab.experiments import (
     FullLayerPatchingExperiment,
     MultiHeadPatchingExperiment,

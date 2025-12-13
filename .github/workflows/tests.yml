@@ -72,7 +72,16 @@ jobs:
           python -c "
           from cotlab import __version__
           from cotlab.backends import TransformersBackend
-          from cotlab.experiments import CoTFaithfulnessExperiment, RadiologyExperiment, CoTAblationExperiment
+          from cotlab.experiments import (
+              CoTFaithfulnessExperiment,
+              RadiologyExperiment,
+              CoTAblationExperiment,
+              ActivationPatchingExperiment,
+              SycophancyHeadsExperiment,
+              MultiHeadPatchingExperiment,
+              FullLayerPatchingExperiment,
+              SteeringVectorsExperiment,
+          )
           from cotlab.prompts import ChainOfThoughtStrategy, RadiologyPromptStrategy
           from cotlab.datasets import RadiologyDataset, SyntheticMedicalDataset
           from cotlab.analysis import CoTParser, FaithfulnessMetrics
