@@ -1,0 +1,6 @@
+# Gemma 3 270M IT
+name: google/gemma-3-270m-it
+variant: 270m
+max_new_tokens: 512
+temperature: 0.7
+top_p: 0.9

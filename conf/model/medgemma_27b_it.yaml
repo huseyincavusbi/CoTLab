@@ -1,0 +1,6 @@
+# MedGemma 27B IT (multimodal instruction tuned)
+name: google/medgemma-27b-it
+variant: 27b
+max_new_tokens: 512
+temperature: 0.7
+top_p: 0.9
