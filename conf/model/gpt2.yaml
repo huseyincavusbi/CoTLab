@@ -1,0 +1,6 @@
+# OpenAI GPT-2 - Simple architecture for testing
+name: openai-community/gpt2
+variant: gpt2
+max_new_tokens: 256
+temperature: 0.7
+top_p: 0.9
