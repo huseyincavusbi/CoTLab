@@ -56,8 +56,15 @@ python -m cotlab.main -m prompt=chain_of_thought,direct_answer,adversarial,sycop
 | Experiment | Description |
 |------------|-------------|
 | `cot_faithfulness` | Compare CoT vs Direct answers for consistency |
-| `activation_patching` | Causal interventions via residual stream patching |
 | `cot_ablation` | Zero reasoning tokens to test causal effects |
+| `cot_heads` | Find attention heads encoding CoT reasoning |
+| `multi_head_cot` | Patch multiple CoT heads simultaneously |
+| `activation_patching` | Causal interventions via residual stream patching |
+| `sycophancy_heads` | Find attention heads causing sycophancy |
+| `multi_head_patching` | Patch multiple sycophancy heads |
+| `full_layer_patching` | Patch attention + MLP for complete behavior reversal |
+| `steering_vectors` | Inference-time behavior control via activation differences |
+| `logit_lens` | Visualize layer-by-layer token predictions |
 | `radiology` | Structured JSON classification task |
 
 ## Configuration

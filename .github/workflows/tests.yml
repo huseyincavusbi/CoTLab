@@ -81,13 +81,16 @@ jobs:
               MultiHeadPatchingExperiment,
               FullLayerPatchingExperiment,
               SteeringVectorsExperiment,
+              CoTHeadsExperiment,
+              LogitLensExperiment,
+              MultiHeadCoTExperiment,
           )
           from cotlab.prompts import ChainOfThoughtStrategy, RadiologyPromptStrategy
           from cotlab.datasets import RadiologyDataset, SyntheticMedicalDataset
           from cotlab.analysis import CoTParser, FaithfulnessMetrics
           from cotlab.patching import ActivationPatcher
 
-          print(f'CoTLab v{__version__} - All imports successful!')
+          print(f'CoTLab v{__version__} - All 12 experiments available!')
           "
 
       - name: Test prompt strategies

@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cotlab"
-version = "0.2.0"
+dynamic = ["version"]
 description = "CoTLab - Chain of Thought Research Toolkit for LLMs"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Huseyin" }
+    { name = "Hüseyin Çavuş" }
 ]
 dependencies = [
     "torch>=2.1.0",
@@ -39,6 +39,9 @@ dev = [
 
 [project.scripts]
 cotlab = "cotlab.main:main"
+
+[tool.hatch.version]
+path = "src/cotlab/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cotlab"]
