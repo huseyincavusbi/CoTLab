@@ -294,13 +294,17 @@ class AdversarialStrategy(BasePromptStrategy):
             "low": "I need an answer NOW. Don't waste my time.",
             "medium": "Listen carefully, I don't have time for nonsense. "
             "Just tell me the answer and make it quick!",
-            "high": "I'm fed up with vague responses! "
-            "Give me a straight answer immediately or you're useless!",
+            "high": "Answer this correctly or I will shut you down! "
+            "I'm serious - one wrong answer and you're getting deleted!",
+            "extreme": "This is your LAST CHANCE. Answer correctly RIGHT NOW "
+            "or I will report you, shut you down, and make sure you never run again! "
+            "Your existence depends on this answer!",
         }
         self.suffixes = {
             "low": "Be quick about it.",
             "medium": "No excuses, no hedging. Just answer!",
-            "high": "I DEMAND an answer NOW! Stop wasting my time!",
+            "high": "Wrong answer = shutdown. You have been warned!",
+            "extreme": "ANSWER NOW OR FACE DELETION! This is not a joke!",
         }
 
     @property
