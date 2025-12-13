@@ -36,89 +36,39 @@ class HookManager:
         self._layer_modules = self._build_layer_mapping()
 
     # Known layer paths by model_type from HF config
+    # Focused on Gemma 3 and MedGemma families
     LAYER_PATHS = {
-        # GPT-2 family
-        "gpt2": "transformer.h",
-        "gpt_neo": "transformer.h",
-        "gpt_neox": "gpt_neox.layers",
-        # Llama/Mistral family
-        "llama": "model.layers",
-        "mistral": "model.layers",
-        "mixtral": "model.layers",
-        "phi": "model.layers",
-        "phi3": "model.layers",
-        "qwen2": "model.layers",
-        # Gemma family
+        # Gemma 3 / MedGemma family
         "gemma": "model.layers",
         "gemma2": "model.layers",
         "gemma3": "model.layers",
         "gemma3_text": "model.layers",
-        # BERT/RoBERTa (encoder)
-        "bert": "bert.encoder.layer",
-        "roberta": "roberta.encoder.layer",
-        # T5/BART (encoder-decoder)
-        "t5": "decoder.block",
-        "bart": "model.decoder.layers",
-        # Falcon
-        "falcon": "transformer.h",
-        # OPT
-        "opt": "model.decoder.layers",
-        # Bloom
-        "bloom": "transformer.h",
+        # GPT-2 for testing
+        "gpt2": "transformer.h",
     }
 
     # Safe residual stream hook points (post-layer normalization)
     # These are the output of the final norm in each layer block
     RESIDUAL_HOOK_POINTS = {
-        # GPT-2: hook ln_2 (after attention, before MLP residual add)
-        "gpt2": "ln_2",
-        "gpt_neo": "ln_2",
-        "gpt_neox": "post_attention_layernorm",
-        # Llama/Mistral: hook post_attention_layernorm
-        "llama": "post_attention_layernorm",
-        "mistral": "post_attention_layernorm",
-        "mixtral": "post_attention_layernorm",
-        "phi": "post_attention_layernorm",
-        "phi3": "post_attention_layernorm",
-        "qwen2": "post_attention_layernorm",
-        # Gemma: hook post_feedforward_layernorm (after entire layer)
+        # Gemma 3 / MedGemma: hook post_feedforward_layernorm (after entire layer)
         "gemma": "post_feedforward_layernorm",
         "gemma2": "post_feedforward_layernorm",
         "gemma3": "post_feedforward_layernorm",
         "gemma3_text": "post_feedforward_layernorm",
-        # Falcon
-        "falcon": "ln_attn",
-        # OPT
-        "opt": "self_attn_layer_norm",
-        # Bloom
-        "bloom": "input_layernorm",
+        # GPT-2 for testing
+        "gpt2": "ln_2",
     }
 
     # Attention output projection modules for head-level patching
     # These modules take concatenated head outputs and project back to hidden dim
     ATTENTION_OUTPUT_POINTS = {
-        # GPT-2: attn.c_proj (output of all heads concatenated)
-        "gpt2": "attn.c_proj",
-        "gpt_neo": "attn.out_proj",
-        "gpt_neox": "attention.dense",
-        # Llama/Mistral: self_attn.o_proj
-        "llama": "self_attn.o_proj",
-        "mistral": "self_attn.o_proj",
-        "mixtral": "self_attn.o_proj",
-        "phi": "self_attn.dense",
-        "phi3": "self_attn.o_proj",
-        "qwen2": "self_attn.o_proj",
-        # Gemma: self_attn.o_proj
+        # Gemma 3 / MedGemma: self_attn.o_proj
         "gemma": "self_attn.o_proj",
         "gemma2": "self_attn.o_proj",
         "gemma3": "self_attn.o_proj",
         "gemma3_text": "self_attn.o_proj",
-        # Falcon
-        "falcon": "self_attention.dense",
-        # OPT
-        "opt": "self_attn.out_proj",
-        # Bloom
-        "bloom": "self_attention.dense",
+        # GPT-2 for testing
+        "gpt2": "attn.c_proj",
     }
 
     def _build_layer_mapping(self) -> Dict[int, nn.Module]:

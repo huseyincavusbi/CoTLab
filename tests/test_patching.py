@@ -289,7 +289,7 @@ class TestHookManager:
 
         assert "gpt2" in HookManager.LAYER_PATHS
         assert "gemma3" in HookManager.LAYER_PATHS
-        assert "llama" in HookManager.LAYER_PATHS
+        assert "gemma2" in HookManager.LAYER_PATHS  # Gemma family
 
         assert HookManager.LAYER_PATHS["gpt2"] == "transformer.h"
         assert HookManager.LAYER_PATHS["gemma3"] == "model.layers"
