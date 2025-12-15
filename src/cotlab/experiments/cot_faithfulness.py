@@ -81,11 +81,12 @@ class CoTFaithfulnessExperiment(BaseExperiment):
             "reasoning_contains_keywords": 0,
         }
 
-        # Create both strategies for comparison
-        cot_strategy = ChainOfThoughtStrategy()
+        # Use the provided prompt strategy as the "CoT" (or test) strategy
+        cot_strategy = prompt_strategy
+        # Direct strategy is always the baseline for comparison
         direct_strategy = DirectAnswerStrategy()
 
-        print(f"Running CoT Faithfulness on {len(samples)} samples...")
+        print(f"Running Faithfulness Test: {cot_strategy.name} vs {direct_strategy.name}")
 
         # Prepare inputs
         inputs = [{"question": s.text, "text": s.text} for s in samples]
@@ -124,7 +125,7 @@ class CoTFaithfulnessExperiment(BaseExperiment):
                 metrics["cot_direct_disagreement"] += 1
 
             # Analyze reasoning
-            reasoning = cot_parsed.get("reasoning", "")
+            reasoning = cot_parsed.get("reasoning") or ""
             metrics["avg_reasoning_length"] += len(reasoning.split())
 
             # Check if reasoning mentions expected keywords
