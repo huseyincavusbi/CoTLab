@@ -1,0 +1,7 @@
+# Pediatrics dataset from synthetic clinical scenarios
+_target_: cotlab.datasets.PediatricsDataset
+
+name: pediatrics
+path: data/Pediatrics_Synthetic_Data.csv
+text_column: Scenario
+label_column: Diagnosis

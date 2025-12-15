@@ -117,7 +117,67 @@ class RadiologyDataset(BaseDataset):
         return self._samples[idx]
 
 
-@Registry.register_dataset("synthetic")
+@Registry.register_dataset("pediatrics")
+class PediatricsDataset(BaseDataset):
+    """
+    Dataset from CSV file with pediatrics clinical scenarios.
+
+    Uses data/Pediatrics_Synthetic_Data.csv with 100 general pediatrics cases.
+    """
+
+    def __init__(
+        self,
+        name: str = "pediatrics",
+        path: str = "data/Pediatrics_Synthetic_Data.csv",
+        text_column: str = "Scenario",
+        label_column: str = "Diagnosis",
+        **kwargs,
+    ):
+        self._name = name
+        self.path = Path(path)
+        self.text_column = text_column
+        self.label_column = label_column
+
+        self._samples: List[Sample] = []
+        self._load()
+
+    def _load(self):
+        """Load samples from CSV."""
+        if not self.path.exists():
+            raise FileNotFoundError(f"Dataset not found: {self.path}")
+
+        with open(self.path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for idx, row in enumerate(reader):
+                text = row.get(self.text_column, "")
+                label = row.get(self.label_column, "")
+                age_group = row.get("Age_Group", "")
+                category = row.get("Category", "")
+
+                self._samples.append(
+                    Sample(
+                        idx=idx,
+                        text=text.strip(),
+                        label=label.strip(),
+                        metadata={
+                            "age_group": age_group,
+                            "category": category,
+                            "source": str(self.path),
+                        },
+                    )
+                )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+
 class SyntheticMedicalDataset(BaseDataset):
     """
     Synthetic dataset for testing CoT experiments.
