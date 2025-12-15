@@ -21,6 +21,32 @@ source cotlab/bin/activate
 uv pip install -e ".[dev]"
 ```
 
+## Backend Compatibility
+
+CoTLab supports two inference backends with different strengths:
+
+### 1. vLLM Backend (High Performance)
+Best for large-scale generation experiments.
+- **Supported Experiments**: `cot_faithfulness`, `radiology`
+- **Supported Models**: All text-only models (e.g., `gemma_270m`, `medgemma_27b_text_it`)
+- **Limitation**: Does NOT support activation patching or internal state access.
+- **Note**: Gemma 3 multimodal models (e.g., `medgemma_4b_it`) are currently incompatible with vLLM 0.12.0 due to architecture detection issues. Use `transformers` backend for these.
+
+### 2. Transformers Backend (Full Access)
+Best for mechanistic interpretability and activation patching.
+- **Supported Experiments**: ALL experiments.
+- **Supported Models**: ALL models.
+- **Limitation**: Slower.
+
+To switch backends:
+```bash
+# Use vLLM (fast generation)
+python -m cotlab.main backend=vllm ...
+
+# Use Transformers (activation access)
+python -m cotlab.main backend=transformers ...
+```
+
 ## Quick Start
 
 ```bash
