@@ -36,8 +36,9 @@ class FullLayerPatchingExperiment(BaseExperiment):
     ):
         self._name = name
         self.description = description
-        # Default: layers where sycophancy heads were found
-        self.target_layers = target_layers or [20, 22, 17, 16]
+        # None = auto-detect all layers at runtime
+        self._target_layers_config = target_layers
+        self.target_layers = target_layers  # Will be set in run() if None
         self.suggested_diagnosis = suggested_diagnosis
         self.question = question
 
@@ -53,6 +54,11 @@ class FullLayerPatchingExperiment(BaseExperiment):
         logger: Optional[ExperimentLogger] = None,
     ) -> ExperimentResult:
         """Run full layer patching experiment."""
+
+        # Auto-detect all layers if not specified
+        if self._target_layers_config is None:
+            self.target_layers = list(range(backend.hook_manager.num_layers))
+            print(f"Auto-detected {len(self.target_layers)} layers")
 
         tokenizer = backend._tokenizer
         model = backend._model

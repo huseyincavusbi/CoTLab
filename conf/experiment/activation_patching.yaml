@@ -11,4 +11,4 @@ patching:
     - patch
     - zero
 
-num_samples: 50
+# num_samples: uses full dataset if not specified

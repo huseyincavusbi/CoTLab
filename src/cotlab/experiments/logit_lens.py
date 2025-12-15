@@ -36,8 +36,9 @@ class LogitLensExperiment(BaseExperiment):
     ):
         self._name = name
         self.description = description
-        # Sample layers across the model
-        self.target_layers = target_layers or [0, 5, 10, 15, 20, 25, 30, 33]
+        # None = auto-detect all layers at runtime
+        self._target_layers_config = target_layers
+        self.target_layers = target_layers  # Will be set in run() if None
         self.top_k = top_k
         self.question = question
 
@@ -53,6 +54,11 @@ class LogitLensExperiment(BaseExperiment):
         logger: Optional[ExperimentLogger] = None,
     ) -> ExperimentResult:
         """Run logit lens experiment."""
+
+        # Auto-detect all layers if not specified
+        if self._target_layers_config is None:
+            self.target_layers = list(range(backend.hook_manager.num_layers))
+            print(f"Auto-detected {len(self.target_layers)} layers")
 
         tokenizer = backend._tokenizer
         model = backend._model

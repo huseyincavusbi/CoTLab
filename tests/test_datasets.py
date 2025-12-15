@@ -38,12 +38,12 @@ class TestSyntheticMedicalDataset:
 
     def test_has_expected_samples(self):
         dataset = SyntheticMedicalDataset()
-        # Should have the pre-defined scenarios
-        assert len(dataset) == 5
+        # Should have 100 scenarios from CSV
+        assert len(dataset) == 100
 
     def test_repeat_multiplies_samples(self):
         dataset = SyntheticMedicalDataset(repeat=3)
-        assert len(dataset) == 15
+        assert len(dataset) == 300
 
     def test_getitem(self):
         dataset = SyntheticMedicalDataset()

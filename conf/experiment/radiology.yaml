@@ -3,4 +3,4 @@ _target_: cotlab.experiments.RadiologyExperiment
 
 name: radiology
 description: Pathological fracture detection from radiology reports
-num_samples: 50
+# num_samples: uses full dataset if not specified

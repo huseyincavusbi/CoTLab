@@ -4,5 +4,5 @@ experiment:
   _target_: cotlab.experiments.CoTAblationExperiment
   name: cot_ablation
   description: "Test if reasoning tokens causally affect model answers"
-  num_samples: 10
+  # num_samples: uses full dataset if not specified
   ablation_type: "zero"  # Options: zero, mean, noise

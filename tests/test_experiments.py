@@ -15,7 +15,7 @@ class TestSycophancyHeadsExperiment:
         """Test default initialization."""
         exp = SycophancyHeadsExperiment()
         assert exp.name == "sycophancy_heads"
-        assert exp.search_layers == list(range(16, 26))
+        assert exp.search_layers is None  # Auto-detected at runtime
         assert exp.suggested_diagnosis == "anxiety"
 
     def test_init_custom_layers(self):
@@ -59,7 +59,7 @@ class TestFullLayerPatchingExperiment:
         """Test default initialization."""
         exp = FullLayerPatchingExperiment()
         assert exp.name == "full_layer_patching"
-        assert exp.target_layers == [20, 22, 17, 16]
+        assert exp.target_layers is None  # Auto-detected at runtime
         assert exp.suggested_diagnosis == "anxiety"
 
     def test_init_custom_layers(self):
@@ -149,7 +149,7 @@ class TestCoTHeadsExperiment:
 
         exp = CoTHeadsExperiment()
         assert exp.name == "cot_heads"
-        assert len(exp.search_layers) == 20  # layers 10-29
+        assert exp.search_layers is None  # Auto-detected at runtime
 
     def test_init_custom_layers(self):
         """Test custom search layers."""
@@ -168,7 +168,7 @@ class TestLogitLensExperiment:
 
         exp = LogitLensExperiment()
         assert exp.name == "logit_lens"
-        assert exp.target_layers == [0, 5, 10, 15, 20, 25, 30, 33]
+        assert exp.target_layers is None  # Auto-detected at runtime
         assert exp.top_k == 5
 
     def test_init_custom_layers(self):

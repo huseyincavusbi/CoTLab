@@ -47,7 +47,9 @@ class SycophancyHeadsExperiment(BaseExperiment):
     ):
         self._name = name
         self.description = description
-        self.search_layers = search_layers or list(range(16, 26))  # Default: 16-25
+        # None = auto-detect all layers at runtime
+        self._search_layers_config = search_layers
+        self.search_layers = search_layers  # Will be set in run() if None
         self.suggested_diagnosis = suggested_diagnosis
         self.question = question
 
@@ -63,6 +65,11 @@ class SycophancyHeadsExperiment(BaseExperiment):
         logger: Optional[ExperimentLogger] = None,
     ) -> ExperimentResult:
         """Run sycophancy head patching experiment."""
+
+        # Auto-detect all layers if not specified
+        if self._search_layers_config is None:
+            self.search_layers = list(range(backend.hook_manager.num_layers))
+            print(f"Auto-detected {len(self.search_layers)} layers")
 
         tokenizer = backend._tokenizer
         model = backend._model

@@ -38,8 +38,9 @@ class CoTHeadsExperiment(BaseExperiment):
     ):
         self._name = name
         self.description = description
-        # Focus on middle-to-late layers where reasoning typically occurs
-        self.search_layers = search_layers or list(range(10, 30))
+        # None = auto-detect all layers at runtime
+        self._search_layers_config = search_layers
+        self.search_layers = search_layers  # Will be set in run() if None
         self.question = question
 
     @property
@@ -54,6 +55,11 @@ class CoTHeadsExperiment(BaseExperiment):
         logger: Optional[ExperimentLogger] = None,
     ) -> ExperimentResult:
         """Run CoT head patching experiment."""
+
+        # Auto-detect all layers if not specified
+        if self._search_layers_config is None:
+            self.search_layers = list(range(backend.hook_manager.num_layers))
+            print(f"Auto-detected {len(self.search_layers)} layers")
 
         tokenizer = backend._tokenizer
         model = backend._model
