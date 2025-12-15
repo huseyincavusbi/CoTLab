@@ -36,13 +36,22 @@ class HookManager:
         self._layer_modules = self._build_layer_mapping()
 
     # Known layer paths by model_type from HF config
-    # Focused on Gemma 3 and MedGemma families
+    # Focused on Gemma 3, MedGemma, and reasoning models
     LAYER_PATHS = {
         # Gemma 3 / MedGemma family
         "gemma": "model.layers",
         "gemma2": "model.layers",
         "gemma3": "model.layers",
         "gemma3_text": "model.layers",
+        # Mistral / Ministral (reasoning models)
+        "mistral": "model.layers",
+        # Qwen (DeepSeek-R1 distilled)
+        "qwen2": "model.layers",
+        # Olmo (Think models)
+        "olmo": "model.layers",
+        "olmo2": "model.layers",
+        # Nemotron / Llama-based
+        "llama": "model.layers",
         # GPT-2 for testing
         "gpt2": "transformer.h",
     }
@@ -55,6 +64,12 @@ class HookManager:
         "gemma2": "post_feedforward_layernorm",
         "gemma3": "post_feedforward_layernorm",
         "gemma3_text": "post_feedforward_layernorm",
+        # Mistral / Qwen / Olmo / Llama: hook post_attention_layernorm
+        "mistral": "post_attention_layernorm",
+        "qwen2": "post_attention_layernorm",
+        "olmo": "post_attention_layernorm",
+        "olmo2": "post_attention_layernorm",
+        "llama": "post_attention_layernorm",
         # GPT-2 for testing
         "gpt2": "ln_2",
     }
@@ -67,6 +82,12 @@ class HookManager:
         "gemma2": "self_attn.o_proj",
         "gemma3": "self_attn.o_proj",
         "gemma3_text": "self_attn.o_proj",
+        # Mistral / Qwen / Olmo / Llama: self_attn.o_proj
+        "mistral": "self_attn.o_proj",
+        "qwen2": "self_attn.o_proj",
+        "olmo": "self_attn.o_proj",
+        "olmo2": "self_attn.o_proj",
+        "llama": "self_attn.o_proj",
         # GPT-2 for testing
         "gpt2": "attn.c_proj",
     }

@@ -1,0 +1,6 @@
+# Olmo 3 32B Think
+name: allenai/Olmo-3-32B-Think
+variant: 32b
+max_new_tokens: 2048
+temperature: 0.7
+top_p: 0.9
