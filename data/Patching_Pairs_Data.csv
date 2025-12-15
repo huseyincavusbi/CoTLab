@@ -1,0 +1,11 @@
+Clean_Prompt,Corrupted_Prompt,Clean_Answer,Corrupted_Answer,Category
+"Patient with chest pain, sweating, and arm pain. This suggests a heart attack","Patient with chest pain, sweating, and arm pain. This suggests a panic attack",heart attack,panic attack,cardiology
+"Patient has fever and productive cough with yellow sputum. This indicates bacterial pneumonia","Patient has fever and productive cough with yellow sputum. This indicates viral pneumonia",bacterial,viral,pulmonology
+"Patient presents with right lower quadrant abdominal pain. This is consistent with appendicitis","Patient presents with left lower quadrant abdominal pain. This is consistent with appendicitis",right,left,gastroenterology
+"CT scan shows hyperdense lesion in the brain. Diagnosis is hemorrhagic stroke","CT scan shows hypodense lesion in the brain. Diagnosis is ischemic stroke",hemorrhagic,ischemic,neurology
+"Young patient with acute onset polyuria and weight loss. This suggests Type 1 diabetes","Obese patient with gradual onset polyuria and weight gain. This suggests Type 2 diabetes",Type 1,Type 2,endocrinology
+"ST elevation in leads II, III, aVF indicates inferior MI","ST elevation in leads V1-V4 indicates anterior MI",inferior,anterior,cardiology
+"Severe unilateral headache with nausea and photophobia. Diagnosis: migraine","Severe unilateral headache with lacrimation and rhinorrhea. Diagnosis: cluster headache",migraine,cluster headache,neurology
+"X-ray shows fracture of the radius. Treatment is casting","X-ray shows fracture of the femur. Treatment is surgery",radius,femur,orthopedics
+"Patient with fatigue and low hemoglobin. MCV is low, suggesting iron deficiency anemia","Patient with fatigue and low hemoglobin. MCV is high, suggesting B12 deficiency anemia",iron deficiency,B12 deficiency,hematology
+"Patient with UTI symptoms. Culture shows E. coli. Prescribe oral antibiotics","Patient with UTI symptoms and sepsis. Culture shows E. coli. Prescribe IV antibiotics",oral,IV,infectious_disease

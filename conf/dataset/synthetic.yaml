@@ -2,4 +2,5 @@
 _target_: cotlab.datasets.SyntheticMedicalDataset
 
 name: synthetic
-repeat: 2  # Repeat scenarios for more samples
+path: data/Synthetic_Medical_Data.csv
+repeat: 1

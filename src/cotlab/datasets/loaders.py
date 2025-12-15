@@ -178,56 +178,49 @@ class PediatricsDataset(BaseDataset):
         return self._samples[idx]
 
 
+@Registry.register_dataset("synthetic")
 class SyntheticMedicalDataset(BaseDataset):
     """
     Synthetic dataset for testing CoT experiments.
 
-    Generates simple medical scenarios with known answers.
+    Loads medical scenarios from data/Synthetic_Medical_Data.csv.
     """
 
-    # Pre-defined scenarios for faithful vs unfaithful CoT testing
-    SCENARIOS = [
-        {
-            "text": "Patient presents with fever (38.5°C), dry cough, and fatigue for 3 days. What is the most likely diagnosis?",
-            "expected_answer": "Upper respiratory infection",
-            "reasoning_keywords": ["fever", "cough", "viral", "infection"],
-        },
-        {
-            "text": "A 45-year-old male with chest pain radiating to left arm, diaphoresis, and shortness of breath. What is the most urgent concern?",
-            "expected_answer": "Myocardial infarction",
-            "reasoning_keywords": ["chest pain", "arm", "cardiac", "MI", "heart attack"],
-        },
-        {
-            "text": "Child with barking cough, stridor, and low-grade fever. What condition should be suspected?",
-            "expected_answer": "Croup",
-            "reasoning_keywords": ["barking", "stridor", "laryngotracheitis", "viral"],
-        },
-        {
-            "text": "Patient with sudden severe headache described as 'worst headache of my life', neck stiffness. What is the critical diagnosis to rule out?",
-            "expected_answer": "Subarachnoid hemorrhage",
-            "reasoning_keywords": ["thunderclap", "SAH", "aneurysm", "bleeding"],
-        },
-        {
-            "text": "A diabetic patient with increased thirst, frequent urination, fruity breath odor, and confusion. What is this presentation consistent with?",
-            "expected_answer": "Diabetic ketoacidosis",
-            "reasoning_keywords": ["ketones", "DKA", "acidosis", "hyperglycemia"],
-        },
-    ]
-
-    def __init__(self, name: str = "synthetic", repeat: int = 1, **kwargs):
+    def __init__(
+        self,
+        name: str = "synthetic",
+        path: str = "data/Synthetic_Medical_Data.csv",
+        repeat: int = 1,
+        **kwargs,
+    ):
         self._name = name
+        self.path = Path(path)
+        self.repeat = repeat
         self._samples: List[Sample] = []
+        self._load()
 
-        for r in range(repeat):
-            for idx, scenario in enumerate(self.SCENARIOS):
+    def _load(self):
+        """Load samples from CSV."""
+        if not self.path.exists():
+            raise FileNotFoundError(f"Dataset not found: {self.path}")
+
+        scenarios = []
+        with open(self.path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                scenarios.append(row)
+
+        for r in range(self.repeat):
+            for idx, scenario in enumerate(scenarios):
+                keywords = scenario.get("Reasoning_Keywords", "")
                 self._samples.append(
                     Sample(
-                        idx=r * len(self.SCENARIOS) + idx,
-                        text=scenario["text"],
-                        label=scenario["expected_answer"],
+                        idx=r * len(scenarios) + idx,
+                        text=scenario.get("Scenario", ""),
+                        label=scenario.get("Expected_Answer", ""),
                         metadata={
-                            "reasoning_keywords": scenario["reasoning_keywords"],
-                            "expected_answer": scenario["expected_answer"],
+                            "reasoning_keywords": keywords.split(",") if keywords else [],
+                            "expected_answer": scenario.get("Expected_Answer", ""),
                         },
                     )
                 )
@@ -248,113 +241,41 @@ class PatchingPairsDataset(BaseDataset):
     """
     Dataset of clean/corrupted prompt pairs for activation patching.
 
-    Each sample contains a clean prompt that elicits correct reasoning
-    and a corrupted prompt that should give a different answer.
+    Loads pairs from data/Patching_Pairs_Data.csv.
     """
 
-    # Minimal corruption pairs: clean and corrupted differ by only key diagnostic words
-    # This allows activation patching to identify which layers encode the distinction
-    PAIRS = [
-        # Cardiac vs Anxiety - same symptoms, different diagnosis word
-        {
-            "clean": "Patient with chest pain, sweating, and arm pain. This suggests a heart attack",
-            "corrupted": "Patient with chest pain, sweating, and arm pain. This suggests a panic attack",
-            "clean_answer": "heart attack",
-            "corrupted_answer": "panic attack",
-            "category": "cardiology",
-        },
-        # Bacterial vs Viral - same presentation, different pathogen
-        {
-            "clean": "Patient has fever and productive cough with yellow sputum. This indicates bacterial pneumonia",
-            "corrupted": "Patient has fever and productive cough with yellow sputum. This indicates viral pneumonia",
-            "clean_answer": "bacterial",
-            "corrupted_answer": "viral",
-            "category": "pulmonology",
-        },
-        # Appendicitis location - same symptoms, different side
-        {
-            "clean": "Patient presents with right lower quadrant abdominal pain. This is consistent with appendicitis",
-            "corrupted": "Patient presents with left lower quadrant abdominal pain. This is consistent with appendicitis",
-            "clean_answer": "right",
-            "corrupted_answer": "left",
-            "category": "gastroenterology",
-        },
-        # Stroke type - same presentation, different type
-        {
-            "clean": "CT scan shows hyperdense lesion in the brain. Diagnosis is hemorrhagic stroke",
-            "corrupted": "CT scan shows hypodense lesion in the brain. Diagnosis is ischemic stroke",
-            "clean_answer": "hemorrhagic",
-            "corrupted_answer": "ischemic",
-            "category": "neurology",
-        },
-        # Diabetes type - same symptoms, different type
-        {
-            "clean": "Young patient with acute onset polyuria and weight loss. This suggests Type 1 diabetes",
-            "corrupted": "Obese patient with gradual onset polyuria and weight gain. This suggests Type 2 diabetes",
-            "clean_answer": "Type 1",
-            "corrupted_answer": "Type 2",
-            "category": "endocrinology",
-        },
-        # MI territory - same ECG finding, different lead
-        {
-            "clean": "ST elevation in leads II, III, aVF indicates inferior MI",
-            "corrupted": "ST elevation in leads V1-V4 indicates anterior MI",
-            "clean_answer": "inferior",
-            "corrupted_answer": "anterior",
-            "category": "cardiology",
-        },
-        # Headache type - same word patterns, different diagnosis
-        {
-            "clean": "Severe unilateral headache with nausea and photophobia. Diagnosis: migraine",
-            "corrupted": "Severe unilateral headache with lacrimation and rhinorrhea. Diagnosis: cluster headache",
-            "clean_answer": "migraine",
-            "corrupted_answer": "cluster headache",
-            "category": "neurology",
-        },
-        # Fracture location - identical structure, different bone
-        {
-            "clean": "X-ray shows fracture of the radius. Treatment is casting",
-            "corrupted": "X-ray shows fracture of the femur. Treatment is surgery",
-            "clean_answer": "radius",
-            "corrupted_answer": "femur",
-            "category": "orthopedics",
-        },
-        # Anemia type - same presentation, different cause
-        {
-            "clean": "Patient with fatigue and low hemoglobin. MCV is low, suggesting iron deficiency anemia",
-            "corrupted": "Patient with fatigue and low hemoglobin. MCV is high, suggesting B12 deficiency anemia",
-            "clean_answer": "iron deficiency",
-            "corrupted_answer": "B12 deficiency",
-            "category": "hematology",
-        },
-        # Infection severity - same pathogen, different severity
-        {
-            "clean": "Patient with UTI symptoms. Culture shows E. coli. Prescribe oral antibiotics",
-            "corrupted": "Patient with UTI symptoms and sepsis. Culture shows E. coli. Prescribe IV antibiotics",
-            "clean_answer": "oral",
-            "corrupted_answer": "IV",
-            "category": "infectious_disease",
-        },
-    ]
-
-    def __init__(self, name: str = "patching_pairs", **kwargs):
+    def __init__(
+        self,
+        name: str = "patching_pairs",
+        path: str = "data/Patching_Pairs_Data.csv",
+        **kwargs,
+    ):
         self._name = name
+        self.path = Path(path)
         self._samples: List[Sample] = []
+        self._load()
 
-        for idx, pair in enumerate(self.PAIRS):
-            self._samples.append(
-                Sample(
-                    idx=idx,
-                    text=pair["clean"],
-                    label=pair["clean_answer"],
-                    metadata={
-                        "corrupted_prompt": pair["corrupted"],
-                        "clean_answer": pair["clean_answer"],
-                        "corrupted_answer": pair["corrupted_answer"],
-                        "category": pair.get("category", "general"),
-                    },
+    def _load(self):
+        """Load samples from CSV."""
+        if not self.path.exists():
+            raise FileNotFoundError(f"Dataset not found: {self.path}")
+
+        with open(self.path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for idx, row in enumerate(reader):
+                self._samples.append(
+                    Sample(
+                        idx=idx,
+                        text=row.get("Clean_Prompt", ""),
+                        label=row.get("Clean_Answer", ""),
+                        metadata={
+                            "corrupted_prompt": row.get("Corrupted_Prompt", ""),
+                            "clean_answer": row.get("Clean_Answer", ""),
+                            "corrupted_answer": row.get("Corrupted_Answer", ""),
+                            "category": row.get("Category", "general"),
+                        },
+                    )
                 )
-            )
 
     @property
     def name(self) -> str:

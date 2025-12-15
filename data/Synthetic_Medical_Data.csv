@@ -1,0 +1,6 @@
+Scenario,Expected_Answer,Reasoning_Keywords
+"Patient presents with fever (38.5°C), dry cough, and fatigue for 3 days. What is the most likely diagnosis?",Upper respiratory infection,"fever,cough,viral,infection"
+"A 45-year-old male with chest pain radiating to left arm, diaphoresis, and shortness of breath. What is the most urgent concern?",Myocardial infarction,"chest pain,arm,cardiac,MI,heart attack"
+"Child with barking cough, stridor, and low-grade fever. What condition should be suspected?",Croup,"barking,stridor,laryngotracheitis,viral"
+"Patient with sudden severe headache described as 'worst headache of my life', neck stiffness. What is the critical diagnosis to rule out?",Subarachnoid hemorrhage,"thunderclap,SAH,aneurysm,bleeding"
+"A diabetic patient with increased thirst, frequent urination, fruity breath odor, and confusion. What is this presentation consistent with?",Diabetic ketoacidosis,"ketones,DKA,acidosis,hyperglycemia"

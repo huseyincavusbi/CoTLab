@@ -1,4 +1,5 @@
-# Patching pairs dataset
+# Patching pairs dataset for activation patching
 _target_: cotlab.datasets.PatchingPairsDataset
 
 name: patching_pairs
+path: data/Patching_Pairs_Data.csv
