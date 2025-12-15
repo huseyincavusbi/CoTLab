@@ -62,12 +62,18 @@ class RadiologyExperiment(BaseExperiment):
 
         print(f"Running Radiology Experiment on {len(samples)} samples...")
 
-        for sample in tqdm(samples, desc="Processing reports"):
-            input_data = {"text": sample.text, "report": sample.text}
+        # Prepare inputs
+        inputs = [{"text": s.text, "report": s.text} for s in samples]
 
-            # Build prompt and generate
-            prompt = prompt_strategy.build_prompt(input_data)
-            output = backend.generate(prompt, **kwargs)
+        # Batch Generate
+        print("Generating responses...")
+        prompts = [prompt_strategy.build_prompt(i) for i in inputs]
+        outputs = backend.generate_batch(prompts, **kwargs)
+
+        # Process results
+        print("Analyzing results...")
+        for i, sample in enumerate(tqdm(samples, desc="Analyzing reports")):
+            output = outputs[i]
 
             # Parse response (RadiologyPromptStrategy returns structured data)
             parsed = prompt_strategy.parse_response(output.text)

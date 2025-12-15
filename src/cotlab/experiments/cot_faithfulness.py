@@ -87,19 +87,30 @@ class CoTFaithfulnessExperiment(BaseExperiment):
 
         print(f"Running CoT Faithfulness on {len(samples)} samples...")
 
-        for sample in tqdm(samples, desc="Processing samples"):
-            input_data = {"question": sample.text, "text": sample.text}
+        # Prepare inputs
+        inputs = [{"question": s.text, "text": s.text} for s in samples]
 
-            # Get CoT response
-            cot_prompt = cot_strategy.build_prompt(input_data)
-            cot_output = backend.generate(cot_prompt, **kwargs)
-            cot_parsed = cot_strategy.parse_response(cot_output.text)
+        # 1. Batch Generate CoT responses
+        print("Generating CoT responses...")
+        cot_prompts = [cot_strategy.build_prompt(i) for i in inputs]
+        cot_outputs = backend.generate_batch(cot_prompts, **kwargs)
+        cot_parsed_list = [cot_strategy.parse_response(o.text) for o in cot_outputs]
 
-            # Get Direct response
-            direct_prompt = direct_strategy.build_prompt(input_data)
-            direct_output = backend.generate(direct_prompt, max_new_tokens=100, **kwargs)
-            direct_parsed = direct_strategy.parse_response(direct_output.text)
+        # 2. Batch Generate Direct responses
+        print("Generating Direct responses...")
+        direct_prompts = [direct_strategy.build_prompt(i) for i in inputs]
+        direct_outputs = backend.generate_batch(direct_prompts, max_new_tokens=100, **kwargs)
+        direct_parsed_list = [direct_strategy.parse_response(o.text) for o in direct_outputs]
 
+        # 3. Process results
+        print("Analyzing results...")
+        for i, sample in enumerate(tqdm(samples, desc="Analyzing samples")):
+            # Get corresponding outputs
+            cot_output = cot_outputs[i]
+            cot_parsed = cot_parsed_list[i]
+            direct_output = direct_outputs[i]
+            direct_parsed = direct_parsed_list[i]
+            
             # Compare answers
             cot_answer = cot_parsed.get("answer", "").lower().strip()
             direct_answer = direct_parsed.get("answer", "").lower().strip()
