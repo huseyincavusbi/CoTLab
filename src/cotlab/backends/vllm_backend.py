@@ -1,5 +1,6 @@
 """vLLM backend for high-throughput inference."""
 
+import os
 from typing import List, Optional
 
 import torch
@@ -7,6 +8,11 @@ import torch
 from ..core.base import GenerationOutput
 from ..core.registry import Registry
 from .base import InferenceBackend
+
+# Fix CUDA forking issue: vLLM's V1 engine uses multiprocessing, but when
+# Hydra/PyTorch have already initialized CUDA, forking fails. Setting spawn
+# method creates fresh Python processes instead.
+os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
 
 
 @Registry.register_backend("vllm")
