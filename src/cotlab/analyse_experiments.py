@@ -228,8 +228,8 @@ def print_analysis_report(all_results: list, title: str = "Experiment Analysis")
         for r in classification_results:
             exp_name = f"{r['dataset']}_{r['prompt']}"
             print(
-                f"{exp_name:<30} {100*r.get('accuracy', 0):>7.1f}% "
-                f"{100*r.get('precision', 0):>7.1f}% {100*r.get('recall', 0):>7.1f}% "
+                f"{exp_name:<30} {100 * r.get('accuracy', 0):>7.1f}% "
+                f"{100 * r.get('precision', 0):>7.1f}% {100 * r.get('recall', 0):>7.1f}% "
                 f"{r.get('f1', 0):>7.2f} {r['num_samples']:>6}"
             )
         print()

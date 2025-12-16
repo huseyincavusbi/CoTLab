@@ -408,7 +408,7 @@ class HookManager:
                     # Source is 3D, take last token
                     return source_activation[:, -1, :].clone()
                 return hidden_states
-            
+
             # 3D Transformer case
             # Skip single-token decoding
             if hidden_states.shape[1] == 1:

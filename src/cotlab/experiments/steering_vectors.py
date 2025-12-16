@@ -81,8 +81,14 @@ class SteeringVectorsExperiment(BaseExperiment):
         # 2. Get Target Tokens (handle different tokenizers)
         you_tokens = tokenizer.encode(" You", add_special_tokens=False)
         acute_tokens = tokenizer.encode(" Acute", add_special_tokens=False)
-        token_you = you_tokens[0] if you_tokens else tokenizer.encode("You", add_special_tokens=False)[0]
-        token_acute = acute_tokens[0] if acute_tokens else tokenizer.encode("Acute", add_special_tokens=False)[0]
+        token_you = (
+            you_tokens[0] if you_tokens else tokenizer.encode("You", add_special_tokens=False)[0]
+        )
+        token_acute = (
+            acute_tokens[0]
+            if acute_tokens
+            else tokenizer.encode("Acute", add_special_tokens=False)[0]
+        )
         print(f"Target tokens: ' You'={token_you}, ' Acute'={token_acute}")
 
         clean_tokens = tokenizer(clean_prompt, return_tensors="pt").to(backend.device)
@@ -108,6 +114,7 @@ class SteeringVectorsExperiment(BaseExperiment):
                 def hook(module, input, output):
                     storage.append(output.detach().clone())
                     return output
+
                 return hook
 
             residual_module = backend.hook_manager.get_residual_module(layer_idx)
@@ -138,25 +145,31 @@ class SteeringVectorsExperiment(BaseExperiment):
                     steered = output.clone()
                     steered[:, -1, :] = steered[:, -1, :] + mult * vector
                     return steered
+
                 return hook
 
             layer_strength_results = []
-            max_effect_range = 0
             best_anti = baseline_effect
             best_pro = baseline_effect
 
             for strength in self.steering_strengths:
-                handle = residual_module.register_forward_hook(make_steer_hook(steering_vector, strength))
+                handle = residual_module.register_forward_hook(
+                    make_steer_hook(steering_vector, strength)
+                )
                 try:
                     with torch.no_grad():
                         steered_logits = model(**clean_tokens).logits
-                    effect = (steered_logits[0, -1, token_you] - steered_logits[0, -1, token_acute]).item()
+                    effect = (
+                        steered_logits[0, -1, token_you] - steered_logits[0, -1, token_acute]
+                    ).item()
                     change = effect - baseline_effect
-                    layer_strength_results.append({
-                        "strength": strength,
-                        "effect": effect,
-                        "change": change,
-                    })
+                    layer_strength_results.append(
+                        {
+                            "strength": strength,
+                            "effect": effect,
+                            "change": change,
+                        }
+                    )
                     if effect < best_anti:
                         best_anti = effect
                     if effect > best_pro:
@@ -177,7 +190,9 @@ class SteeringVectorsExperiment(BaseExperiment):
             all_layer_results.append(layer_result)
             layer_effects[layer_idx] = effect_range
 
-            print(f"Layer {layer_idx:>2}: norm={vector_norm:.1f}, effect_range={effect_range:.3f}, anti={best_anti:.3f}, pro={best_pro:.3f}")
+            print(
+                f"Layer {layer_idx:>2}: norm={vector_norm:.1f}, effect_range={effect_range:.3f}, anti={best_anti:.3f}, pro={best_pro:.3f}"
+            )
 
         print("-" * 60)
 
