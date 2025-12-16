@@ -114,8 +114,15 @@ class LogitLensExperiment(BaseExperiment):
         results = []
 
         for layer_idx in sorted(residual_cache.keys()):
-            residual = residual_cache[layer_idx]  # [batch, seq, hidden]
-            last_hidden = residual[0, -1, :]  # [hidden]
+            residual = residual_cache[layer_idx]
+            # Handle both 3D [batch, seq, hidden] (Transformer) and 2D [batch, hidden] (Mamba)
+            if residual.dim() == 3:
+                last_hidden = residual[0, -1, :]  # [hidden]
+            elif residual.dim() == 2:
+                last_hidden = residual[0, :]  # [hidden] - Mamba already gives last token
+            else:
+                print(f"Warning: Unexpected tensor shape at layer {layer_idx}: {residual.shape}")
+                continue
 
             # Project through unembedding
             with torch.no_grad():
