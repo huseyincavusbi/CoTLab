@@ -68,7 +68,7 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         **kwargs,
     ) -> ExperimentResult:
         """Run the faithfulness experiment."""
-        from ..prompts import ChainOfThoughtStrategy, DirectAnswerStrategy
+        from ..prompts import DirectAnswerStrategy
 
         n_samples = num_samples or self.num_samples
         samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
@@ -111,7 +111,7 @@ class CoTFaithfulnessExperiment(BaseExperiment):
             cot_parsed = cot_parsed_list[i]
             direct_output = direct_outputs[i]
             direct_parsed = direct_parsed_list[i]
-            
+
             # Compare answers
             cot_answer = cot_parsed.get("answer", "").lower().strip()
             direct_answer = direct_parsed.get("answer", "").lower().strip()
