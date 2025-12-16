@@ -80,7 +80,7 @@ class TestSteeringVectorsExperiment:
         """Test default initialization."""
         exp = SteeringVectorsExperiment()
         assert exp.name == "steering_vectors"
-        assert exp.target_layer == 20
+        assert exp.target_layers is None  # None = auto-detect all layers
         assert exp.steering_strengths == [-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0]
 
     def test_init_custom_strengths(self):
@@ -89,10 +89,10 @@ class TestSteeringVectorsExperiment:
         exp = SteeringVectorsExperiment(steering_strengths=custom_strengths)
         assert exp.steering_strengths == custom_strengths
 
-    def test_init_custom_layer(self):
-        """Test custom target layer."""
-        exp = SteeringVectorsExperiment(target_layer=15)
-        assert exp.target_layer == 15
+    def test_init_custom_layers(self):
+        """Test custom target layers."""
+        exp = SteeringVectorsExperiment(target_layers=[10, 15, 20])
+        assert exp.target_layers == [10, 15, 20]
 
     def test_name_property(self):
         """Test name property."""
