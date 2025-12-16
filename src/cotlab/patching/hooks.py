@@ -398,23 +398,39 @@ class HookManager:
             # Residual modules typically output a tensor directly (not tuple)
             hidden_states = output
 
+            # Handle both 2D [batch, hidden] (Mamba) and 3D [batch, seq, hidden] (Transformer)
+            if hidden_states.dim() == 2:
+                # Mamba: 2D tensor, no sequence dimension
+                # Simply replace with source activation if shapes match
+                if source_activation.dim() == 2:
+                    return source_activation.clone()
+                elif source_activation.dim() == 3:
+                    # Source is 3D, take last token
+                    return source_activation[:, -1, :].clone()
+                return hidden_states
+            
+            # 3D Transformer case
             # Skip single-token decoding
             if hidden_states.shape[1] == 1:
                 return hidden_states
 
             # Match shapes
             target_len = hidden_states.shape[1]
-            source_len = source_activation.shape[1]
+            source_len = source_activation.shape[1] if source_activation.dim() == 3 else 1
             min_len = min(target_len, source_len)
 
             if token_positions is None:
                 # Patch overlapping positions
                 patched = hidden_states.clone()
-                patched[:, :min_len, :] = source_activation[:, :min_len, :]
+                if source_activation.dim() == 3:
+                    patched[:, :min_len, :] = source_activation[:, :min_len, :]
+                else:
+                    # Source is 2D, expand to match
+                    patched[:, -1, :] = source_activation
             else:
                 patched = hidden_states.clone()
                 for pos in token_positions:
-                    if pos < target_len and pos < source_len:
+                    if pos < target_len and source_activation.dim() == 3 and pos < source_len:
                         patched[:, pos : pos + 1, :] = source_activation[:, pos : pos + 1, :]
 
             return patched
