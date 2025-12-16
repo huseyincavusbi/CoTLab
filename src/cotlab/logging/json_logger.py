@@ -112,6 +112,7 @@ class ExperimentLogger:
             "model": result.model_name,
             "prompt_strategy": result.prompt_strategy,
             "metrics": result.metrics,
+            "raw_outputs": result.raw_outputs,  # Include all layer results
             "num_samples": len(self._samples),
             "samples": self._samples,
             "end_time": datetime.now().isoformat(),
