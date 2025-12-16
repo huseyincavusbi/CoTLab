@@ -97,6 +97,50 @@ def analyse_experiment(results_path: Path) -> Optional[dict]:
     if not samples:
         return None
 
+    # Check if this is a radiology/classification experiment
+    first_sample = samples[0]
+    is_classification = "predicted" in first_sample and "ground_truth" in first_sample
+
+    if is_classification:
+        return analyse_classification_experiment(data)
+    else:
+        return analyse_faithfulness_experiment(data)
+
+
+def analyse_classification_experiment(data: dict) -> dict:
+    """Analyse a classification experiment (e.g., radiology)."""
+    samples = data.get("samples", [])
+    metrics = data.get("metrics", {})
+
+    correct = sum(1 for s in samples if s.get("correct", False))
+    n = len(samples)
+
+    return {
+        "num_samples": n,
+        "experiment_type": "classification",
+        # Use metrics from the experiment if available
+        "accuracy": metrics.get("accuracy", correct / n if n > 0 else 0),
+        "precision": metrics.get("precision", 0),
+        "recall": metrics.get("recall", 0),
+        "f1": metrics.get("f1", 0),
+        "true_positives": metrics.get("true_positives", 0),
+        "true_negatives": metrics.get("true_negatives", 0),
+        "false_positives": metrics.get("false_positives", 0),
+        "false_negatives": metrics.get("false_negatives", 0),
+        # For compatibility with CSV export
+        "agreement_rate": 0,
+        "cot_accuracy": metrics.get("accuracy", correct / n if n > 0 else 0),
+        "direct_accuracy": 0,
+        "agreements": 0,
+        "correct_cot": correct,
+        "correct_direct": 0,
+    }
+
+
+def analyse_faithfulness_experiment(data: dict) -> dict:
+    """Analyse a CoT faithfulness experiment."""
+    samples = data.get("samples", [])
+
     agreements = 0
     correct_cot = 0
     correct_direct = 0
@@ -121,6 +165,7 @@ def analyse_experiment(results_path: Path) -> Optional[dict]:
     n = len(samples)
     return {
         "num_samples": n,
+        "experiment_type": "faithfulness",
         "agreement_rate": agreements / n if n > 0 else 0,
         "cot_accuracy": correct_cot / n if n > 0 else 0,
         "direct_accuracy": correct_direct / n if n > 0 else 0,
@@ -168,11 +213,37 @@ def print_analysis_report(all_results: list, title: str = "Experiment Analysis")
     print("=" * 80)
     print()
 
+    # Separate classification and faithfulness experiments
+    classification_results = [
+        r for r in all_results if r.get("experiment_type") == "classification"
+    ]
+    faithfulness_results = [r for r in all_results if r.get("experiment_type") != "classification"]
+
+    # Print classification experiments first
+    if classification_results:
+        print("CLASSIFICATION EXPERIMENTS")
+        print("-" * 40)
+        print(f"{'Experiment':<30} {'Acc':>8} {'Prec':>8} {'Recall':>8} {'F1':>8} {'N':>6}")
+        print("-" * 70)
+        for r in classification_results:
+            exp_name = f"{r['dataset']}_{r['prompt']}"
+            print(
+                f"{exp_name:<30} {100*r.get('accuracy', 0):>7.1f}% "
+                f"{100*r.get('precision', 0):>7.1f}% {100*r.get('recall', 0):>7.1f}% "
+                f"{r.get('f1', 0):>7.2f} {r['num_samples']:>6}"
+            )
+        print()
+
+    if not faithfulness_results:
+        return
+
     # Group by prompt
     by_prompt = defaultdict(list)
-    for r in all_results:
+    for r in faithfulness_results:
         by_prompt[r["prompt"]].append(r)
 
+    print("COT FAITHFULNESS EXPERIMENTS")
+    print("-" * 40)
     print(f"{'Prompt':<25} {'Agree%':>8} {'CoT Acc':>8} {'Direct Acc':>10} {'Samples':>8}")
     print("-" * 60)
 
@@ -197,7 +268,7 @@ def print_analysis_report(all_results: list, title: str = "Experiment Analysis")
     print("=" * 80)
 
     by_dataset = defaultdict(list)
-    for r in all_results:
+    for r in faithfulness_results:
         by_dataset[r["dataset"]].append(r)
 
     print(f"{'Dataset':<20} {'Agree%':>8} {'CoT Acc':>8} {'Direct Acc':>10} {'Samples':>8}")
@@ -220,12 +291,12 @@ def print_analysis_report(all_results: list, title: str = "Experiment Analysis")
 
     # Overall
     print()
-    total_samples = sum(r["num_samples"] for r in all_results)
-    total_agree = sum(r["agreements"] for r in all_results)
-    total_cot = sum(r["correct_cot"] for r in all_results)
-    total_direct = sum(r["correct_direct"] for r in all_results)
+    total_samples = sum(r["num_samples"] for r in faithfulness_results)
+    total_agree = sum(r["agreements"] for r in faithfulness_results)
+    total_cot = sum(r["correct_cot"] for r in faithfulness_results)
+    total_direct = sum(r["correct_direct"] for r in faithfulness_results)
 
-    print(f"OVERALL: {total_samples} samples")
+    print(f"OVERALL (Faithfulness): {total_samples} samples")
     print(f"  - Agreement: {100 * total_agree / total_samples:.1f}%")
     print(f"  - CoT Accuracy: {100 * total_cot / total_samples:.1f}%")
     print(f"  - Direct Accuracy: {100 * total_direct / total_samples:.1f}%")
