@@ -71,6 +71,10 @@ python -m cotlab.main -m prompt=chain_of_thought,direct_answer,sycophantic
 | **MedGemma** | 4b-pt, 4b-it, 27b-text-it |
 | **Reasoning** | DeepSeek-R1-32B, Ministral-14B, Olmo-3/3.1-32B-Think, Nemotron-30B |
 
+> **Note on Model Compatibility:**
+> - **Nemotron-30B**: Uses Mamba (SSM) + MoE hybrid architecture. Only `logit_lens` is supported; activation patching fails due to MoE routing.
+> - **Ministral-14B**: Multimodal model requiring `AutoModelWithImageTextToText`. Not supported with current text-only backend.
+
 ```bash
 # Use any model config
 python -m cotlab.main model=medgemma_4b
