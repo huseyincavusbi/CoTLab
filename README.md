@@ -89,7 +89,7 @@ python -m cotlab.main model=olmo_31_32b_think
 | `pediatrics` | 100 | General pediatrics scenarios |
 | `synthetic` | 100 | General medical QA |
 | `patching_pairs` | 100 | Clean/corrupted pairs for activation patching |
-| `radiology` | 89 | Radiology reports |
+| `radiology` | 9 | Radiology reports for testing |
 
 ## Experiments
 
