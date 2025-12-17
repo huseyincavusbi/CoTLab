@@ -1,0 +1,7 @@
+# Transformers backend for Apple Silicon
+_target_: cotlab.backends.TransformersBackend
+
+device: mps
+dtype: bfloat16
+enable_hooks: true
+trust_remote_code: true
