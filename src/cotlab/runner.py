@@ -16,7 +16,7 @@ def main():
         "--backend",
         type=str,
         default="vllm",
-        choices=["vllm", "transformers"],
+        choices=["vllm", "transformers", "transformers_mps"],
         help="Backend to use (default: vllm)",
     )
     parser.add_argument(
