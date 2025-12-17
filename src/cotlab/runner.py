@@ -1,3 +1,4 @@
+import argparse
 from datetime import datetime
 from pathlib import Path
 
@@ -9,9 +10,29 @@ from cotlab.logging import ExperimentLogger
 
 
 def main():
-    # Setup base output directory
+    # Parse CLI arguments
+    parser = argparse.ArgumentParser(description="Run CoTLab experiment batch")
+    parser.add_argument(
+        "--backend",
+        type=str,
+        default="vllm",
+        choices=["vllm", "transformers"],
+        help="Backend to use (default: vllm)",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="medgemma_27b_text_it",
+        help="Model config name (default: medgemma_27b_text_it)",
+    )
+    args = parser.parse_args()
+
+    backend_name = args.backend
+    model_name = args.model
+
+    # Setup base output directory with model name
     timestamp = datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
-    base_output_dir = Path(f"outputs/{timestamp}")
+    base_output_dir = Path(f"outputs/{timestamp}_{model_name}_{backend_name}")
     base_output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Output directory: {base_output_dir}")
 
@@ -19,15 +40,15 @@ def main():
     with initialize(version_base=None, config_path="../../conf"):
         # 1. Load Backend & Model ONCE
         print("=" * 60)
-        print("Initializing Backend and Model...")
+        print(f"Initializing Backend ({backend_name}) and Model ({model_name})...")
         print("=" * 60)
 
         # Base config to load model
         base_cfg = compose(
             config_name="config",
             overrides=[
-                "backend=vllm",
-                "model=medgemma_27b_text_it",
+                f"backend={backend_name}",
+                f"model={model_name}",
                 "experiment=cot_faithfulness",  # Dummy
                 "dataset=pediatrics",  # Dummy
                 "prompt=chain_of_thought",  # Dummy
@@ -80,8 +101,8 @@ def main():
 
                     # Create specific config override
                     overrides = [
-                        "backend=vllm",
-                        "model=medgemma_27b_text_it",
+                        f"backend={backend_name}",
+                        f"model={model_name}",
                         f"experiment={exp_name}",
                         f"dataset={dataset_name}",
                         f"prompt={prompt_name}",
