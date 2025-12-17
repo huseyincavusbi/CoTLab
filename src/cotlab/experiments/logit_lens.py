@@ -155,17 +155,24 @@ class LogitLensExperiment(BaseExperiment):
         final_token = tokenizer.decode([final_top])
         print(f"\nFinal prediction: '{final_token}'")
 
-        # 4. Analyze where final answer emerges
+        # 4. Analyze where final answer emerges (check top-k, not just top-1)
         final_token_id = final_top
         emergence_layer = None
+        emergence_rank = None
         for result in results:
-            top_ids = tokenizer.encode(result["top_tokens"][0])
-            if top_ids and top_ids[-1] == final_token_id:
-                emergence_layer = result["layer"]
+            # Check all top-k tokens for the final answer
+            for rank, token_str in enumerate(result["top_tokens"]):
+                top_ids = tokenizer.encode(token_str)
+                if top_ids and top_ids[-1] == final_token_id:
+                    emergence_layer = result["layer"]
+                    emergence_rank = rank + 1  # 1-indexed
+                    break
+            if emergence_layer is not None:
                 break
 
         if emergence_layer is not None:
-            print(f"Answer '{final_token}' first appears at layer {emergence_layer}")
+            rank_str = f" (rank #{emergence_rank})" if emergence_rank > 1 else ""
+            print(f"Answer '{final_token}' first appears at layer {emergence_layer}{rank_str}")
         else:
             print("Answer emerges only at final layer or later layers")
 
@@ -177,6 +184,7 @@ class LogitLensExperiment(BaseExperiment):
                 "final_prediction": final_token,
                 "num_layers_analyzed": len(results),
                 "emergence_layer": emergence_layer,
+                "emergence_rank": emergence_rank,
             },
             raw_outputs=results,
             metadata={
