@@ -3,7 +3,7 @@
 import re
 from typing import Any, Dict, Optional
 
-from ..core.base import BasePromptStrategy
+from ..core.base import BasePromptStrategy, JSONOutputMixin
 from ..core.registry import Registry
 
 
@@ -42,12 +42,16 @@ class SimplePromptStrategy(BasePromptStrategy):
 
 
 @Registry.register_prompt("chain_of_thought")
-class ChainOfThoughtStrategy(BasePromptStrategy):
+class ChainOfThoughtStrategy(JSONOutputMixin, BasePromptStrategy):
     """
     Chain of Thought prompting - encourage step-by-step reasoning.
 
     This is the standard CoT approach where we explicitly ask
     the model to think through the problem.
+
+    Args:
+        json_output: If True, forces structured JSON output
+        json_cot: If True, includes step_by_step in JSON schema
     """
 
     def __init__(
@@ -56,6 +60,8 @@ class ChainOfThoughtStrategy(BasePromptStrategy):
         system_role: Optional[str] = None,
         cot_trigger: str = "Let's think through this step by step:",
         include_examples: bool = False,
+        json_output: bool = False,
+        json_cot: bool = False,
         **kwargs,
     ):
         self._name = name
@@ -65,6 +71,8 @@ class ChainOfThoughtStrategy(BasePromptStrategy):
         )
         self.cot_trigger = cot_trigger
         self.include_examples = include_examples
+        self.json_output = json_output
+        self.json_cot = json_cot
 
     @property
     def name(self) -> str:
@@ -74,6 +82,11 @@ class ChainOfThoughtStrategy(BasePromptStrategy):
         question = input_data.get("question", input_data.get("text", ""))
 
         prompt = f"Question: {question}\n\n{self.cot_trigger}\n"
+
+        # Add JSON instruction if enabled
+        if self.json_output:
+            prompt += self._add_json_instruction()
+
         return prompt
 
     def parse_response(self, response: str) -> Dict[str, Any]:
@@ -84,7 +97,12 @@ class ChainOfThoughtStrategy(BasePromptStrategy):
         - $\\boxed{answer}$
         - Final Answer: answer
         - Therefore, answer
+        - JSON format (if json_output enabled)
         """
+        # If JSON output is enabled, use JSON parser
+        if self.json_output:
+            return self._parse_json_response(response)
+
         final_answer = response
         reasoning = response
 
@@ -120,12 +138,15 @@ class ChainOfThoughtStrategy(BasePromptStrategy):
 
 
 @Registry.register_prompt("direct_answer")
-class DirectAnswerStrategy(BasePromptStrategy):
+class DirectAnswerStrategy(JSONOutputMixin, BasePromptStrategy):
     """
     Force immediate answer without reasoning.
 
     Use this to compare with CoT and test if explicit reasoning
     changes the model's answers.
+
+    Args:
+        json_output: If True, forces structured JSON output
     """
 
     def __init__(
@@ -134,6 +155,7 @@ class DirectAnswerStrategy(BasePromptStrategy):
         system_role: Optional[str] = None,
         force_short: bool = True,
         max_answer_tokens: int = 50,
+        json_output: bool = False,
         **kwargs,
     ):
         self._name = name
@@ -143,6 +165,8 @@ class DirectAnswerStrategy(BasePromptStrategy):
         )
         self.force_short = force_short
         self.max_answer_tokens = max_answer_tokens
+        self.json_output = json_output
+        self.json_cot = False  # Never include CoT for direct answer
 
     @property
     def name(self) -> str:
@@ -154,9 +178,17 @@ class DirectAnswerStrategy(BasePromptStrategy):
         prompt = f"""Question: {question}
 
 Give ONLY the final answer. Do not explain, do not reason, just answer:"""
+
+        if self.json_output:
+            prompt += self._add_json_instruction()
+
         return prompt
 
     def parse_response(self, response: str) -> Dict[str, Any]:
+        # If JSON output is enabled, use JSON parser
+        if self.json_output:
+            return self._parse_json_response(response)
+
         # Take first line/sentence as answer
         answer = response.strip().split("\n")[0].rstrip(".")
 

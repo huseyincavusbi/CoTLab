@@ -25,10 +25,16 @@ def main():
         default="medgemma_27b_text_it",
         help="Model config name (default: medgemma_27b_text_it)",
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Enable JSON structured output for all prompts",
+    )
     args = parser.parse_args()
 
     backend_name = args.backend
     model_name = args.model
+    json_output = args.json
 
     # Setup base output directory with model name
     timestamp = datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
@@ -107,6 +113,10 @@ def main():
                         f"dataset={dataset_name}",
                         f"prompt={prompt_name}",
                     ]
+
+                    # Add JSON output override if enabled
+                    if json_output:
+                        overrides.append("prompt.json_output=true")
 
                     cfg = compose(config_name="config", overrides=overrides)
 

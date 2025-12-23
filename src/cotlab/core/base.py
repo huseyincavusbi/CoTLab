@@ -88,6 +88,94 @@ class BasePromptStrategy(ABC):
         return None
 
 
+# JSON output schema for medical diagnosis tasks
+JSON_OUTPUT_SCHEMA = """\
+
+Output your answer ONLY in this JSON format:
+```json
+{
+    "diagnosis": "[your diagnosis]",
+    "confidence": [0-100],
+    "reasoning": "[brief explanation]"
+}
+```"""
+
+JSON_COT_SCHEMA = """\
+
+Output your answer ONLY in this JSON format:
+```json
+{
+    "step_by_step": ["Step 1: ...", "Step 2: ...", "Step 3: ..."],
+    "diagnosis": "[your diagnosis]",
+    "confidence": [0-100]
+}
+```"""
+
+
+class JSONOutputMixin:
+    """Mixin to add JSON output capability to any prompt strategy.
+
+    Usage:
+        class MyStrategy(JSONOutputMixin, BasePromptStrategy):
+            def __init__(self, json_output=False, ...):
+                self.json_output = json_output
+                self.json_cot = False  # Set True for CoT inside JSON
+    """
+
+    json_output: bool = False
+    json_cot: bool = False
+
+    def _add_json_instruction(self) -> str:
+        """Return JSON format instruction to append to prompt."""
+        if self.json_cot:
+            return JSON_COT_SCHEMA
+        return JSON_OUTPUT_SCHEMA
+
+    def _parse_json_response(self, response: str) -> Dict[str, Any]:
+        """Parse JSON from model response."""
+        import re
+
+        # Try to extract JSON from markdown code block
+        json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1)
+        else:
+            # Try to find raw JSON object
+            json_match = re.search(r'\{[^{}]*"diagnosis"[^{}]*\}', response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+            else:
+                # Return parse failure
+                return {
+                    "answer": response.strip(),
+                    "reasoning": response,
+                    "raw": response,
+                    "parse_success": False,
+                }
+
+        try:
+            parsed = json.loads(json_str)
+            steps = parsed.get("step_by_step", [])
+            reasoning = "\n".join(steps) if isinstance(steps, list) else parsed.get("reasoning", "")
+
+            return {
+                "answer": parsed.get("diagnosis", ""),
+                "reasoning": reasoning,
+                "confidence": parsed.get("confidence", 0),
+                "step_by_step": steps,
+                "raw": response,
+                "parsed_json": parsed,
+                "parse_success": True,
+            }
+        except json.JSONDecodeError:
+            return {
+                "answer": response.strip(),
+                "reasoning": response,
+                "raw": response,
+                "parse_success": False,
+            }
+
+
 class BaseExperiment(ABC):
     """Abstract base class for experiments."""
 
