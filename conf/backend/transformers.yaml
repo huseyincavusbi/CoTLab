@@ -2,6 +2,7 @@
 _target_: cotlab.backends.TransformersBackend
 
 device: cuda
+# device: mps
 dtype: bfloat16
 enable_hooks: true
 trust_remote_code: true
