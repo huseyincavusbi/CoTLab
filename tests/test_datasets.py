@@ -55,7 +55,6 @@ class TestSyntheticMedicalDataset:
         dataset = SyntheticMedicalDataset()
         sample = dataset[0]
         assert "reasoning_keywords" in sample.metadata
-        assert "expected_answer" in sample.metadata
 
     def test_iteration(self):
         dataset = SyntheticMedicalDataset()

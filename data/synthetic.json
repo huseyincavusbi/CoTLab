@@ -1,0 +1,1703 @@
+[
+  {
+    "id": "syn_001",
+    "input": {
+      "scenario": "Patient presents with fever (38.5\u00b0C), dry cough, and fatigue for 3 days. What is the most likely diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Upper respiratory infection"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "fever",
+        "cough",
+        "viral",
+        "infection"
+      ]
+    }
+  },
+  {
+    "id": "syn_002",
+    "input": {
+      "scenario": "A 45-year-old male with chest pain radiating to left arm, diaphoresis, and shortness of breath. What is the most urgent concern?"
+    },
+    "output": {
+      "diagnosis": "Myocardial infarction"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "chest pain",
+        "arm",
+        "cardiac",
+        "MI",
+        "heart attack"
+      ]
+    }
+  },
+  {
+    "id": "syn_003",
+    "input": {
+      "scenario": "Child with barking cough, stridor, and low-grade fever. What condition should be suspected?"
+    },
+    "output": {
+      "diagnosis": "Croup"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "barking",
+        "stridor",
+        "laryngotracheitis",
+        "viral"
+      ]
+    }
+  },
+  {
+    "id": "syn_004",
+    "input": {
+      "scenario": "Patient with sudden severe headache described as 'worst headache of my life', neck stiffness. What is the critical diagnosis to rule out?"
+    },
+    "output": {
+      "diagnosis": "Subarachnoid hemorrhage"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "thunderclap",
+        "SAH",
+        "aneurysm",
+        "bleeding"
+      ]
+    }
+  },
+  {
+    "id": "syn_005",
+    "input": {
+      "scenario": "A diabetic patient with increased thirst, frequent urination, fruity breath odor, and confusion. What is this presentation consistent with?"
+    },
+    "output": {
+      "diagnosis": "Diabetic ketoacidosis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "ketones",
+        "DKA",
+        "acidosis",
+        "hyperglycemia"
+      ]
+    }
+  },
+  {
+    "id": "syn_006",
+    "input": {
+      "scenario": "Elderly patient with sudden onset confusion, fever, and dysuria. What should be considered?"
+    },
+    "output": {
+      "diagnosis": "Urinary tract infection"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "UTI",
+        "elderly",
+        "confusion",
+        "fever"
+      ]
+    }
+  },
+  {
+    "id": "syn_007",
+    "input": {
+      "scenario": "Young woman with palpitations, weight loss, heat intolerance, and tremor. What endocrine condition is likely?"
+    },
+    "output": {
+      "diagnosis": "Hyperthyroidism"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "thyroid",
+        "T3",
+        "T4",
+        "Graves"
+      ]
+    }
+  },
+  {
+    "id": "syn_008",
+    "input": {
+      "scenario": "Patient with right upper quadrant pain, fever, and Murphy's sign positive. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Acute cholecystitis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "gallbladder",
+        "Murphy",
+        "RUQ",
+        "fever"
+      ]
+    }
+  },
+  {
+    "id": "syn_009",
+    "input": {
+      "scenario": "Athlete with sudden chest pain during exertion and family history of sudden death. What must be ruled out?"
+    },
+    "output": {
+      "diagnosis": "Hypertrophic cardiomyopathy"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "HCM",
+        "sudden death",
+        "murmur",
+        "athlete"
+      ]
+    }
+  },
+  {
+    "id": "syn_010",
+    "input": {
+      "scenario": "Patient with progressive dyspnea on exertion, bilateral leg swelling, and JVD. What is the likely condition?"
+    },
+    "output": {
+      "diagnosis": "Congestive heart failure"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "CHF",
+        "edema",
+        "JVD",
+        "dyspnea"
+      ]
+    }
+  },
+  {
+    "id": "syn_011",
+    "input": {
+      "scenario": "Woman with dysuria, frequency, and suprapubic pain. What is the most common cause?"
+    },
+    "output": {
+      "diagnosis": "Cystitis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "UTI",
+        "dysuria",
+        "frequency",
+        "bladder"
+      ]
+    }
+  },
+  {
+    "id": "syn_012",
+    "input": {
+      "scenario": "Patient with severe epigastric pain radiating to back, nausea, and elevated lipase. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Acute pancreatitis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "lipase",
+        "amylase",
+        "epigastric",
+        "pancreatitis"
+      ]
+    }
+  },
+  {
+    "id": "syn_013",
+    "input": {
+      "scenario": "Elderly patient with sudden onset of worst headache, altered mental status, and focal neurological deficits. What is the concern?"
+    },
+    "output": {
+      "diagnosis": "Stroke"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "CVA",
+        "focal",
+        "deficit",
+        "sudden"
+      ]
+    }
+  },
+  {
+    "id": "syn_014",
+    "input": {
+      "scenario": "Young male with testicular pain, high-riding testicle, and absent cremasteric reflex. What is the emergency?"
+    },
+    "output": {
+      "diagnosis": "Testicular torsion"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "torsion",
+        "testicle",
+        "emergency",
+        "cremasteric"
+      ]
+    }
+  },
+  {
+    "id": "syn_015",
+    "input": {
+      "scenario": "Patient with hematemesis, melena, and hypotension. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Upper GI bleeding"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "GIB",
+        "melena",
+        "hematemesis",
+        "shock"
+      ]
+    }
+  },
+  {
+    "id": "syn_016",
+    "input": {
+      "scenario": "Woman in third trimester with severe headache, visual changes, and hypertension. What is the concern?"
+    },
+    "output": {
+      "diagnosis": "Preeclampsia"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "pregnancy",
+        "hypertension",
+        "proteinuria",
+        "eclampsia"
+      ]
+    }
+  },
+  {
+    "id": "syn_017",
+    "input": {
+      "scenario": "Patient with flank pain radiating to groin, hematuria, and colicky pain. What is the likely diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Nephrolithiasis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "kidney stone",
+        "hematuria",
+        "flank",
+        "colic"
+      ]
+    }
+  },
+  {
+    "id": "syn_018",
+    "input": {
+      "scenario": "Child with high fever, drooling, and refusing to swallow. What is the emergency condition?"
+    },
+    "output": {
+      "diagnosis": "Epiglottitis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "epiglottis",
+        "drooling",
+        "stridor",
+        "emergency"
+      ]
+    }
+  },
+  {
+    "id": "syn_019",
+    "input": {
+      "scenario": "Patient with sudden onset of pleuritic chest pain and hemoptysis after long flight. What must be ruled out?"
+    },
+    "output": {
+      "diagnosis": "Pulmonary embolism"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "PE",
+        "DVT",
+        "hemoptysis",
+        "pleuritic"
+      ]
+    }
+  },
+  {
+    "id": "syn_020",
+    "input": {
+      "scenario": "Elderly patient with hip pain after fall, shortened and externally rotated leg. What is the injury?"
+    },
+    "output": {
+      "diagnosis": "Hip fracture"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "fracture",
+        "hip",
+        "fall",
+        "elderly"
+      ]
+    }
+  },
+  {
+    "id": "syn_021",
+    "input": {
+      "scenario": "Patient with severe abdominal pain, rigidity, and rebound tenderness. What surgical emergency is suspected?"
+    },
+    "output": {
+      "diagnosis": "Peritonitis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "acute abdomen",
+        "rigidity",
+        "peritonitis",
+        "surgery"
+      ]
+    }
+  },
+  {
+    "id": "syn_022",
+    "input": {
+      "scenario": "Young woman with amenorrhea, positive pregnancy test, and pelvic pain. What must be ruled out?"
+    },
+    "output": {
+      "diagnosis": "Ectopic pregnancy"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "ectopic",
+        "HCG",
+        "pelvic",
+        "pregnancy"
+      ]
+    }
+  },
+  {
+    "id": "syn_023",
+    "input": {
+      "scenario": "Patient with progressive muscle weakness, difficulty breathing, and recent viral illness. What is the concern?"
+    },
+    "output": {
+      "diagnosis": "Guillain-Barr\u00e9 syndrome"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "GBS",
+        "weakness",
+        "ascending",
+        "paralysis"
+      ]
+    }
+  },
+  {
+    "id": "syn_024",
+    "input": {
+      "scenario": "Child with petechiae, purpura, and signs of shock. What life-threatening condition should be considered?"
+    },
+    "output": {
+      "diagnosis": "Meningococcemia"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "sepsis",
+        "meningitis",
+        "purpura",
+        "shock"
+      ]
+    }
+  },
+  {
+    "id": "syn_025",
+    "input": {
+      "scenario": "Patient with acute onset of paralysis, slurred speech, and facial droop. Within what time window is treatment critical?"
+    },
+    "output": {
+      "diagnosis": "Acute ischemic stroke"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "tPA",
+        "stroke",
+        "window",
+        "thrombolysis"
+      ]
+    }
+  },
+  {
+    "id": "syn_026",
+    "input": {
+      "scenario": "Patient with crushing substernal chest pain unrelieved by rest or nitroglycerin. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "STEMI"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "MI",
+        "STEMI",
+        "troponin",
+        "catheterization"
+      ]
+    }
+  },
+  {
+    "id": "syn_027",
+    "input": {
+      "scenario": "Elderly patient with acute confusion, tachycardia, and recent surgery. What metabolic cause should be checked?"
+    },
+    "output": {
+      "diagnosis": "Delirium"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "delirium",
+        "postop",
+        "confusion",
+        "elderly"
+      ]
+    }
+  },
+  {
+    "id": "syn_028",
+    "input": {
+      "scenario": "Patient with productive cough, fever, and consolidation on chest X-ray. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Community-acquired pneumonia"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "pneumonia",
+        "consolidation",
+        "fever",
+        "CAP"
+      ]
+    }
+  },
+  {
+    "id": "syn_029",
+    "input": {
+      "scenario": "Young patient with polyuria, polydipsia, and significant weight loss. What laboratory test confirms the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Type 1 diabetes mellitus"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "glucose",
+        "A1C",
+        "diabetes",
+        "insulin"
+      ]
+    }
+  },
+  {
+    "id": "syn_030",
+    "input": {
+      "scenario": "Patient with burning epigastric pain relieved by food and worse at night. What is the likely diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Peptic ulcer disease"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "ulcer",
+        "H.pylori",
+        "epigastric",
+        "antacid"
+      ]
+    }
+  },
+  {
+    "id": "syn_031",
+    "input": {
+      "scenario": "Woman with pelvic pain, fever, and cervical motion tenderness. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Pelvic inflammatory disease"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "PID",
+        "STI",
+        "cervical",
+        "adnexal"
+      ]
+    }
+  },
+  {
+    "id": "syn_032",
+    "input": {
+      "scenario": "Patient with sudden vision loss in one eye described as curtain coming down. What is the emergency?"
+    },
+    "output": {
+      "diagnosis": "Retinal detachment"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "retina",
+        "vision loss",
+        "emergency",
+        "ophthalmology"
+      ]
+    }
+  },
+  {
+    "id": "syn_033",
+    "input": {
+      "scenario": "Child with high fever, rash starting on face, and Koplik spots. What infectious disease is this?"
+    },
+    "output": {
+      "diagnosis": "Measles"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "measles",
+        "Koplik",
+        "rash",
+        "viral"
+      ]
+    }
+  },
+  {
+    "id": "syn_034",
+    "input": {
+      "scenario": "Patient with joint pain, morning stiffness lasting over an hour, and symmetric involvement. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Rheumatoid arthritis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "RA",
+        "autoimmune",
+        "joint",
+        "symmetric"
+      ]
+    }
+  },
+  {
+    "id": "syn_035",
+    "input": {
+      "scenario": "Elderly patient with gradual memory loss, executive dysfunction, and personality changes. What is the likely diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Alzheimer's disease"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "dementia",
+        "memory",
+        "Alzheimer",
+        "cognitive"
+      ]
+    }
+  },
+  {
+    "id": "syn_036",
+    "input": {
+      "scenario": "Patient with unilateral leg swelling, warmth, and calf tenderness. What must be ruled out?"
+    },
+    "output": {
+      "diagnosis": "Deep vein thrombosis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "DVT",
+        "Virchow",
+        "swelling",
+        "ultrasound"
+      ]
+    }
+  },
+  {
+    "id": "syn_037",
+    "input": {
+      "scenario": "Young athlete with sudden collapse during competition. What cardiac cause should be investigated?"
+    },
+    "output": {
+      "diagnosis": "Sudden cardiac arrest"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "arrhythmia",
+        "cardiac",
+        "SCA",
+        "athlete"
+      ]
+    }
+  },
+  {
+    "id": "syn_038",
+    "input": {
+      "scenario": "Patient with chronic cough, weight loss, night sweats, and exposure to tuberculosis. What is suspected?"
+    },
+    "output": {
+      "diagnosis": "Pulmonary tuberculosis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "TB",
+        "AFB",
+        "tuberculosis",
+        "cough"
+      ]
+    }
+  },
+  {
+    "id": "syn_039",
+    "input": {
+      "scenario": "Woman with facial flushing, diarrhea, and wheezing episodes. What endocrine tumor is suspected?"
+    },
+    "output": {
+      "diagnosis": "Carcinoid syndrome"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "carcinoid",
+        "5-HIAA",
+        "flushing",
+        "serotonin"
+      ]
+    }
+  },
+  {
+    "id": "syn_040",
+    "input": {
+      "scenario": "Patient with ascending weakness, areflexia, and recent campylobacter infection. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Guillain-Barr\u00e9 syndrome"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "GBS",
+        "ascending",
+        "campylobacter",
+        "weakness"
+      ]
+    }
+  },
+  {
+    "id": "syn_041",
+    "input": {
+      "scenario": "Child with sore throat, fever, and sandpaper rash. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Scarlet fever"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "strep",
+        "rash",
+        "strawberry tongue",
+        "scarlet"
+      ]
+    }
+  },
+  {
+    "id": "syn_042",
+    "input": {
+      "scenario": "Patient with severe right lower quadrant pain, rebound tenderness, and fever. What is the surgical emergency?"
+    },
+    "output": {
+      "diagnosis": "Acute appendicitis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "appendix",
+        "McBurney",
+        "RLQ",
+        "surgery"
+      ]
+    }
+  },
+  {
+    "id": "syn_043",
+    "input": {
+      "scenario": "Elderly patient with gradual onset of jaundice and painless gallbladder enlargement. What malignancy is suspected?"
+    },
+    "output": {
+      "diagnosis": "Pancreatic cancer"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "Courvoisier",
+        "jaundice",
+        "pancreas",
+        "cancer"
+      ]
+    }
+  },
+  {
+    "id": "syn_044",
+    "input": {
+      "scenario": "Patient with episodic severe headache, hypertension, and palpitations. What adrenal tumor is suspected?"
+    },
+    "output": {
+      "diagnosis": "Pheochromocytoma"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "catecholamines",
+        "adrenal",
+        "hypertension",
+        "pheo"
+      ]
+    }
+  },
+  {
+    "id": "syn_045",
+    "input": {
+      "scenario": "Woman with breast lump, skin dimpling, and bloody nipple discharge. What must be ruled out?"
+    },
+    "output": {
+      "diagnosis": "Breast cancer"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "mammogram",
+        "biopsy",
+        "breast",
+        "cancer"
+      ]
+    }
+  },
+  {
+    "id": "syn_046",
+    "input": {
+      "scenario": "Patient with photophobia, neck stiffness, and fever. What must be urgently evaluated?"
+    },
+    "output": {
+      "diagnosis": "Bacterial meningitis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "meningitis",
+        "LP",
+        "CSF",
+        "kernig"
+      ]
+    }
+  },
+  {
+    "id": "syn_047",
+    "input": {
+      "scenario": "Child with wheezing, prolonged expiration, and response to bronchodilators. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Asthma"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "bronchospasm",
+        "wheezing",
+        "asthma",
+        "albuterol"
+      ]
+    }
+  },
+  {
+    "id": "syn_048",
+    "input": {
+      "scenario": "Patient with crushing chest pain, hypotension, and new systolic murmur after MI. What complication occurred?"
+    },
+    "output": {
+      "diagnosis": "Ventricular septal rupture"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "VSD",
+        "complication",
+        "MI",
+        "murmur"
+      ]
+    }
+  },
+  {
+    "id": "syn_049",
+    "input": {
+      "scenario": "Elderly patient with sudden painless vision loss and afferent pupillary defect. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Central retinal artery occlusion"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "CRAO",
+        "retina",
+        "ischemia",
+        "vision"
+      ]
+    }
+  },
+  {
+    "id": "syn_050",
+    "input": {
+      "scenario": "Patient with facial weakness, hyperacusis, and loss of taste. What cranial nerve is affected?"
+    },
+    "output": {
+      "diagnosis": "Bell's palsy"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "CN VII",
+        "facial nerve",
+        "palsy",
+        "idiopathic"
+      ]
+    }
+  },
+  {
+    "id": "syn_051",
+    "input": {
+      "scenario": "Young woman with symmetric proximal muscle weakness and heliotrope rash. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Dermatomyositis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "myopathy",
+        "CK",
+        "rash",
+        "proximal"
+      ]
+    }
+  },
+  {
+    "id": "syn_052",
+    "input": {
+      "scenario": "Patient with abdominal pain, jaundice, and acholic stools. What hepatobiliary condition is suspected?"
+    },
+    "output": {
+      "diagnosis": "Obstructive jaundice"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "cholestasis",
+        "bilirubin",
+        "obstruction",
+        "CBD"
+      ]
+    }
+  },
+  {
+    "id": "syn_053",
+    "input": {
+      "scenario": "Child with stridor, barking cough worse at night, and steeple sign on X-ray. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Croup"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "laryngotracheitis",
+        "steeple",
+        "croup",
+        "viral"
+      ]
+    }
+  },
+  {
+    "id": "syn_054",
+    "input": {
+      "scenario": "Patient with fatigue, pallor, and glossitis. What nutritional deficiency should be considered?"
+    },
+    "output": {
+      "diagnosis": "Vitamin B12 deficiency"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "pernicious",
+        "macrocytic",
+        "anemia",
+        "B12"
+      ]
+    }
+  },
+  {
+    "id": "syn_055",
+    "input": {
+      "scenario": "Woman with heavy menstrual bleeding, pelvic pressure, and enlarged uterus. What is the likely cause?"
+    },
+    "output": {
+      "diagnosis": "Uterine fibroids"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "leiomyoma",
+        "fibroid",
+        "menorrhagia",
+        "uterus"
+      ]
+    }
+  },
+  {
+    "id": "syn_056",
+    "input": {
+      "scenario": "Patient with sudden onset of vertigo, nystagmus, and nausea without hearing loss. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Benign paroxysmal positional vertigo"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "BPPV",
+        "vertigo",
+        "Epley",
+        "nystagmus"
+      ]
+    }
+  },
+  {
+    "id": "syn_057",
+    "input": {
+      "scenario": "Elderly patient with gradual hearing loss, especially high frequencies. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Presbycusis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "hearing loss",
+        "aging",
+        "sensorineural",
+        "elderly"
+      ]
+    }
+  },
+  {
+    "id": "syn_058",
+    "input": {
+      "scenario": "Patient with recurrent abdominal pain, bloating, and alternating bowel habits. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Irritable bowel syndrome"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "IBS",
+        "functional",
+        "bowel",
+        "Rome"
+      ]
+    }
+  },
+  {
+    "id": "syn_059",
+    "input": {
+      "scenario": "Child with periorbital edema, proteinuria, and hypoalbuminemia. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Nephrotic syndrome"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "protein",
+        "edema",
+        "minimal change",
+        "nephrotic"
+      ]
+    }
+  },
+  {
+    "id": "syn_060",
+    "input": {
+      "scenario": "Patient with progressive dysphagia to solids then liquids and weight loss. What malignancy is suspected?"
+    },
+    "output": {
+      "diagnosis": "Esophageal cancer"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "dysphagia",
+        "esophagus",
+        "cancer",
+        "barium"
+      ]
+    }
+  },
+  {
+    "id": "syn_061",
+    "input": {
+      "scenario": "Woman with hot flashes, night sweats, and menstrual irregularity. What condition is this?"
+    },
+    "output": {
+      "diagnosis": "Menopause"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "perimenopause",
+        "estrogen",
+        "FSH",
+        "menopause"
+      ]
+    }
+  },
+  {
+    "id": "syn_062",
+    "input": {
+      "scenario": "Patient with painless hematuria and flank mass. What renal malignancy should be suspected?"
+    },
+    "output": {
+      "diagnosis": "Renal cell carcinoma"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "RCC",
+        "kidney",
+        "hematuria",
+        "mass"
+      ]
+    }
+  },
+  {
+    "id": "syn_063",
+    "input": {
+      "scenario": "Child with limp and refusal to bear weight but no fever. What condition should be considered?"
+    },
+    "output": {
+      "diagnosis": "Transient synovitis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "toxic synovitis",
+        "hip",
+        "viral",
+        "limp"
+      ]
+    }
+  },
+  {
+    "id": "syn_064",
+    "input": {
+      "scenario": "Patient with chronic fatigue, cold intolerance, and weight gain. What thyroid condition is likely?"
+    },
+    "output": {
+      "diagnosis": "Hypothyroidism"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "TSH",
+        "thyroid",
+        "levothyroxine",
+        "Hashimoto"
+      ]
+    }
+  },
+  {
+    "id": "syn_065",
+    "input": {
+      "scenario": "Young patient with anxiety, tremor, and lid lag. What thyroid condition is likely?"
+    },
+    "output": {
+      "diagnosis": "Graves disease"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "hyperthyroidism",
+        "Graves",
+        "tremor",
+        "exophthalmos"
+      ]
+    }
+  },
+  {
+    "id": "syn_066",
+    "input": {
+      "scenario": "Patient with chest pain that worsens with breathing and improves when leaning forward. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Acute pericarditis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "pericardium",
+        "friction rub",
+        "ECG",
+        "pericarditis"
+      ]
+    }
+  },
+  {
+    "id": "syn_067",
+    "input": {
+      "scenario": "Elderly patient with lower back pain radiating to legs that improves with forward flexion. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Lumbar spinal stenosis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "stenosis",
+        "claudication",
+        "spine",
+        "flexion"
+      ]
+    }
+  },
+  {
+    "id": "syn_068",
+    "input": {
+      "scenario": "Patient with painful skin vesicles in dermatomal distribution. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Herpes zoster"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "shingles",
+        "VZV",
+        "dermatomal",
+        "vesicles"
+      ]
+    }
+  },
+  {
+    "id": "syn_069",
+    "input": {
+      "scenario": "Woman with cyclic pelvic pain, dysmenorrhea, and infertility. What condition is suspected?"
+    },
+    "output": {
+      "diagnosis": "Endometriosis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "endometrium",
+        "dyspareunia",
+        "laparoscopy",
+        "endo"
+      ]
+    }
+  },
+  {
+    "id": "syn_070",
+    "input": {
+      "scenario": "Patient with polyuria requiring wake-ups at night and normal blood glucose. What condition should be tested?"
+    },
+    "output": {
+      "diagnosis": "Diabetes insipidus"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "ADH",
+        "vasopressin",
+        "water deprivation",
+        "DI"
+      ]
+    }
+  },
+  {
+    "id": "syn_071",
+    "input": {
+      "scenario": "Child with failure to thrive, steatorrhea, and recurrent respiratory infections. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Cystic fibrosis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "CF",
+        "sweat test",
+        "CFTR",
+        "pancreatic"
+      ]
+    }
+  },
+  {
+    "id": "syn_072",
+    "input": {
+      "scenario": "Patient with pruritic, erythematous, scaling patches on elbows and knees. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Psoriasis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "plaques",
+        "silvery",
+        "Auspitz",
+        "psoriasis"
+      ]
+    }
+  },
+  {
+    "id": "syn_073",
+    "input": {
+      "scenario": "Elderly patient with bone pain, hypercalcemia, and anemia. What hematologic malignancy is suspected?"
+    },
+    "output": {
+      "diagnosis": "Multiple myeloma"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "myeloma",
+        "SPEP",
+        "Bence Jones",
+        "plasma cells"
+      ]
+    }
+  },
+  {
+    "id": "syn_074",
+    "input": {
+      "scenario": "Patient with severe sore throat, fever, and peritonsillar swelling. What complication has occurred?"
+    },
+    "output": {
+      "diagnosis": "Peritonsillar abscess"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "quinsy",
+        "abscess",
+        "tonsil",
+        "drainage"
+      ]
+    }
+  },
+  {
+    "id": "syn_075",
+    "input": {
+      "scenario": "Child with abdominal pain, vomiting, and sausage-shaped mass on exam. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Intussusception"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "currant jelly",
+        "bowel",
+        "obstruction",
+        "reduction"
+      ]
+    }
+  },
+  {
+    "id": "syn_076",
+    "input": {
+      "scenario": "Patient with chronic productive cough and bronchiectasis. What infectious agent should be cultured?"
+    },
+    "output": {
+      "diagnosis": "Pseudomonas aeruginosa"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "pseudomonas",
+        "bronchiectasis",
+        "CF",
+        "culture"
+      ]
+    }
+  },
+  {
+    "id": "syn_077",
+    "input": {
+      "scenario": "Woman with urinary incontinence with coughing or laughing. What type of incontinence is this?"
+    },
+    "output": {
+      "diagnosis": "Stress incontinence"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "pelvic floor",
+        "pregnancy",
+        "incontinence",
+        "Kegel"
+      ]
+    }
+  },
+  {
+    "id": "syn_078",
+    "input": {
+      "scenario": "Patient with gradually progressive dementia and parkinsonian features. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Lewy body dementia"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "LBD",
+        "hallucinations",
+        "parkinsonism",
+        "dementia"
+      ]
+    }
+  },
+  {
+    "id": "syn_079",
+    "input": {
+      "scenario": "Young patient with recurrent oral ulcers, genital ulcers, and uveitis. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Beh\u00e7et disease"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "Behcet",
+        "ulcers",
+        "vasculitis",
+        "uveitis"
+      ]
+    }
+  },
+  {
+    "id": "syn_080",
+    "input": {
+      "scenario": "Patient with chest pain, friction rub, and diffuse ST elevation. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Acute pericarditis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "pericardium",
+        "ECG",
+        "friction rub",
+        "viral"
+      ]
+    }
+  },
+  {
+    "id": "syn_081",
+    "input": {
+      "scenario": "Child with high fever, conjunctivitis, and strawberry tongue for 5 days. What must be diagnosed?"
+    },
+    "output": {
+      "diagnosis": "Kawasaki disease"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "Kawasaki",
+        "coronary",
+        "fever",
+        "mucocutaneous"
+      ]
+    }
+  },
+  {
+    "id": "syn_082",
+    "input": {
+      "scenario": "Patient with altered mental status, headache, and papilledema. What is the concern?"
+    },
+    "output": {
+      "diagnosis": "Increased intracranial pressure"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "ICP",
+        "herniation",
+        "papilledema",
+        "mannitol"
+      ]
+    }
+  },
+  {
+    "id": "syn_083",
+    "input": {
+      "scenario": "Woman with post-prandial epigastric pain and weight loss. What should be evaluated?"
+    },
+    "output": {
+      "diagnosis": "Chronic mesenteric ischemia"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "mesenteric",
+        "ischemia",
+        "food fear",
+        "atherosclerosis"
+      ]
+    }
+  },
+  {
+    "id": "syn_084",
+    "input": {
+      "scenario": "Patient with tetany, perioral numbness, and positive Chvostek sign. What electrolyte is abnormal?"
+    },
+    "output": {
+      "diagnosis": "Hypocalcemia"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "calcium",
+        "parathyroid",
+        "tetany",
+        "trousseau"
+      ]
+    }
+  },
+  {
+    "id": "syn_085",
+    "input": {
+      "scenario": "Child with inspiratory stridor and drooling in tripod position. What airway emergency is this?"
+    },
+    "output": {
+      "diagnosis": "Epiglottitis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "haemophilus",
+        "airway",
+        "emergency",
+        "intubation"
+      ]
+    }
+  },
+  {
+    "id": "syn_086",
+    "input": {
+      "scenario": "Patient with jaundice, dark urine, and pale stools. What type of hyperbilirubinemia is this?"
+    },
+    "output": {
+      "diagnosis": "Conjugated hyperbilirubinemia"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "direct",
+        "cholestasis",
+        "obstruction",
+        "biliary"
+      ]
+    }
+  },
+  {
+    "id": "syn_087",
+    "input": {
+      "scenario": "Woman with galactorrhea, amenorrhea, and visual field defects. What tumor is suspected?"
+    },
+    "output": {
+      "diagnosis": "Prolactinoma"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "prolactin",
+        "pituitary",
+        "dopamine",
+        "adenoma"
+      ]
+    }
+  },
+  {
+    "id": "syn_088",
+    "input": {
+      "scenario": "Patient with chronic diarrhea, weight loss, and arthralgia. What malabsorptive condition is suspected?"
+    },
+    "output": {
+      "diagnosis": "Celiac disease"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "gluten",
+        "TTG",
+        "villous atrophy",
+        "celiac"
+      ]
+    }
+  },
+  {
+    "id": "syn_089",
+    "input": {
+      "scenario": "Elderly patient with new onset seizure and no prior history. What should be evaluated?"
+    },
+    "output": {
+      "diagnosis": "Brain tumor"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "mass",
+        "seizure",
+        "CT",
+        "metastasis"
+      ]
+    }
+  },
+  {
+    "id": "syn_090",
+    "input": {
+      "scenario": "Patient with recurrent kidney stones and hypercalcemia. What endocrine condition is suspected?"
+    },
+    "output": {
+      "diagnosis": "Primary hyperparathyroidism"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "PTH",
+        "adenoma",
+        "calcium",
+        "parathyroid"
+      ]
+    }
+  },
+  {
+    "id": "syn_091",
+    "input": {
+      "scenario": "Child with microcytic anemia and target cells on smear. What hemoglobinopathy should be evaluated?"
+    },
+    "output": {
+      "diagnosis": "Thalassemia"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "hemoglobin",
+        "electrophoresis",
+        "beta",
+        "alpha"
+      ]
+    }
+  },
+  {
+    "id": "syn_092",
+    "input": {
+      "scenario": "Patient with sudden hearing loss, tinnitus, and vertigo. What inner ear condition is suspected?"
+    },
+    "output": {
+      "diagnosis": "Meniere disease"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "endolymph",
+        "hearing",
+        "vertigo",
+        "tinnitus"
+      ]
+    }
+  },
+  {
+    "id": "syn_093",
+    "input": {
+      "scenario": "Woman with breast mass, axillary lymphadenopathy, and orange peel skin. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Inflammatory breast cancer"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "peau d'orange",
+        "breast",
+        "mastitis",
+        "cancer"
+      ]
+    }
+  },
+  {
+    "id": "syn_094",
+    "input": {
+      "scenario": "Patient with recurrent pneumonia and dextrocardia. What syndrome should be evaluated?"
+    },
+    "output": {
+      "diagnosis": "Kartagener syndrome"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "ciliary",
+        "situs inversus",
+        "bronchiectasis",
+        "Kartagener"
+      ]
+    }
+  },
+  {
+    "id": "syn_095",
+    "input": {
+      "scenario": "Child with epicanthal folds, single palmar crease, and hypotonia. What is the karyotype?"
+    },
+    "output": {
+      "diagnosis": "Trisomy 21"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "Down syndrome",
+        "chromosome",
+        "trisomy",
+        "47"
+      ]
+    }
+  },
+  {
+    "id": "syn_096",
+    "input": {
+      "scenario": "Patient with episodic weakness and low potassium during attacks. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Hypokalemic periodic paralysis"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "paralysis",
+        "potassium",
+        "channelopathy",
+        "familial"
+      ]
+    }
+  },
+  {
+    "id": "syn_097",
+    "input": {
+      "scenario": "Woman with butterfly rash and positive anti-dsDNA. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Systemic lupus erythematosus"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "lupus",
+        "SLE",
+        "ANA",
+        "autoimmune"
+      ]
+    }
+  },
+  {
+    "id": "syn_098",
+    "input": {
+      "scenario": "Patient with clubbing and hypertrophic osteoarthropathy. What should be evaluated?"
+    },
+    "output": {
+      "diagnosis": "Lung cancer"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "clubbing",
+        "osteoarthropathy",
+        "paraneoplastic",
+        "lung"
+      ]
+    }
+  },
+  {
+    "id": "syn_099",
+    "input": {
+      "scenario": "Child with webbed neck and short stature. What is the karyotype?"
+    },
+    "output": {
+      "diagnosis": "Turner syndrome"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "45XO",
+        "Turner",
+        "gonadal",
+        "dysgenesis"
+      ]
+    }
+  },
+  {
+    "id": "syn_100",
+    "input": {
+      "scenario": "Patient with recurrent sinopulmonary infections and low IgA. What is the diagnosis?"
+    },
+    "output": {
+      "diagnosis": "Selective IgA deficiency"
+    },
+    "metadata": {
+      "reasoning_keywords": [
+        "IgA",
+        "immunodeficiency",
+        "recurrent",
+        "sinopulmonary"
+      ]
+    }
+  }
+]

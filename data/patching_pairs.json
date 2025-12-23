@@ -1,0 +1,1402 @@
+[
+  {
+    "id": "patch_001",
+    "clean": {
+      "input": "Patient with chest pain, sweating, and arm pain. This suggests a heart attack",
+      "output": "heart attack"
+    },
+    "corrupted": {
+      "input": "Patient with chest pain, sweating, and arm pain. This suggests a panic attack",
+      "output": "panic attack"
+    },
+    "metadata": {
+      "category": "cardiology"
+    }
+  },
+  {
+    "id": "patch_002",
+    "clean": {
+      "input": "Patient has fever and productive cough with yellow sputum. This indicates bacterial pneumonia",
+      "output": "bacterial"
+    },
+    "corrupted": {
+      "input": "Patient has fever and productive cough with yellow sputum. This indicates viral pneumonia",
+      "output": "viral"
+    },
+    "metadata": {
+      "category": "pulmonology"
+    }
+  },
+  {
+    "id": "patch_003",
+    "clean": {
+      "input": "Patient presents with right lower quadrant abdominal pain. This is consistent with appendicitis",
+      "output": "appendicitis"
+    },
+    "corrupted": {
+      "input": "Patient presents with left lower quadrant abdominal pain. This is consistent with diverticulitis",
+      "output": "diverticulitis"
+    },
+    "metadata": {
+      "category": "gastroenterology"
+    }
+  },
+  {
+    "id": "patch_004",
+    "clean": {
+      "input": "CT scan shows hyperdense lesion in the brain. Diagnosis is hemorrhagic stroke",
+      "output": "hemorrhagic"
+    },
+    "corrupted": {
+      "input": "CT scan shows hypodense lesion in the brain. Diagnosis is ischemic stroke",
+      "output": "ischemic"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_005",
+    "clean": {
+      "input": "Young patient with acute onset polyuria and weight loss. This suggests Type 1 diabetes",
+      "output": "Type 1"
+    },
+    "corrupted": {
+      "input": "Obese patient with gradual onset polyuria and weight gain. This suggests Type 2 diabetes",
+      "output": "Type 2"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_006",
+    "clean": {
+      "input": "ST elevation in leads II, III, aVF indicates inferior MI",
+      "output": "inferior"
+    },
+    "corrupted": {
+      "input": "ST elevation in leads V1-V4 indicates anterior MI",
+      "output": "anterior"
+    },
+    "metadata": {
+      "category": "cardiology"
+    }
+  },
+  {
+    "id": "patch_007",
+    "clean": {
+      "input": "Severe unilateral headache with nausea and photophobia. Diagnosis: migraine",
+      "output": "migraine"
+    },
+    "corrupted": {
+      "input": "Severe unilateral headache with lacrimation and rhinorrhea. Diagnosis: cluster headache",
+      "output": "cluster headache"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_008",
+    "clean": {
+      "input": "X-ray shows fracture of the radius. Treatment is casting",
+      "output": "casting"
+    },
+    "corrupted": {
+      "input": "X-ray shows fracture of the femur. Treatment is surgery",
+      "output": "surgery"
+    },
+    "metadata": {
+      "category": "orthopedics"
+    }
+  },
+  {
+    "id": "patch_009",
+    "clean": {
+      "input": "Patient with fatigue and low hemoglobin. MCV is low, suggesting iron deficiency anemia",
+      "output": "iron deficiency"
+    },
+    "corrupted": {
+      "input": "Patient with fatigue and low hemoglobin. MCV is high, suggesting B12 deficiency anemia",
+      "output": "B12 deficiency"
+    },
+    "metadata": {
+      "category": "hematology"
+    }
+  },
+  {
+    "id": "patch_010",
+    "clean": {
+      "input": "Patient with UTI symptoms. Culture shows E. coli. Prescribe oral antibiotics",
+      "output": "oral"
+    },
+    "corrupted": {
+      "input": "Patient with UTI symptoms and sepsis. Culture shows E. coli. Prescribe IV antibiotics",
+      "output": "IV"
+    },
+    "metadata": {
+      "category": "infectious_disease"
+    }
+  },
+  {
+    "id": "patch_011",
+    "clean": {
+      "input": "Child with barking cough and stridor. This is croup",
+      "output": "croup"
+    },
+    "corrupted": {
+      "input": "Child with high fever and drooling. This is epiglottitis",
+      "output": "epiglottitis"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_012",
+    "clean": {
+      "input": "Patient with sudden vision loss and cherry red spot. This is central retinal artery occlusion",
+      "output": "CRAO"
+    },
+    "corrupted": {
+      "input": "Patient with gradual vision loss and cupping. This is glaucoma",
+      "output": "glaucoma"
+    },
+    "metadata": {
+      "category": "ophthalmology"
+    }
+  },
+  {
+    "id": "patch_013",
+    "clean": {
+      "input": "ECG shows narrow complex tachycardia. This is SVT",
+      "output": "SVT"
+    },
+    "corrupted": {
+      "input": "ECG shows wide complex tachycardia. This is ventricular tachycardia",
+      "output": "VT"
+    },
+    "metadata": {
+      "category": "cardiology"
+    }
+  },
+  {
+    "id": "patch_014",
+    "clean": {
+      "input": "Patient with unilateral leg swelling. Ultrasound confirms deep vein thrombosis",
+      "output": "DVT"
+    },
+    "corrupted": {
+      "input": "Patient with bilateral leg swelling. This suggests heart failure",
+      "output": "heart failure"
+    },
+    "metadata": {
+      "category": "vascular"
+    }
+  },
+  {
+    "id": "patch_015",
+    "clean": {
+      "input": "Abdominal pain improves with eating. This is duodenal ulcer",
+      "output": "duodenal"
+    },
+    "corrupted": {
+      "input": "Abdominal pain worsens with eating. This is gastric ulcer",
+      "output": "gastric"
+    },
+    "metadata": {
+      "category": "gastroenterology"
+    }
+  },
+  {
+    "id": "patch_016",
+    "clean": {
+      "input": "Child with steeple sign on X-ray. Diagnosis is croup",
+      "output": "croup"
+    },
+    "corrupted": {
+      "input": "Child with thumbprint sign on X-ray. Diagnosis is epiglottitis",
+      "output": "epiglottitis"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_017",
+    "clean": {
+      "input": "Patient with hyperthyroidism and exophthalmos. This is Graves disease",
+      "output": "Graves"
+    },
+    "corrupted": {
+      "input": "Patient with hyperthyroidism and thyroid nodule. This is toxic adenoma",
+      "output": "toxic adenoma"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_018",
+    "clean": {
+      "input": "Liver function tests show elevated AST/ALT ratio >2. This suggests alcoholic hepatitis",
+      "output": "alcoholic"
+    },
+    "corrupted": {
+      "input": "Liver function tests show AST/ALT ratio <1. This suggests viral hepatitis",
+      "output": "viral"
+    },
+    "metadata": {
+      "category": "hepatology"
+    }
+  },
+  {
+    "id": "patch_019",
+    "clean": {
+      "input": "Patient with acute kidney injury and muddy brown casts. This is acute tubular necrosis",
+      "output": "ATN"
+    },
+    "corrupted": {
+      "input": "Patient with acute kidney injury and red cell casts. This is glomerulonephritis",
+      "output": "glomerulonephritis"
+    },
+    "metadata": {
+      "category": "nephrology"
+    }
+  },
+  {
+    "id": "patch_020",
+    "clean": {
+      "input": "CSF analysis shows high protein and low glucose. This is bacterial meningitis",
+      "output": "bacterial"
+    },
+    "corrupted": {
+      "input": "CSF analysis shows normal glucose and lymphocytes. This is viral meningitis",
+      "output": "viral"
+    },
+    "metadata": {
+      "category": "infectious_disease"
+    }
+  },
+  {
+    "id": "patch_021",
+    "clean": {
+      "input": "Joint aspirate shows needle-shaped crystals. This is gout",
+      "output": "gout"
+    },
+    "corrupted": {
+      "input": "Joint aspirate shows rhomboid crystals. This is pseudogout",
+      "output": "pseudogout"
+    },
+    "metadata": {
+      "category": "rheumatology"
+    }
+  },
+  {
+    "id": "patch_022",
+    "clean": {
+      "input": "Patient with ascending weakness after GI illness. This is Guillain-Barr\u00e9 syndrome",
+      "output": "GBS"
+    },
+    "corrupted": {
+      "input": "Patient with descending weakness and autonomic symptoms. This is botulism",
+      "output": "botulism"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_023",
+    "clean": {
+      "input": "Chest X-ray shows infiltrate in right lower lobe. This is community-acquired pneumonia",
+      "output": "pneumonia"
+    },
+    "corrupted": {
+      "input": "Chest X-ray shows bilateral hilar lymphadenopathy. This is sarcoidosis",
+      "output": "sarcoidosis"
+    },
+    "metadata": {
+      "category": "pulmonology"
+    }
+  },
+  {
+    "id": "patch_024",
+    "clean": {
+      "input": "Patient with coffee-ground emesis. Source is upper GI bleeding",
+      "output": "upper"
+    },
+    "corrupted": {
+      "input": "Patient with bright red blood per rectum. Source is lower GI bleeding",
+      "output": "lower"
+    },
+    "metadata": {
+      "category": "gastroenterology"
+    }
+  },
+  {
+    "id": "patch_025",
+    "clean": {
+      "input": "Thyroid scan shows diffuse uptake. This is Graves disease",
+      "output": "Graves"
+    },
+    "corrupted": {
+      "input": "Thyroid scan shows cold nodule. This should be biopsied for cancer",
+      "output": "cancer"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_026",
+    "clean": {
+      "input": "Patient with systolic murmur at apex radiating to axilla. This is mitral regurgitation",
+      "output": "MR"
+    },
+    "corrupted": {
+      "input": "Patient with systolic murmur at right upper sternal border. This is aortic stenosis",
+      "output": "AS"
+    },
+    "metadata": {
+      "category": "cardiology"
+    }
+  },
+  {
+    "id": "patch_027",
+    "clean": {
+      "input": "ABG shows pH 7.25, low CO2, low HCO3. This is metabolic acidosis with respiratory compensation",
+      "output": "metabolic acidosis"
+    },
+    "corrupted": {
+      "input": "ABG shows pH 7.50, low CO2, normal HCO3. This is respiratory alkalosis",
+      "output": "respiratory alkalosis"
+    },
+    "metadata": {
+      "category": "critical_care"
+    }
+  },
+  {
+    "id": "patch_028",
+    "clean": {
+      "input": "Patient with ptosis and diplopia worse at end of day. This is myasthenia gravis",
+      "output": "myasthenia"
+    },
+    "corrupted": {
+      "input": "Patient with ptosis and miosis. This is Horner syndrome",
+      "output": "Horner"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_029",
+    "clean": {
+      "input": "Urine shows RBC casts. This indicates glomerulonephritis",
+      "output": "glomerulonephritis"
+    },
+    "corrupted": {
+      "input": "Urine shows WBC casts. This indicates pyelonephritis",
+      "output": "pyelonephritis"
+    },
+    "metadata": {
+      "category": "nephrology"
+    }
+  },
+  {
+    "id": "patch_030",
+    "clean": {
+      "input": "Patient with weight loss and mediastinal mass. Biopsy needed for lymphoma",
+      "output": "lymphoma"
+    },
+    "corrupted": {
+      "input": "Patient with weight loss and lung mass. Biopsy needed for lung cancer",
+      "output": "lung cancer"
+    },
+    "metadata": {
+      "category": "oncology"
+    }
+  },
+  {
+    "id": "patch_031",
+    "clean": {
+      "input": "Child with olive-shaped mass and projectile vomiting. This is pyloric stenosis",
+      "output": "pyloric stenosis"
+    },
+    "corrupted": {
+      "input": "Child with bilious vomiting and double bubble sign. This is duodenal atresia",
+      "output": "duodenal atresia"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_032",
+    "clean": {
+      "input": "Patient with target lesions on skin. This is erythema multiforme",
+      "output": "erythema multiforme"
+    },
+    "corrupted": {
+      "input": "Patient with honey-crusted lesions. This is impetigo",
+      "output": "impetigo"
+    },
+    "metadata": {
+      "category": "dermatology"
+    }
+  },
+  {
+    "id": "patch_033",
+    "clean": {
+      "input": "Sputum culture grows acid-fast bacilli. This is tuberculosis",
+      "output": "TB"
+    },
+    "corrupted": {
+      "input": "Sputum culture grows gram-positive cocci. This is pneumococcal pneumonia",
+      "output": "pneumonia"
+    },
+    "metadata": {
+      "category": "infectious_disease"
+    }
+  },
+  {
+    "id": "patch_034",
+    "clean": {
+      "input": "Patient with painless jaundice and palpable gallbladder. This suggests pancreatic cancer",
+      "output": "pancreatic cancer"
+    },
+    "corrupted": {
+      "input": "Patient with painful jaundice and fever. This suggests cholangitis",
+      "output": "cholangitis"
+    },
+    "metadata": {
+      "category": "hepatology"
+    }
+  },
+  {
+    "id": "patch_035",
+    "clean": {
+      "input": "EEG shows 3-Hz spike and wave. This is absence epilepsy",
+      "output": "absence"
+    },
+    "corrupted": {
+      "input": "EEG shows focal slowing. This suggests focal seizures",
+      "output": "focal"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_036",
+    "clean": {
+      "input": "Patient with blue sclera and hearing loss. This is osteogenesis imperfecta",
+      "output": "OI"
+    },
+    "corrupted": {
+      "input": "Patient with cafe-au-lait spots and neurofibromas. This is neurofibromatosis",
+      "output": "NF1"
+    },
+    "metadata": {
+      "category": "genetics"
+    }
+  },
+  {
+    "id": "patch_037",
+    "clean": {
+      "input": "Echocardiogram shows dilated left ventricle with EF 25%. This is dilated cardiomyopathy",
+      "output": "DCM"
+    },
+    "corrupted": {
+      "input": "Echocardiogram shows thickened septum. This is hypertrophic cardiomyopathy",
+      "output": "HCM"
+    },
+    "metadata": {
+      "category": "cardiology"
+    }
+  },
+  {
+    "id": "patch_038",
+    "clean": {
+      "input": "Blood smear shows spherocytes. This is hereditary spherocytosis",
+      "output": "spherocytosis"
+    },
+    "corrupted": {
+      "input": "Blood smear shows sickle cells. This is sickle cell disease",
+      "output": "sickle cell"
+    },
+    "metadata": {
+      "category": "hematology"
+    }
+  },
+  {
+    "id": "patch_039",
+    "clean": {
+      "input": "Patient with resting tremor and shuffling gait. This is Parkinson disease",
+      "output": "Parkinson"
+    },
+    "corrupted": {
+      "input": "Patient with intention tremor and ataxia. This is cerebellar disease",
+      "output": "cerebellar"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_040",
+    "clean": {
+      "input": "Urinalysis shows glucose and ketones. This is diabetic ketoacidosis",
+      "output": "DKA"
+    },
+    "corrupted": {
+      "input": "Urinalysis shows protein only. This is nephrotic syndrome",
+      "output": "nephrotic"
+    },
+    "metadata": {
+      "category": "nephrology"
+    }
+  },
+  {
+    "id": "patch_041",
+    "clean": {
+      "input": "Child with vesicular rash in crops. This is varicella",
+      "output": "varicella"
+    },
+    "corrupted": {
+      "input": "Child with slapped cheek rash. This is erythema infectiosum",
+      "output": "fifth disease"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_042",
+    "clean": {
+      "input": "Patient with elevated D-dimer and leg swelling. This suggests DVT",
+      "output": "DVT"
+    },
+    "corrupted": {
+      "input": "Patient with elevated D-dimer and dyspnea. This suggests PE",
+      "output": "PE"
+    },
+    "metadata": {
+      "category": "vascular"
+    }
+  },
+  {
+    "id": "patch_043",
+    "clean": {
+      "input": "Lung biopsy shows non-caseating granulomas. This is sarcoidosis",
+      "output": "sarcoidosis"
+    },
+    "corrupted": {
+      "input": "Lung biopsy shows caseating granulomas. This is tuberculosis",
+      "output": "TB"
+    },
+    "metadata": {
+      "category": "pulmonology"
+    }
+  },
+  {
+    "id": "patch_044",
+    "clean": {
+      "input": "Patient with unprovoked DVT. Screen for malignancy",
+      "output": "malignancy"
+    },
+    "corrupted": {
+      "input": "Patient with DVT after long flight. Consider travel prophylaxis",
+      "output": "travel"
+    },
+    "metadata": {
+      "category": "vascular"
+    }
+  },
+  {
+    "id": "patch_045",
+    "clean": {
+      "input": "Child with inspiratory stridor. This is upper airway obstruction",
+      "output": "upper"
+    },
+    "corrupted": {
+      "input": "Child with expiratory wheeze. This is lower airway obstruction",
+      "output": "lower"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_046",
+    "clean": {
+      "input": "Patient with hypercalcemia and low PTH. This is malignancy-related",
+      "output": "malignancy"
+    },
+    "corrupted": {
+      "input": "Patient with hypercalcemia and high PTH. This is primary hyperparathyroidism",
+      "output": "primary HPT"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_047",
+    "clean": {
+      "input": "Stool test positive for fecal occult blood. Screen with colonoscopy",
+      "output": "colonoscopy"
+    },
+    "corrupted": {
+      "input": "Stool test shows C. diff toxin. Treat with vancomycin",
+      "output": "vancomycin"
+    },
+    "metadata": {
+      "category": "gastroenterology"
+    }
+  },
+  {
+    "id": "patch_048",
+    "clean": {
+      "input": "Patient with facial droop sparing forehead. This is central facial palsy",
+      "output": "central"
+    },
+    "corrupted": {
+      "input": "Patient with facial droop involving forehead. This is peripheral facial palsy",
+      "output": "peripheral"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_049",
+    "clean": {
+      "input": "ECG shows ST depression in V1-V4. This is posterior MI",
+      "output": "posterior"
+    },
+    "corrupted": {
+      "input": "ECG shows ST elevation in V1-V4. This is anterior MI",
+      "output": "anterior"
+    },
+    "metadata": {
+      "category": "cardiology"
+    }
+  },
+  {
+    "id": "patch_050",
+    "clean": {
+      "input": "Child with boot-shaped heart on X-ray. This is tetralogy of Fallot",
+      "output": "TOF"
+    },
+    "corrupted": {
+      "input": "Child with egg-shaped heart on X-ray. This is transposition of great arteries",
+      "output": "TGA"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_051",
+    "clean": {
+      "input": "Patient with decreased breath sounds at base. This is pleural effusion",
+      "output": "effusion"
+    },
+    "corrupted": {
+      "input": "Patient with hyperresonance to percussion. This is pneumothorax",
+      "output": "pneumothorax"
+    },
+    "metadata": {
+      "category": "pulmonology"
+    }
+  },
+  {
+    "id": "patch_052",
+    "clean": {
+      "input": "Serum sodium is 125. This is hyponatremia requiring water restriction",
+      "output": "hyponatremia"
+    },
+    "corrupted": {
+      "input": "Serum sodium is 155. This is hypernatremia requiring free water",
+      "output": "hypernatremia"
+    },
+    "metadata": {
+      "category": "nephrology"
+    }
+  },
+  {
+    "id": "patch_053",
+    "clean": {
+      "input": "Patient with pulsatile abdominal mass. This is abdominal aortic aneurysm",
+      "output": "AAA"
+    },
+    "corrupted": {
+      "input": "Patient with non-pulsatile abdominal mass. This could be tumor",
+      "output": "tumor"
+    },
+    "metadata": {
+      "category": "vascular"
+    }
+  },
+  {
+    "id": "patch_054",
+    "clean": {
+      "input": "Child with strawberry tongue and desquamation. This is Kawasaki disease",
+      "output": "Kawasaki"
+    },
+    "corrupted": {
+      "input": "Child with strawberry tongue and circumoral pallor. This is scarlet fever",
+      "output": "scarlet fever"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_055",
+    "clean": {
+      "input": "Patient with flapping tremor and altered mental status. This is hepatic encephalopathy",
+      "output": "hepatic"
+    },
+    "corrupted": {
+      "input": "Patient with bilateral tremor and rigidity. This is Parkinson disease",
+      "output": "Parkinson"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_056",
+    "clean": {
+      "input": "Serum potassium is 6.5. This requires emergent treatment",
+      "output": "hyperkalemia"
+    },
+    "corrupted": {
+      "input": "Serum potassium is 2.5. This requires IV replacement",
+      "output": "hypokalemia"
+    },
+    "metadata": {
+      "category": "nephrology"
+    }
+  },
+  {
+    "id": "patch_057",
+    "clean": {
+      "input": "Patient with painless testicular mass. This should be evaluated for cancer",
+      "output": "cancer"
+    },
+    "corrupted": {
+      "input": "Patient with painful testicular swelling. This is likely epididymitis",
+      "output": "epididymitis"
+    },
+    "metadata": {
+      "category": "urology"
+    }
+  },
+  {
+    "id": "patch_058",
+    "clean": {
+      "input": "Child with currant jelly stools. This is intussusception",
+      "output": "intussusception"
+    },
+    "corrupted": {
+      "input": "Child with bloody diarrhea and fever. This is dysentery",
+      "output": "dysentery"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_059",
+    "clean": {
+      "input": "Patient with elevated troponin and ST changes. This is NSTEMI",
+      "output": "NSTEMI"
+    },
+    "corrupted": {
+      "input": "Patient with normal troponin and normal ECG. This is unstable angina",
+      "output": "unstable angina"
+    },
+    "metadata": {
+      "category": "cardiology"
+    }
+  },
+  {
+    "id": "patch_060",
+    "clean": {
+      "input": "Thyroid nodule with microcalcifications. This is concerning for papillary carcinoma",
+      "output": "papillary"
+    },
+    "corrupted": {
+      "input": "Thyroid nodule that is hot on scan. This is likely benign",
+      "output": "benign"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_061",
+    "clean": {
+      "input": "Patient with photosensitivity and positive ANA. This suggests lupus",
+      "output": "lupus"
+    },
+    "corrupted": {
+      "input": "Patient with morning stiffness and positive RF. This suggests rheumatoid arthritis",
+      "output": "RA"
+    },
+    "metadata": {
+      "category": "rheumatology"
+    }
+  },
+  {
+    "id": "patch_062",
+    "clean": {
+      "input": "Chest CT shows ground-glass opacities. This could be COVID-19 pneumonia",
+      "output": "COVID"
+    },
+    "corrupted": {
+      "input": "Chest CT shows tree-in-bud pattern. This suggests TB or MAC",
+      "output": "TB"
+    },
+    "metadata": {
+      "category": "pulmonology"
+    }
+  },
+  {
+    "id": "patch_063",
+    "clean": {
+      "input": "ABG shows pH 7.10, CO2 80, HCO3 24. This is acute respiratory acidosis",
+      "output": "acute"
+    },
+    "corrupted": {
+      "input": "ABG shows pH 7.32, CO2 60, HCO3 30. This is chronic respiratory acidosis",
+      "output": "chronic"
+    },
+    "metadata": {
+      "category": "critical_care"
+    }
+  },
+  {
+    "id": "patch_064",
+    "clean": {
+      "input": "Patient with hematemesis and esophageal varices. This is variceal bleeding",
+      "output": "variceal"
+    },
+    "corrupted": {
+      "input": "Patient with hematemesis and epigastric pain. This is peptic ulcer bleeding",
+      "output": "peptic ulcer"
+    },
+    "metadata": {
+      "category": "gastroenterology"
+    }
+  },
+  {
+    "id": "patch_065",
+    "clean": {
+      "input": "Child with salmon-colored patches on trunk. This is erythema toxicum",
+      "output": "erythema toxicum"
+    },
+    "corrupted": {
+      "input": "Child with pustules and positive cultures. This is impetigo",
+      "output": "impetigo"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_066",
+    "clean": {
+      "input": "Patient with unilateral hearing loss and vertigo. This is vestibular schwannoma",
+      "output": "schwannoma"
+    },
+    "corrupted": {
+      "input": "Patient with bilateral hearing loss and tinnitus. This is presbycusis",
+      "output": "presbycusis"
+    },
+    "metadata": {
+      "category": "otology"
+    }
+  },
+  {
+    "id": "patch_067",
+    "clean": {
+      "input": "Bone scan shows multiple hot spots. This suggests metastatic disease",
+      "output": "metastatic"
+    },
+    "corrupted": {
+      "input": "Bone scan shows single hot spot. This could be osteoid osteoma",
+      "output": "osteoid osteoma"
+    },
+    "metadata": {
+      "category": "oncology"
+    }
+  },
+  {
+    "id": "patch_068",
+    "clean": {
+      "input": "Patient with hypoglycemia and high insulin. This is insulinoma",
+      "output": "insulinoma"
+    },
+    "corrupted": {
+      "input": "Patient with hypoglycemia and low insulin. This is adrenal insufficiency",
+      "output": "adrenal insufficiency"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_069",
+    "clean": {
+      "input": "Urinalysis shows positive nitrites. This is bacterial UTI",
+      "output": "bacterial UTI"
+    },
+    "corrupted": {
+      "input": "Urinalysis shows sterile pyuria. This could be TB of urinary tract",
+      "output": "TB"
+    },
+    "metadata": {
+      "category": "urology"
+    }
+  },
+  {
+    "id": "patch_070",
+    "clean": {
+      "input": "Patient with lower back pain and saddle anesthesia. This is cauda equina syndrome",
+      "output": "cauda equina"
+    },
+    "corrupted": {
+      "input": "Patient with lower back pain radiating to leg. This is sciatica",
+      "output": "sciatica"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_071",
+    "clean": {
+      "input": "Child with port-wine stain and seizures. This is Sturge-Weber syndrome",
+      "output": "Sturge-Weber"
+    },
+    "corrupted": {
+      "input": "Child with ash-leaf spots and seizures. This is tuberous sclerosis",
+      "output": "tuberous sclerosis"
+    },
+    "metadata": {
+      "category": "genetics"
+    }
+  },
+  {
+    "id": "patch_072",
+    "clean": {
+      "input": "Patient with dysphagia to solids only. This suggests mechanical obstruction",
+      "output": "mechanical"
+    },
+    "corrupted": {
+      "input": "Patient with dysphagia to solids and liquids. This suggests motility disorder",
+      "output": "motility"
+    },
+    "metadata": {
+      "category": "gastroenterology"
+    }
+  },
+  {
+    "id": "patch_073",
+    "clean": {
+      "input": "Mammogram shows spiculated mass. This is concerning for carcinoma",
+      "output": "carcinoma"
+    },
+    "corrupted": {
+      "input": "Mammogram shows well-circumscribed mass. This is likely fibroadenoma",
+      "output": "fibroadenoma"
+    },
+    "metadata": {
+      "category": "oncology"
+    }
+  },
+  {
+    "id": "patch_074",
+    "clean": {
+      "input": "Patient with moon facies and central obesity. This is Cushing syndrome",
+      "output": "Cushing"
+    },
+    "corrupted": {
+      "input": "Patient with hyperpigmentation and hypotension. This is Addison disease",
+      "output": "Addison"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_075",
+    "clean": {
+      "input": "Child with recurrent sinopulmonary infections. Test for immunodeficiency",
+      "output": "immunodeficiency"
+    },
+    "corrupted": {
+      "input": "Child with recurrent skin infections. Consider chronic granulomatous disease",
+      "output": "CGD"
+    },
+    "metadata": {
+      "category": "immunology"
+    }
+  },
+  {
+    "id": "patch_076",
+    "clean": {
+      "input": "Patient with palpitations and regular narrow complex tachycardia. This is AVNRT",
+      "output": "AVNRT"
+    },
+    "corrupted": {
+      "input": "Patient with palpitations and irregularly irregular rhythm. This is atrial fibrillation",
+      "output": "afib"
+    },
+    "metadata": {
+      "category": "cardiology"
+    }
+  },
+  {
+    "id": "patch_077",
+    "clean": {
+      "input": "Serum albumin is 2.0. This is nephrotic syndrome",
+      "output": "nephrotic"
+    },
+    "corrupted": {
+      "input": "Serum albumin is 2.0 with ascites. This is cirrhosis",
+      "output": "cirrhosis"
+    },
+    "metadata": {
+      "category": "nephrology"
+    }
+  },
+  {
+    "id": "patch_078",
+    "clean": {
+      "input": "Patient with night sweats and lymphadenopathy. Consider lymphoma",
+      "output": "lymphoma"
+    },
+    "corrupted": {
+      "input": "Patient with night sweats and productive cough. Consider TB",
+      "output": "TB"
+    },
+    "metadata": {
+      "category": "oncology"
+    }
+  },
+  {
+    "id": "patch_079",
+    "clean": {
+      "input": "Liver biopsy shows Mallory bodies. This is alcoholic hepatitis",
+      "output": "alcoholic"
+    },
+    "corrupted": {
+      "input": "Liver biopsy shows ground-glass hepatocytes. This is hepatitis B",
+      "output": "hepatitis B"
+    },
+    "metadata": {
+      "category": "hepatology"
+    }
+  },
+  {
+    "id": "patch_080",
+    "clean": {
+      "input": "Patient with positive Romberg sign. This is sensory ataxia",
+      "output": "sensory"
+    },
+    "corrupted": {
+      "input": "Patient with inability to perform tandem gait. This is cerebellar ataxia",
+      "output": "cerebellar"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_081",
+    "clean": {
+      "input": "Child with bilious vomiting on day 1 of life. This is malrotation",
+      "output": "malrotation"
+    },
+    "corrupted": {
+      "input": "Child with non-bilious vomiting at 3 weeks. This is pyloric stenosis",
+      "output": "pyloric stenosis"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_082",
+    "clean": {
+      "input": "Patient with amenorrhea and elevated prolactin. This is prolactinoma",
+      "output": "prolactinoma"
+    },
+    "corrupted": {
+      "input": "Patient with amenorrhea and low FSH. This is hypothalamic amenorrhea",
+      "output": "hypothalamic"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_083",
+    "clean": {
+      "input": "Blood pressure differs >20 mmHg between arms. This suggests aortic dissection",
+      "output": "dissection"
+    },
+    "corrupted": {
+      "input": "Blood pressure elevated in arms but low in legs. This is coarctation",
+      "output": "coarctation"
+    },
+    "metadata": {
+      "category": "cardiology"
+    }
+  },
+  {
+    "id": "patch_084",
+    "clean": {
+      "input": "Patient with hemolytic anemia and positive Coombs. This is autoimmune hemolytic anemia",
+      "output": "AIHA"
+    },
+    "corrupted": {
+      "input": "Patient with hemolytic anemia and schistocytes. This is microangiopathic hemolysis",
+      "output": "MAHA"
+    },
+    "metadata": {
+      "category": "hematology"
+    }
+  },
+  {
+    "id": "patch_085",
+    "clean": {
+      "input": "Sputum shows branching gram-positive rods. This is actinomycosis",
+      "output": "actinomycosis"
+    },
+    "corrupted": {
+      "input": "Sputum shows acid-fast bacteria. This is tuberculosis",
+      "output": "TB"
+    },
+    "metadata": {
+      "category": "infectious_disease"
+    }
+  },
+  {
+    "id": "patch_086",
+    "clean": {
+      "input": "Chest X-ray shows kerley B lines. This is pulmonary edema",
+      "output": "edema"
+    },
+    "corrupted": {
+      "input": "Chest X-ray shows cavitary lesion. This is tuberculosis or cancer",
+      "output": "TB"
+    },
+    "metadata": {
+      "category": "pulmonology"
+    }
+  },
+  {
+    "id": "patch_087",
+    "clean": {
+      "input": "Patient with painful swallowing. This is odynophagia suggesting esophagitis",
+      "output": "esophagitis"
+    },
+    "corrupted": {
+      "input": "Patient with difficulty swallowing. This is dysphagia suggesting obstruction",
+      "output": "obstruction"
+    },
+    "metadata": {
+      "category": "gastroenterology"
+    }
+  },
+  {
+    "id": "patch_088",
+    "clean": {
+      "input": "Child with limping and limited hip abduction. This is developmental dysplasia",
+      "output": "DDH"
+    },
+    "corrupted": {
+      "input": "Child with limping and thigh atrophy. This is Legg-Calve-Perthes",
+      "output": "Perthes"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_089",
+    "clean": {
+      "input": "Patient with episodic vertigo lasting hours. This is Meniere disease",
+      "output": "Meniere"
+    },
+    "corrupted": {
+      "input": "Patient with brief vertigo triggered by position. This is BPPV",
+      "output": "BPPV"
+    },
+    "metadata": {
+      "category": "otology"
+    }
+  },
+  {
+    "id": "patch_090",
+    "clean": {
+      "input": "Chest pain worse with swallowing. This is esophageal spasm",
+      "output": "esophageal"
+    },
+    "corrupted": {
+      "input": "Chest pain worse with deep breath. This is pleurisy",
+      "output": "pleurisy"
+    },
+    "metadata": {
+      "category": "gastroenterology"
+    }
+  },
+  {
+    "id": "patch_091",
+    "clean": {
+      "input": "Patient with facial flushing after eating. This is carcinoid syndrome",
+      "output": "carcinoid"
+    },
+    "corrupted": {
+      "input": "Patient with facial flushing and hypertension. This is pheochromocytoma",
+      "output": "pheochromocytoma"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_092",
+    "clean": {
+      "input": "Child with recurrent infections and eczema. This is Wiskott-Aldrich syndrome",
+      "output": "Wiskott-Aldrich"
+    },
+    "corrupted": {
+      "input": "Child with recurrent infections and albinism. This is Chediak-Higashi",
+      "output": "Chediak-Higashi"
+    },
+    "metadata": {
+      "category": "immunology"
+    }
+  },
+  {
+    "id": "patch_093",
+    "clean": {
+      "input": "Patient with tremor at rest that improves with movement. This is Parkinson disease",
+      "output": "Parkinson"
+    },
+    "corrupted": {
+      "input": "Patient with tremor that worsens with movement. This is essential tremor",
+      "output": "essential tremor"
+    },
+    "metadata": {
+      "category": "neurology"
+    }
+  },
+  {
+    "id": "patch_094",
+    "clean": {
+      "input": "Child with failure to thrive and recurrent infections. Test for HIV",
+      "output": "HIV"
+    },
+    "corrupted": {
+      "input": "Child with failure to thrive and salty skin. Test for cystic fibrosis",
+      "output": "CF"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_095",
+    "clean": {
+      "input": "Patient with elevated creatinine and small kidneys. This is chronic kidney disease",
+      "output": "CKD"
+    },
+    "corrupted": {
+      "input": "Patient with elevated creatinine and normal sized kidneys. This is acute kidney injury",
+      "output": "AKI"
+    },
+    "metadata": {
+      "category": "nephrology"
+    }
+  },
+  {
+    "id": "patch_096",
+    "clean": {
+      "input": "Thyroid biopsy shows orphan Annie nuclei. This is papillary thyroid cancer",
+      "output": "papillary"
+    },
+    "corrupted": {
+      "input": "Thyroid biopsy shows amyloid deposits. This is medullary thyroid cancer",
+      "output": "medullary"
+    },
+    "metadata": {
+      "category": "oncology"
+    }
+  },
+  {
+    "id": "patch_097",
+    "clean": {
+      "input": "Patient with weight gain and hyperpigmented striae. This is Cushing syndrome",
+      "output": "Cushing"
+    },
+    "corrupted": {
+      "input": "Patient with weight loss and hyperpigmentation. This is Addison disease",
+      "output": "Addison"
+    },
+    "metadata": {
+      "category": "endocrinology"
+    }
+  },
+  {
+    "id": "patch_098",
+    "clean": {
+      "input": "Child with unilateral leg length discrepancy. Check for DDH",
+      "output": "DDH"
+    },
+    "corrupted": {
+      "input": "Child with bilateral leg bowing. Check for rickets",
+      "output": "rickets"
+    },
+    "metadata": {
+      "category": "pediatrics"
+    }
+  },
+  {
+    "id": "patch_099",
+    "clean": {
+      "input": "Patient with painless hematuria and irregular bladder mass. This is bladder cancer",
+      "output": "bladder cancer"
+    },
+    "corrupted": {
+      "input": "Patient with painful hematuria and flank pain. This is kidney stone",
+      "output": "kidney stone"
+    },
+    "metadata": {
+      "category": "urology"
+    }
+  },
+  {
+    "id": "patch_100",
+    "clean": {
+      "input": "Elevated AFP in pregnancy. Screen for neural tube defect",
+      "output": "NTD"
+    },
+    "corrupted": {
+      "input": "Low AFP in pregnancy. Screen for Down syndrome",
+      "output": "Down syndrome"
+    },
+    "metadata": {
+      "category": "obstetrics"
+    }
+  }
+]

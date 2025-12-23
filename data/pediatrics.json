@@ -1,0 +1,1302 @@
+[
+  {
+    "id": "ped_001",
+    "input": {
+      "scenario": "3-year-old with barking cough, inspiratory stridor, and low-grade fever. Symptoms worse at night."
+    },
+    "output": {
+      "diagnosis": "Croup"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_002",
+    "input": {
+      "scenario": "6-month-old with wheezing, nasal congestion, and difficulty feeding. RSV season."
+    },
+    "output": {
+      "diagnosis": "Bronchiolitis"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_003",
+    "input": {
+      "scenario": "8-year-old with recurrent wheezing episodes triggered by exercise and cold air. Family history of atopy."
+    },
+    "output": {
+      "diagnosis": "Asthma"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_004",
+    "input": {
+      "scenario": "2-week-old with persistent nasal congestion and noisy breathing. Symptoms improve when crying."
+    },
+    "output": {
+      "diagnosis": "Choanal atresia"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_005",
+    "input": {
+      "scenario": "5-year-old with sudden onset of choking and unilateral decreased breath sounds."
+    },
+    "output": {
+      "diagnosis": "Foreign body aspiration"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_006",
+    "input": {
+      "scenario": "4-year-old with high fever, toxic appearance, drooling, and tripod positioning."
+    },
+    "output": {
+      "diagnosis": "Epiglottitis"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_007",
+    "input": {
+      "scenario": "10-year-old with chronic cough, recurrent pneumonia, and failure to thrive. Salty-tasting skin."
+    },
+    "output": {
+      "diagnosis": "Cystic fibrosis"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_008",
+    "input": {
+      "scenario": "3-month-old with paroxysmal cough, inspiratory whoop, and post-tussive vomiting. Unvaccinated."
+    },
+    "output": {
+      "diagnosis": "Pertussis"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_009",
+    "input": {
+      "scenario": "7-year-old with fever, productive cough, and decreased breath sounds over right lower lobe."
+    },
+    "output": {
+      "diagnosis": "Pneumonia"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_010",
+    "input": {
+      "scenario": "Newborn with respiratory distress immediately after birth. Chest X-ray shows ground-glass appearance."
+    },
+    "output": {
+      "diagnosis": "Respiratory distress syndrome"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Respiratory"
+    }
+  },
+  {
+    "id": "ped_011",
+    "input": {
+      "scenario": "4-week-old with projectile non-bilious vomiting after every feed. Hungry after vomiting. Palpable olive-shaped mass."
+    },
+    "output": {
+      "diagnosis": "Pyloric stenosis"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_012",
+    "input": {
+      "scenario": "9-month-old with sudden onset colicky abdominal pain, currant jelly stools, and sausage-shaped mass."
+    },
+    "output": {
+      "diagnosis": "Intussusception"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_013",
+    "input": {
+      "scenario": "5-year-old with acute right lower quadrant pain, fever, and rebound tenderness. Pain migrated from periumbilical region."
+    },
+    "output": {
+      "diagnosis": "Appendicitis"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_014",
+    "input": {
+      "scenario": "3-week-old with bilious vomiting and abdominal distension. Double bubble sign on X-ray."
+    },
+    "output": {
+      "diagnosis": "Duodenal atresia"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_015",
+    "input": {
+      "scenario": "2-year-old with bloody diarrhea, abdominal pain, and recent antibiotic use."
+    },
+    "output": {
+      "diagnosis": "Clostridioides difficile colitis"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_016",
+    "input": {
+      "scenario": "6-year-old with chronic constipation since infancy. Empty rectal vault on exam. Delayed passage of meconium."
+    },
+    "output": {
+      "diagnosis": "Hirschsprung disease"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_017",
+    "input": {
+      "scenario": "8-month-old with failure to thrive, chronic diarrhea starting after introduction of cereals. Villous atrophy on biopsy."
+    },
+    "output": {
+      "diagnosis": "Celiac disease"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_018",
+    "input": {
+      "scenario": "4-year-old with recurrent abdominal pain, vomiting, and headaches. No organic cause found."
+    },
+    "output": {
+      "diagnosis": "Abdominal migraine"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_019",
+    "input": {
+      "scenario": "Newborn with failure to pass meconium in first 48 hours and abdominal distension."
+    },
+    "output": {
+      "diagnosis": "Meconium ileus"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_020",
+    "input": {
+      "scenario": "7-year-old with chronic intermittent abdominal pain relieved by defecation. Normal growth."
+    },
+    "output": {
+      "diagnosis": "Irritable bowel syndrome"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Gastrointestinal"
+    }
+  },
+  {
+    "id": "ped_021",
+    "input": {
+      "scenario": "5-year-old with high fever, rash on trunk spreading to extremities, strawberry tongue, and cervical lymphadenopathy."
+    },
+    "output": {
+      "diagnosis": "Kawasaki disease"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_022",
+    "input": {
+      "scenario": "2-year-old with vesicular rash in different stages, fever, and pruritus. Unvaccinated."
+    },
+    "output": {
+      "diagnosis": "Varicella"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_023",
+    "input": {
+      "scenario": "4-year-old with high fever, cough, coryza, conjunctivitis, and maculopapular rash starting on face."
+    },
+    "output": {
+      "diagnosis": "Measles"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_024",
+    "input": {
+      "scenario": "3-year-old with vesicular lesions on hands, feet, and oral mucosa. Low-grade fever."
+    },
+    "output": {
+      "diagnosis": "Hand-foot-mouth disease"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_025",
+    "input": {
+      "scenario": "7-year-old with slapped cheek appearance and lacy reticular rash on extremities."
+    },
+    "output": {
+      "diagnosis": "Erythema infectiosum"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_026",
+    "input": {
+      "scenario": "9-month-old with high fever for 3 days followed by appearance of roseoliform rash as fever resolves."
+    },
+    "output": {
+      "diagnosis": "Roseola infantum"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_027",
+    "input": {
+      "scenario": "6-year-old with sandpaper-like rash, strawberry tongue, and recent sore throat."
+    },
+    "output": {
+      "diagnosis": "Scarlet fever"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_028",
+    "input": {
+      "scenario": "8-year-old with painful swelling of parotid glands bilaterally. Unvaccinated."
+    },
+    "output": {
+      "diagnosis": "Mumps"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_029",
+    "input": {
+      "scenario": "5-year-old with severe sore throat, grayish membrane over tonsils, and bull neck appearance. Unvaccinated."
+    },
+    "output": {
+      "diagnosis": "Diphtheria"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_030",
+    "input": {
+      "scenario": "3-year-old with impetigo progressing to honey-crusted lesions around mouth and nose."
+    },
+    "output": {
+      "diagnosis": "Impetigo"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Infectious"
+    }
+  },
+  {
+    "id": "ped_031",
+    "input": {
+      "scenario": "6-month-old with irritability, bulging fontanelle, fever, and nuchal rigidity."
+    },
+    "output": {
+      "diagnosis": "Bacterial meningitis"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_032",
+    "input": {
+      "scenario": "4-year-old with generalized tonic-clonic seizure during febrile illness. Post-ictal drowsiness."
+    },
+    "output": {
+      "diagnosis": "Febrile seizure"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_033",
+    "input": {
+      "scenario": "8-year-old with brief staring spells multiple times daily. EEG shows 3-Hz spike-and-wave."
+    },
+    "output": {
+      "diagnosis": "Absence epilepsy"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_034",
+    "input": {
+      "scenario": "2-year-old with developmental regression, loss of acquired skills, and new-onset seizures."
+    },
+    "output": {
+      "diagnosis": "Neurodegenerative disorder"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_035",
+    "input": {
+      "scenario": "10-year-old with recurrent headaches, worse in morning, with vomiting and papilledema."
+    },
+    "output": {
+      "diagnosis": "Increased intracranial pressure"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_036",
+    "input": {
+      "scenario": "3-year-old with unsteady gait, intention tremor, and nystagmus developing over weeks."
+    },
+    "output": {
+      "diagnosis": "Cerebellar tumor"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_037",
+    "input": {
+      "scenario": "7-year-old with ascending weakness starting in legs, areflexia, and recent viral illness."
+    },
+    "output": {
+      "diagnosis": "Guillain-Barr\u00e9 syndrome"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_038",
+    "input": {
+      "scenario": "5-year-old with facial weakness, drooling, and inability to close eye on one side."
+    },
+    "output": {
+      "diagnosis": "Bell's palsy"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_039",
+    "input": {
+      "scenario": "9-year-old with chronic headaches, worse in afternoon, relieved by rest. Normal neuro exam."
+    },
+    "output": {
+      "diagnosis": "Tension headache"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_040",
+    "input": {
+      "scenario": "Newborn with hypotonia, poor feeding, and weak cry. No deep tendon reflexes."
+    },
+    "output": {
+      "diagnosis": "Spinal muscular atrophy"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Neurological"
+    }
+  },
+  {
+    "id": "ped_041",
+    "input": {
+      "scenario": "4-month-old with not smiling or following faces. No head control. Lacks fix and follow."
+    },
+    "output": {
+      "diagnosis": "Global developmental delay"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_042",
+    "input": {
+      "scenario": "18-month-old with no words, limited eye contact, and repetitive hand movements."
+    },
+    "output": {
+      "diagnosis": "Autism spectrum disorder"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_043",
+    "input": {
+      "scenario": "3-year-old with delayed motor milestones, proximal muscle weakness, and Gower sign positive."
+    },
+    "output": {
+      "diagnosis": "Duchenne muscular dystrophy"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_044",
+    "input": {
+      "scenario": "5-year-old with hyperactivity, impulsivity, and difficulty following instructions at school."
+    },
+    "output": {
+      "diagnosis": "ADHD"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_045",
+    "input": {
+      "scenario": "7-year-old with difficulty reading despite normal intelligence. Letter reversals common."
+    },
+    "output": {
+      "diagnosis": "Dyslexia"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_046",
+    "input": {
+      "scenario": "2-year-old with speech delay but normal receptive language and social skills."
+    },
+    "output": {
+      "diagnosis": "Expressive language disorder"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_047",
+    "input": {
+      "scenario": "4-year-old with stuttering that worsens with excitement or stress."
+    },
+    "output": {
+      "diagnosis": "Developmental stuttering"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_048",
+    "input": {
+      "scenario": "9-year-old with poor coordination affecting handwriting and sports activities."
+    },
+    "output": {
+      "diagnosis": "Developmental coordination disorder"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_049",
+    "input": {
+      "scenario": "6-year-old with bed-wetting at night. Daytime continence achieved."
+    },
+    "output": {
+      "diagnosis": "Primary nocturnal enuresis"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_050",
+    "input": {
+      "scenario": "8-year-old with obsessive thoughts and compulsive hand-washing behaviors."
+    },
+    "output": {
+      "diagnosis": "Obsessive-compulsive disorder"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Developmental"
+    }
+  },
+  {
+    "id": "ped_051",
+    "input": {
+      "scenario": "3-week-old with prolonged jaundice, pale stools, and dark urine. Hepatomegaly present."
+    },
+    "output": {
+      "diagnosis": "Biliary atresia"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Hepatobiliary"
+    }
+  },
+  {
+    "id": "ped_052",
+    "input": {
+      "scenario": "2-day-old with jaundice appearing in first 24 hours of life. Mother is O positive, baby is A positive."
+    },
+    "output": {
+      "diagnosis": "ABO incompatibility"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Hematology"
+    }
+  },
+  {
+    "id": "ped_053",
+    "input": {
+      "scenario": "5-year-old with pallor, fatigue, and splenomegaly. Sickle cells on peripheral smear."
+    },
+    "output": {
+      "diagnosis": "Sickle cell disease"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Hematology"
+    }
+  },
+  {
+    "id": "ped_054",
+    "input": {
+      "scenario": "7-year-old with petechiae, easy bruising, and thrombocytopenia. Recent viral illness."
+    },
+    "output": {
+      "diagnosis": "Immune thrombocytopenia"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Hematology"
+    }
+  },
+  {
+    "id": "ped_055",
+    "input": {
+      "scenario": "3-year-old with pallor, irritability, and pica. Low MCV on blood count."
+    },
+    "output": {
+      "diagnosis": "Iron deficiency anemia"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Hematology"
+    }
+  },
+  {
+    "id": "ped_056",
+    "input": {
+      "scenario": "9-year-old with recurrent joint and muscle bleeds. Prolonged PTT."
+    },
+    "output": {
+      "diagnosis": "Hemophilia A"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Hematology"
+    }
+  },
+  {
+    "id": "ped_057",
+    "input": {
+      "scenario": "6-month-old with severe anemia requiring transfusion. Mediterranean descent."
+    },
+    "output": {
+      "diagnosis": "Beta-thalassemia major"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Hematology"
+    }
+  },
+  {
+    "id": "ped_058",
+    "input": {
+      "scenario": "4-year-old with lymphadenopathy, bone pain, and hepatosplenomegaly. Blasts on peripheral smear."
+    },
+    "output": {
+      "diagnosis": "Acute lymphoblastic leukemia"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Oncology"
+    }
+  },
+  {
+    "id": "ped_059",
+    "input": {
+      "scenario": "2-year-old with abdominal mass crossing midline. Elevated catecholamines."
+    },
+    "output": {
+      "diagnosis": "Neuroblastoma"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Oncology"
+    }
+  },
+  {
+    "id": "ped_060",
+    "input": {
+      "scenario": "5-year-old with large abdominal mass, hematuria, and hypertension."
+    },
+    "output": {
+      "diagnosis": "Wilms tumor"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Oncology"
+    }
+  },
+  {
+    "id": "ped_061",
+    "input": {
+      "scenario": "8-year-old with painless testicular mass. Elevated AFP and beta-hCG."
+    },
+    "output": {
+      "diagnosis": "Testicular tumor"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Oncology"
+    }
+  },
+  {
+    "id": "ped_062",
+    "input": {
+      "scenario": "6-year-old with ataxia, morning vomiting, and headaches. MRI shows posterior fossa mass."
+    },
+    "output": {
+      "diagnosis": "Medulloblastoma"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Oncology"
+    }
+  },
+  {
+    "id": "ped_063",
+    "input": {
+      "scenario": "New born with bilateral undescended testes. Normal penis and scrotum."
+    },
+    "output": {
+      "diagnosis": "Cryptorchidism"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Urology"
+    }
+  },
+  {
+    "id": "ped_064",
+    "input": {
+      "scenario": "4-year-old boy with sudden onset of severe testicular pain and swelling. Absent cremasteric reflex."
+    },
+    "output": {
+      "diagnosis": "Testicular torsion"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Urology"
+    }
+  },
+  {
+    "id": "ped_065",
+    "input": {
+      "scenario": "3-year-old boy with painless swelling of scrotum that transilluminates."
+    },
+    "output": {
+      "diagnosis": "Hydrocele"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Urology"
+    }
+  },
+  {
+    "id": "ped_066",
+    "input": {
+      "scenario": "5-year-old with urinary frequency, urgency, and dysuria. Positive urine culture."
+    },
+    "output": {
+      "diagnosis": "Urinary tract infection"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Urology"
+    }
+  },
+  {
+    "id": "ped_067",
+    "input": {
+      "scenario": "7-year-old with periorbital edema, proteinuria, and hypoalbuminemia."
+    },
+    "output": {
+      "diagnosis": "Nephrotic syndrome"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Nephrology"
+    }
+  },
+  {
+    "id": "ped_068",
+    "input": {
+      "scenario": "6-year-old with gross hematuria and hypertension following recent strep pharyngitis."
+    },
+    "output": {
+      "diagnosis": "Post-streptococcal glomerulonephritis"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Nephrology"
+    }
+  },
+  {
+    "id": "ped_069",
+    "input": {
+      "scenario": "9-year-old with polyuria, polydipsia, and weight loss. Elevated blood glucose."
+    },
+    "output": {
+      "diagnosis": "Type 1 diabetes mellitus"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Endocrine"
+    }
+  },
+  {
+    "id": "ped_070",
+    "input": {
+      "scenario": "3-year-old with accelerated growth velocity and early pubic hair development."
+    },
+    "output": {
+      "diagnosis": "Precocious puberty"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Endocrine"
+    }
+  },
+  {
+    "id": "ped_071",
+    "input": {
+      "scenario": "10-year-old with short stature, delayed bone age, and low growth hormone levels."
+    },
+    "output": {
+      "diagnosis": "Growth hormone deficiency"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Endocrine"
+    }
+  },
+  {
+    "id": "ped_072",
+    "input": {
+      "scenario": "Newborn with ambiguous genitalia and salt-wasting crisis. Elevated 17-hydroxyprogesterone."
+    },
+    "output": {
+      "diagnosis": "Congenital adrenal hyperplasia"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Endocrine"
+    }
+  },
+  {
+    "id": "ped_073",
+    "input": {
+      "scenario": "8-year-old with goiter, weight gain, fatigue, and cold intolerance. Elevated TSH."
+    },
+    "output": {
+      "diagnosis": "Hypothyroidism"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Endocrine"
+    }
+  },
+  {
+    "id": "ped_074",
+    "input": {
+      "scenario": "6-year-old with weight loss, tremor, and exophthalmos. Low TSH."
+    },
+    "output": {
+      "diagnosis": "Graves disease"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Endocrine"
+    }
+  },
+  {
+    "id": "ped_075",
+    "input": {
+      "scenario": "4-year-old with tetany and seizures. Low calcium and high phosphorus. Recent thyroid surgery in mother."
+    },
+    "output": {
+      "diagnosis": "Hypoparathyroidism"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Endocrine"
+    }
+  },
+  {
+    "id": "ped_076",
+    "input": {
+      "scenario": "2-year-old with central obesity, moon facies, and hypertension."
+    },
+    "output": {
+      "diagnosis": "Cushing syndrome"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Endocrine"
+    }
+  },
+  {
+    "id": "ped_077",
+    "input": {
+      "scenario": "5-month-old with heart murmur, failure to thrive, and tachypnea during feeding."
+    },
+    "output": {
+      "diagnosis": "Ventricular septal defect"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Cardiology"
+    }
+  },
+  {
+    "id": "ped_078",
+    "input": {
+      "scenario": "Newborn with cyanosis not improving with oxygen. Single S2. Egg-shaped heart on X-ray."
+    },
+    "output": {
+      "diagnosis": "Transposition of great arteries"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Cardiology"
+    }
+  },
+  {
+    "id": "ped_079",
+    "input": {
+      "scenario": "3-year-old with squatting behavior after exertion. Cyanotic spells."
+    },
+    "output": {
+      "diagnosis": "Tetralogy of Fallot"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Cardiology"
+    }
+  },
+  {
+    "id": "ped_080",
+    "input": {
+      "scenario": "7-year-old with bounding pulses, wide pulse pressure, and continuous machinery murmur."
+    },
+    "output": {
+      "diagnosis": "Patent ductus arteriosus"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Cardiology"
+    }
+  },
+  {
+    "id": "ped_081",
+    "input": {
+      "scenario": "9-year-old with fatigue, exercise intolerance, and fixed split S2."
+    },
+    "output": {
+      "diagnosis": "Atrial septal defect"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Cardiology"
+    }
+  },
+  {
+    "id": "ped_082",
+    "input": {
+      "scenario": "4-year-old with weak femoral pulses and upper extremity hypertension."
+    },
+    "output": {
+      "diagnosis": "Coarctation of aorta"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Cardiology"
+    }
+  },
+  {
+    "id": "ped_083",
+    "input": {
+      "scenario": "8-year-old with joint pain, fever, and new heart murmur following strep throat."
+    },
+    "output": {
+      "diagnosis": "Acute rheumatic fever"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Cardiology"
+    }
+  },
+  {
+    "id": "ped_084",
+    "input": {
+      "scenario": "6-year-old with eczema, recurrent infections, and thrombocytopenia. Petechiae present."
+    },
+    "output": {
+      "diagnosis": "Wiskott-Aldrich syndrome"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Immunology"
+    }
+  },
+  {
+    "id": "ped_085",
+    "input": {
+      "scenario": "2-year-old with recurrent severe bacterial infections. Low immunoglobulin levels."
+    },
+    "output": {
+      "diagnosis": "X-linked agammaglobulinemia"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Immunology"
+    }
+  },
+  {
+    "id": "ped_086",
+    "input": {
+      "scenario": "5-year-old with recurrent abscesses and granulomas on biopsy. Abnormal nitroblue tetrazolium test."
+    },
+    "output": {
+      "diagnosis": "Chronic granulomatous disease"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Immunology"
+    }
+  },
+  {
+    "id": "ped_087",
+    "input": {
+      "scenario": "4-year-old with anaphylaxis after eating peanuts. Urticaria and respiratory distress."
+    },
+    "output": {
+      "diagnosis": "Food allergy"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Allergy"
+    }
+  },
+  {
+    "id": "ped_088",
+    "input": {
+      "scenario": "7-year-old with seasonal rhinorrhea, sneezing, and itchy eyes every spring."
+    },
+    "output": {
+      "diagnosis": "Allergic rhinitis"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Allergy"
+    }
+  },
+  {
+    "id": "ped_089",
+    "input": {
+      "scenario": "3-year-old with atopic dermatitis, flexural involvement, and intense pruritus."
+    },
+    "output": {
+      "diagnosis": "Eczema"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Dermatology"
+    }
+  },
+  {
+    "id": "ped_090",
+    "input": {
+      "scenario": "6-month-old with salmon-colored patches on trunk. Lesions fade and reappear."
+    },
+    "output": {
+      "diagnosis": "Erythema toxicum neonatorum"
+    },
+    "metadata": {
+      "age_group": "Infant",
+      "category": "Dermatology"
+    }
+  },
+  {
+    "id": "ped_091",
+    "input": {
+      "scenario": "8-year-old with multiple caf\u00e9-au-lait spots and axillary freckling."
+    },
+    "output": {
+      "diagnosis": "Neurofibromatosis type 1"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Dermatology"
+    }
+  },
+  {
+    "id": "ped_092",
+    "input": {
+      "scenario": "5-year-old with silvery scales on elbows and knees. Nail pitting present."
+    },
+    "output": {
+      "diagnosis": "Psoriasis"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Dermatology"
+    }
+  },
+  {
+    "id": "ped_093",
+    "input": {
+      "scenario": "2-year-old with hemangioma on face growing rapidly. Near eye causing concern."
+    },
+    "output": {
+      "diagnosis": "Infantile hemangioma"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Dermatology"
+    }
+  },
+  {
+    "id": "ped_094",
+    "input": {
+      "scenario": "9-year-old with recurrent bone pain. X-ray shows lytic lesions."
+    },
+    "output": {
+      "diagnosis": "Langerhans cell histiocytosis"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Oncology"
+    }
+  },
+  {
+    "id": "ped_095",
+    "input": {
+      "scenario": "3-year-old with limp and refusal to bear weight. No trauma. Fever present."
+    },
+    "output": {
+      "diagnosis": "Septic arthritis"
+    },
+    "metadata": {
+      "age_group": "Toddler",
+      "category": "Orthopedic"
+    }
+  },
+  {
+    "id": "ped_096",
+    "input": {
+      "scenario": "6-year-old boy with limp after playing. Limited internal rotation of hip. Afebrile."
+    },
+    "output": {
+      "diagnosis": "Legg-Calv\u00e9-Perthes disease"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Orthopedic"
+    }
+  },
+  {
+    "id": "ped_097",
+    "input": {
+      "scenario": "13-year-old obese boy with hip pain radiating to knee. Limited internal rotation."
+    },
+    "output": {
+      "diagnosis": "Slipped capital femoral epiphysis"
+    },
+    "metadata": {
+      "age_group": "Adolescent",
+      "category": "Orthopedic"
+    }
+  },
+  {
+    "id": "ped_098",
+    "input": {
+      "scenario": "4-year-old with tender swelling over tibia. Night pain relieved by aspirin."
+    },
+    "output": {
+      "diagnosis": "Osteoid osteoma"
+    },
+    "metadata": {
+      "age_group": "Preschool",
+      "category": "Orthopedic"
+    }
+  },
+  {
+    "id": "ped_099",
+    "input": {
+      "scenario": "Newborn with cleft lip and palate noted at birth. Difficulty feeding."
+    },
+    "output": {
+      "diagnosis": "Cleft lip/palate"
+    },
+    "metadata": {
+      "age_group": "Neonate",
+      "category": "Craniofacial"
+    }
+  },
+  {
+    "id": "ped_100",
+    "input": {
+      "scenario": "7-year-old with painless scrotal swelling that increases with standing and resolves when supine."
+    },
+    "output": {
+      "diagnosis": "Varicocele"
+    },
+    "metadata": {
+      "age_group": "School-age",
+      "category": "Urology"
+    }
+  }
+]

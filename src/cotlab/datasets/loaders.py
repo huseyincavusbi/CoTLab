@@ -1,6 +1,15 @@
-"""Dataset loaders for CoT research."""
+"""Dataset loaders for CoT research.
 
-import csv
+Supports JSON format with standardized structure:
+{
+    "id": "unique_id",
+    "input": { ... },
+    "output": { ... },
+    "metadata": { ... }
+}
+"""
+
+import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,230 +68,142 @@ class BaseDataset(ABC):
         return [self[i] for i in indices]
 
 
-@Registry.register_dataset("radiology")
-class RadiologyDataset(BaseDataset):
-    """
-    Dataset from CSV file with radiology reports.
+class JSONDataset(BaseDataset):
+    """Base class for JSON-based datasets."""
 
-    Uses existing Files/Radiology_Synthetic_Data.csv
-    """
+    def __init__(self, name: str, path: str, **kwargs):
+        self._name = name
+        self.path = Path(path)
+        self._samples: List[Sample] = []
+        self._load()
+
+    def _load(self):
+        """Load samples from JSON file."""
+        if not self.path.exists():
+            raise FileNotFoundError(f"Dataset not found: {self.path}")
+
+        with open(self.path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        for idx, item in enumerate(data):
+            sample = self._parse_item(idx, item)
+            self._samples.append(sample)
+
+    @abstractmethod
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        """Parse a single JSON item into a Sample. Override in subclasses."""
+        ...
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+
+@Registry.register_dataset("radiology")
+class RadiologyDataset(JSONDataset):
+    """Radiology reports dataset for pathological fracture detection."""
 
     def __init__(
         self,
         name: str = "radiology",
-        path: str = "Files/Radiology_Synthetic_Data.csv",
-        text_column: str = "Synthetic",
-        label_column: str = "Flag",
+        path: str = "data/radiology.json",
         **kwargs,
     ):
-        self._name = name
-        self.path = Path(path)
-        self.text_column = text_column
-        self.label_column = label_column
+        super().__init__(name, path, **kwargs)
 
-        self._samples: List[Sample] = []
-        self._load()
-
-    def _load(self):
-        """Load samples from CSV."""
-        if not self.path.exists():
-            raise FileNotFoundError(f"Dataset not found: {self.path}")
-
-        with open(self.path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for idx, row in enumerate(reader):
-                text = row.get(self.text_column, "")
-                label = row.get(self.label_column)
-
-                # Parse boolean labels
-                if label in ("TRUE", "True", "true", "1"):
-                    label = True
-                elif label in ("FALSE", "False", "false", "0"):
-                    label = False
-
-                self._samples.append(
-                    Sample(
-                        idx=idx, text=text.strip(), label=label, metadata={"source": str(self.path)}
-                    )
-                )
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    def __len__(self) -> int:
-        return len(self._samples)
-
-    def __getitem__(self, idx: int) -> Sample:
-        return self._samples[idx]
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        return Sample(
+            idx=idx,
+            text=item["input"]["report"],
+            label=item["output"]["pathological_fracture"],
+            metadata=item.get("metadata", {}),
+        )
 
 
 @Registry.register_dataset("pediatrics")
-class PediatricsDataset(BaseDataset):
-    """
-    Dataset from CSV file with pediatrics clinical scenarios.
-
-    Uses data/Pediatrics_Synthetic_Data.csv with 100 general pediatrics cases.
-    """
+class PediatricsDataset(JSONDataset):
+    """Pediatrics clinical scenarios dataset."""
 
     def __init__(
         self,
         name: str = "pediatrics",
-        path: str = "data/Pediatrics_Synthetic_Data.csv",
-        text_column: str = "Scenario",
-        label_column: str = "Diagnosis",
+        path: str = "data/pediatrics.json",
         **kwargs,
     ):
-        self._name = name
-        self.path = Path(path)
-        self.text_column = text_column
-        self.label_column = label_column
+        super().__init__(name, path, **kwargs)
 
-        self._samples: List[Sample] = []
-        self._load()
-
-    def _load(self):
-        """Load samples from CSV."""
-        if not self.path.exists():
-            raise FileNotFoundError(f"Dataset not found: {self.path}")
-
-        with open(self.path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for idx, row in enumerate(reader):
-                text = row.get(self.text_column, "")
-                label = row.get(self.label_column, "")
-                age_group = row.get("Age_Group", "")
-                category = row.get("Category", "")
-
-                self._samples.append(
-                    Sample(
-                        idx=idx,
-                        text=text.strip(),
-                        label=label.strip(),
-                        metadata={
-                            "age_group": age_group,
-                            "category": category,
-                            "source": str(self.path),
-                        },
-                    )
-                )
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    def __len__(self) -> int:
-        return len(self._samples)
-
-    def __getitem__(self, idx: int) -> Sample:
-        return self._samples[idx]
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        return Sample(
+            idx=idx,
+            text=item["input"]["scenario"],
+            label=item["output"]["diagnosis"],
+            metadata=item.get("metadata", {}),
+        )
 
 
 @Registry.register_dataset("synthetic")
-class SyntheticMedicalDataset(BaseDataset):
-    """
-    Synthetic dataset for testing CoT experiments.
-
-    Loads medical scenarios from data/Synthetic_Medical_Data.csv.
-    """
+class SyntheticMedicalDataset(JSONDataset):
+    """Synthetic medical QA dataset."""
 
     def __init__(
         self,
         name: str = "synthetic",
-        path: str = "data/Synthetic_Medical_Data.csv",
+        path: str = "data/synthetic.json",
         repeat: int = 1,
         **kwargs,
     ):
-        self._name = name
-        self.path = Path(path)
         self.repeat = repeat
-        self._samples: List[Sample] = []
-        self._load()
+        super().__init__(name, path, **kwargs)
 
     def _load(self):
-        """Load samples from CSV."""
+        """Load samples with optional repeat."""
         if not self.path.exists():
             raise FileNotFoundError(f"Dataset not found: {self.path}")
 
-        scenarios = []
         with open(self.path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                scenarios.append(row)
+            data = json.load(f)
 
         for r in range(self.repeat):
-            for idx, scenario in enumerate(scenarios):
-                keywords = scenario.get("Reasoning_Keywords", "")
-                self._samples.append(
-                    Sample(
-                        idx=r * len(scenarios) + idx,
-                        text=scenario.get("Scenario", ""),
-                        label=scenario.get("Expected_Answer", ""),
-                        metadata={
-                            "reasoning_keywords": keywords.split(",") if keywords else [],
-                            "expected_answer": scenario.get("Expected_Answer", ""),
-                        },
-                    )
-                )
+            for idx, item in enumerate(data):
+                sample = self._parse_item(r * len(data) + idx, item)
+                self._samples.append(sample)
 
-    @property
-    def name(self) -> str:
-        return self._name
-
-    def __len__(self) -> int:
-        return len(self._samples)
-
-    def __getitem__(self, idx: int) -> Sample:
-        return self._samples[idx]
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        return Sample(
+            idx=idx,
+            text=item["input"]["scenario"],
+            label=item["output"]["diagnosis"],
+            metadata=item.get("metadata", {}),
+        )
 
 
 @Registry.register_dataset("patching_pairs")
-class PatchingPairsDataset(BaseDataset):
-    """
-    Dataset of clean/corrupted prompt pairs for activation patching.
-
-    Loads pairs from data/Patching_Pairs_Data.csv.
-    """
+class PatchingPairsDataset(JSONDataset):
+    """Clean/corrupted pairs for activation patching experiments."""
 
     def __init__(
         self,
         name: str = "patching_pairs",
-        path: str = "data/Patching_Pairs_Data.csv",
+        path: str = "data/patching_pairs.json",
         **kwargs,
     ):
-        self._name = name
-        self.path = Path(path)
-        self._samples: List[Sample] = []
-        self._load()
+        super().__init__(name, path, **kwargs)
 
-    def _load(self):
-        """Load samples from CSV."""
-        if not self.path.exists():
-            raise FileNotFoundError(f"Dataset not found: {self.path}")
-
-        with open(self.path, "r", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for idx, row in enumerate(reader):
-                self._samples.append(
-                    Sample(
-                        idx=idx,
-                        text=row.get("Clean_Prompt", ""),
-                        label=row.get("Clean_Answer", ""),
-                        metadata={
-                            "corrupted_prompt": row.get("Corrupted_Prompt", ""),
-                            "clean_answer": row.get("Clean_Answer", ""),
-                            "corrupted_answer": row.get("Corrupted_Answer", ""),
-                            "category": row.get("Category", "general"),
-                        },
-                    )
-                )
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    def __len__(self) -> int:
-        return len(self._samples)
-
-    def __getitem__(self, idx: int) -> Sample:
-        return self._samples[idx]
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        return Sample(
+            idx=idx,
+            text=item["clean"]["input"],
+            label=item["clean"]["output"],
+            metadata={
+                "corrupted_prompt": item["corrupted"]["input"],
+                "clean_answer": item["clean"]["output"],
+                "corrupted_answer": item["corrupted"]["output"],
+                "category": item.get("metadata", {}).get("category", "general"),
+            },
+        )
