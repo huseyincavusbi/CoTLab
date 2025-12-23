@@ -121,7 +121,7 @@ jobs:
           synthetic = SyntheticMedicalDataset()
           print(f'Synthetic dataset: {len(synthetic)} samples')
 
-          radiology = RadiologyDataset(path='data/Radiology_Synthetic_Data.csv')
+          radiology = RadiologyDataset()
           print(f'Radiology dataset: {len(radiology)} samples')
 
           print('All datasets load correctly!')
