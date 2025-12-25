@@ -9,6 +9,11 @@ from .strategies import (
     SimplePromptStrategy,
     create_prompt_strategy,
 )
+from .length_matched_strategies import (
+    ContrarianMatchedStrategy,
+    ChainOfThoughtMatchedStrategy,
+    DirectAnswerMatchedStrategy,
+)
 
 __all__ = [
     "SimplePromptStrategy",
@@ -18,4 +23,7 @@ __all__ = [
     "NoInstructionStrategy",
     "RadiologyPromptStrategy",
     "create_prompt_strategy",
+    "ContrarianMatchedStrategy",
+    "ChainOfThoughtMatchedStrategy",
+    "DirectAnswerMatchedStrategy",
 ]

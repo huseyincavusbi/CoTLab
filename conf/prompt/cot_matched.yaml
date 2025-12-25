@@ -1,0 +1,4 @@
+# Length-matched Chain of Thought prompt
+_target_: cotlab.prompts.length_matched_strategies.ChainOfThoughtMatchedStrategy
+
+name: cot_matched

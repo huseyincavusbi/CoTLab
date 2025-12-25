@@ -1,0 +1,4 @@
+# Length-matched Direct Answer prompt
+_target_: cotlab.prompts.length_matched_strategies.DirectAnswerMatchedStrategy
+
+name: direct_matched
