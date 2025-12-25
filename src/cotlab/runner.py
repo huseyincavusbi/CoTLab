@@ -116,7 +116,7 @@ def main():
 
                     # Add JSON output override if enabled
                     if json_output:
-                        overrides.append("prompt.json_output=true")
+                        overrides.append("++prompt.json_output=true")
 
                     cfg = compose(config_name="config", overrides=overrides)
 
