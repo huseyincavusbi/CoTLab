@@ -11,6 +11,7 @@ import torch
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 
 from ..backends.base import InferenceBackend
 from ..core.base import BaseExperiment, ExperimentResult
@@ -58,18 +59,65 @@ class ProbingClassifierExperiment(BaseExperiment):
         """Run probing classifier experiment."""
 
         n_samples = num_samples or self.num_samples
-        samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
+
+        # 1. Collect all samples first to understand label distribution
+        print("Collecting samples...")
+        all_samples = list(dataset)
+        raw_labels = []
+        for s in all_samples:
+            # Use sample.label as primary source, fallback to metadata
+            lbl = s.label
+            if lbl is None:
+                lbl = s.metadata.get("label", s.metadata.get("ground_truth", 0))
+            raw_labels.append(str(lbl))  # Ensure string for encoder
+
+        # 2. Encode labels
+        le = LabelEncoder()
+        encoded_labels = le.fit_transform(raw_labels)
+        label_mapping = dict(zip(le.classes_, range(len(le.classes_))))
+        print(f"Found {len(label_mapping)} unique labels: {label_mapping}")
+
+        # 3. Balanced Sampling (stratified)
+        if len(label_mapping) < 2:
+            print("Warning: Dataset has only 1 class. Probing requires at least 2 classes.")
+            # Proceed anyway to avoid crash, but results will be trivial
+            selected_indices = range(min(n_samples, len(all_samples)))
+        else:
+            # Try to get balanced n_samples
+            try:
+                # Use stratify to sample
+                indices = np.arange(len(all_samples))
+                _, selected_indices = train_test_split(
+                    indices,
+                    train_size=None,
+                    test_size=min(n_samples, len(all_samples)),
+                    stratify=encoded_labels,
+                    random_state=42,
+                )
+            except ValueError:
+                # Fallback if too few samples for stratification
+                print(
+                    "Warning: Cannot perform stratified sampling (classes too small). Using random sample."
+                )
+                import random
+
+                selected_indices = random.sample(
+                    range(len(all_samples)), min(n_samples, len(all_samples))
+                )
+
+        samples = [all_samples[i] for i in selected_indices]
+        sample_labels = encoded_labels[selected_indices]
+
+        print(f"Selected {len(samples)} samples for probing.")
 
         tokenizer = backend._tokenizer
         model = backend._model
 
         print(f"Model: {backend.model_name}")
         print(f"Target layers: {self.target_layers}")
-        print(f"Samples: {len(samples)}")
 
-        # Collect hidden states and labels
+        # Collect hidden states
         layer_hidden_states = {layer: [] for layer in self.target_layers}
-        labels = []
 
         print("\nExtracting hidden states...")
 
@@ -95,13 +143,8 @@ class ProbingClassifierExperiment(BaseExperiment):
                     h = hidden_states[layer_idx][0, -1, :].float().cpu().numpy()
                     layer_hidden_states[layer_idx].append(h)
 
-            # Get label from sample metadata
-            label = sample.metadata.get("label", sample.metadata.get("ground_truth", 0))
-            if isinstance(label, str):
-                label = 1 if label.lower() in ["yes", "true", "positive", "1"] else 0
-            labels.append(label)
-
-        labels = np.array(labels)
+        # Labels are already prepared in sample_labels
+        labels = sample_labels
 
         # Train probes for each layer
         print("\n" + "=" * 60)
