@@ -7,8 +7,11 @@ Supports JSON format with standardized structure:
     "output": { ... },
     "metadata": { ... }
 }
+
+Also supports CSV format with automatic detection based on file extension.
 """
 
+import csv
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -69,7 +72,7 @@ class BaseDataset(ABC):
 
 
 class JSONDataset(BaseDataset):
-    """Base class for JSON-based datasets."""
+    """Base class for JSON/CSV-based datasets with automatic format detection."""
 
     def __init__(self, name: str, path: str, **kwargs):
         self._name = name
@@ -78,10 +81,17 @@ class JSONDataset(BaseDataset):
         self._load()
 
     def _load(self):
-        """Load samples from JSON file."""
+        """Load samples from JSON or CSV file based on extension."""
         if not self.path.exists():
             raise FileNotFoundError(f"Dataset not found: {self.path}")
 
+        if self.path.suffix.lower() == '.csv':
+            self._load_csv()
+        else:
+            self._load_json()
+
+    def _load_json(self):
+        """Load samples from JSON file."""
         with open(self.path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
@@ -89,10 +99,26 @@ class JSONDataset(BaseDataset):
             sample = self._parse_item(idx, item)
             self._samples.append(sample)
 
+    def _load_csv(self):
+        """Load samples from CSV file."""
+        with open(self.path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for idx, row in enumerate(reader):
+                sample = self._parse_csv_row(idx, row)
+                self._samples.append(sample)
+
     @abstractmethod
     def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
         """Parse a single JSON item into a Sample. Override in subclasses."""
         ...
+
+    def _parse_csv_row(self, idx: int, row: Dict[str, Any]) -> Sample:
+        """Parse a single CSV row into a Sample. Override in subclasses for custom CSV handling."""
+        # Default implementation - subclasses should override for specific CSV formats
+        raise NotImplementedError(
+            f"CSV loading not implemented for {self.__class__.__name__}. "
+            "Override _parse_csv_row() or use a JSON file."
+        )
 
     @property
     def name(self) -> str:
@@ -125,6 +151,15 @@ class RadiologyDataset(JSONDataset):
             metadata=item.get("metadata", {}),
         )
 
+    def _parse_csv_row(self, idx: int, row: Dict[str, Any]) -> Sample:
+        # CSV columns: Synthetic (text), Flag (label)
+        return Sample(
+            idx=idx,
+            text=row.get("Synthetic", ""),
+            label=row.get("Flag", ""),
+            metadata={},
+        )
+
 
 @Registry.register_dataset("pediatrics")
 class PediatricsDataset(JSONDataset):
@@ -146,6 +181,18 @@ class PediatricsDataset(JSONDataset):
             metadata=item.get("metadata", {}),
         )
 
+    def _parse_csv_row(self, idx: int, row: Dict[str, Any]) -> Sample:
+        # CSV columns: Scenario, Diagnosis, Age_Group, Category
+        return Sample(
+            idx=idx,
+            text=row.get("Scenario", ""),
+            label=row.get("Diagnosis", ""),
+            metadata={
+                "age_group": row.get("Age_Group", ""),
+                "category": row.get("Category", ""),
+            },
+        )
+
 
 @Registry.register_dataset("synthetic")
 class SyntheticMedicalDataset(JSONDataset):
@@ -162,10 +209,17 @@ class SyntheticMedicalDataset(JSONDataset):
         super().__init__(name, path, **kwargs)
 
     def _load(self):
-        """Load samples with optional repeat."""
+        """Load samples with optional repeat. Supports both JSON and CSV."""
         if not self.path.exists():
             raise FileNotFoundError(f"Dataset not found: {self.path}")
 
+        if self.path.suffix.lower() == '.csv':
+            self._load_csv_with_repeat()
+        else:
+            self._load_json_with_repeat()
+
+    def _load_json_with_repeat(self):
+        """Load JSON samples with optional repeat."""
         with open(self.path, "r", encoding="utf-8") as f:
             data = json.load(f)
 
@@ -174,12 +228,33 @@ class SyntheticMedicalDataset(JSONDataset):
                 sample = self._parse_item(r * len(data) + idx, item)
                 self._samples.append(sample)
 
+    def _load_csv_with_repeat(self):
+        """Load CSV samples with optional repeat."""
+        with open(self.path, "r", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+
+        for r in range(self.repeat):
+            for idx, row in enumerate(rows):
+                sample = self._parse_csv_row(r * len(rows) + idx, row)
+                self._samples.append(sample)
+
     def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
         return Sample(
             idx=idx,
             text=item["input"]["scenario"],
             label=item["output"]["diagnosis"],
             metadata=item.get("metadata", {}),
+        )
+
+    def _parse_csv_row(self, idx: int, row: Dict[str, Any]) -> Sample:
+        # CSV columns: Scenario, Expected_Answer, Reasoning_Keywords
+        return Sample(
+            idx=idx,
+            text=row.get("Scenario", ""),
+            label=row.get("Expected_Answer", ""),
+            metadata={
+                "reasoning_keywords": row.get("Reasoning_Keywords", ""),
+            },
         )
 
 
@@ -205,5 +280,19 @@ class PatchingPairsDataset(JSONDataset):
                 "clean_answer": item["clean"]["output"],
                 "corrupted_answer": item["corrupted"]["output"],
                 "category": item.get("metadata", {}).get("category", "general"),
+            },
+        )
+
+    def _parse_csv_row(self, idx: int, row: Dict[str, Any]) -> Sample:
+        # CSV columns: Clean_Prompt, Corrupted_Prompt, Clean_Answer, Corrupted_Answer, Category
+        return Sample(
+            idx=idx,
+            text=row.get("Clean_Prompt", ""),
+            label=row.get("Clean_Answer", ""),
+            metadata={
+                "corrupted_prompt": row.get("Corrupted_Prompt", ""),
+                "clean_answer": row.get("Clean_Answer", ""),
+                "corrupted_answer": row.get("Corrupted_Answer", ""),
+                "category": row.get("Category", "general"),
             },
         )

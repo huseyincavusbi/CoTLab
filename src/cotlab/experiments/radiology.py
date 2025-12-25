@@ -25,7 +25,7 @@ class RadiologyExperiment(BaseExperiment):
         self,
         name: str = "radiology",
         description: str = "Pathological fracture detection from radiology reports",
-        num_samples: int = 50,
+        num_samples: int = -1,  # Default to -1 (all samples)
         **kwargs,
     ):
         self._name = name
@@ -46,8 +46,12 @@ class RadiologyExperiment(BaseExperiment):
         **kwargs,
     ) -> ExperimentResult:
         """Run the radiology experiment."""
-        n_samples = num_samples or self.num_samples
-        samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
+        n_samples = num_samples if num_samples is not None else self.num_samples
+        
+        if n_samples > 0 and n_samples < len(dataset):
+            samples = dataset.sample(n_samples)
+        else:
+            samples = list(dataset)
 
         results = []
         metrics = {
