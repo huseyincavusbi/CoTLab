@@ -4,13 +4,13 @@ Trains linear probes on hidden states at specific layers to test
 whether different prompts encode answers differently at each layer.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
-import torch
 import numpy as np
+import torch
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
+from sklearn.model_selection import train_test_split
 
 from ..backends.base import InferenceBackend
 from ..core.base import BaseExperiment, ExperimentResult
@@ -23,7 +23,7 @@ from ..logging import ExperimentLogger
 class ProbingClassifierExperiment(BaseExperiment):
     """
     Train linear probes to test answer encoding at different layers.
-    
+
     Extracts hidden states at specified layers and trains LogisticRegression
     to predict labels, measuring how well each layer encodes the answer.
     """
@@ -72,33 +72,29 @@ class ProbingClassifierExperiment(BaseExperiment):
         labels = []
 
         print("\nExtracting hidden states...")
-        
+
         for i, sample in enumerate(samples):
             if i % 10 == 0:
                 print(f"  Processing sample {i+1}/{len(samples)}")
-            
+
             # Build prompt
             question = sample.text
             prompt = prompt_strategy.build_prompt({"question": question})
             tokens = tokenizer(prompt, return_tensors="pt").to(backend.device)
-            
+
             # Get hidden states
             with torch.no_grad():
-                outputs = model(
-                    **tokens,
-                    output_hidden_states=True,
-                    return_dict=True
-                )
-            
+                outputs = model(**tokens, output_hidden_states=True, return_dict=True)
+
             hidden_states = outputs.hidden_states  # Tuple of (batch, seq, hidden)
-            
+
             # Extract last token hidden state from each target layer
             for layer_idx in self.target_layers:
                 if layer_idx < len(hidden_states):
                     # Get last token representation (cast to float32 for numpy)
                     h = hidden_states[layer_idx][0, -1, :].float().cpu().numpy()
                     layer_hidden_states[layer_idx].append(h)
-            
+
             # Get label from sample metadata
             label = sample.metadata.get("label", sample.metadata.get("ground_truth", 0))
             if isinstance(label, str):
@@ -106,12 +102,14 @@ class ProbingClassifierExperiment(BaseExperiment):
             labels.append(label)
 
         labels = np.array(labels)
-        
+
         # Train probes for each layer
         print("\n" + "=" * 60)
         print("PROBING CLASSIFIER: Accuracy per Layer")
         print("=" * 60)
-        print(f"{'Layer':<8} | {'Train Acc':<12} | {'Test Acc':<12} | {'N Train':<8} | {'N Test':<8}")
+        print(
+            f"{'Layer':<8} | {'Train Acc':<12} | {'Test Acc':<12} | {'N Train':<8} | {'N Test':<8}"
+        )
         print("-" * 60)
 
         results = []
@@ -120,47 +118,52 @@ class ProbingClassifierExperiment(BaseExperiment):
         for layer_idx in self.target_layers:
             X = np.array(layer_hidden_states[layer_idx])
             y = labels
-            
+
             if len(np.unique(y)) < 2:
                 print(f"L{layer_idx:<7} | Skipped - only one class present")
                 continue
-            
+
             # Split data
             X_train, X_test, y_train, y_test = train_test_split(
                 X, y, test_size=0.2, random_state=42, stratify=y
             )
-            
+
             # Train logistic regression probe
             clf = LogisticRegression(max_iter=1000, random_state=42)
             clf.fit(X_train, y_train)
-            
+
             # Evaluate
             train_acc = accuracy_score(y_train, clf.predict(X_train))
             test_acc = accuracy_score(y_test, clf.predict(X_test))
-            
+
             layer_accuracies[layer_idx] = {
                 "train_accuracy": train_acc,
                 "test_accuracy": test_acc,
                 "n_train": len(X_train),
                 "n_test": len(X_test),
             }
-            
-            print(f"L{layer_idx:<7} | {train_acc:<12.4f} | {test_acc:<12.4f} | {len(X_train):<8} | {len(X_test):<8}")
-            
-            results.append({
-                "layer": layer_idx,
-                "train_accuracy": train_acc,
-                "test_accuracy": test_acc,
-                "n_train": len(X_train),
-                "n_test": len(X_test),
-            })
+
+            print(
+                f"L{layer_idx:<7} | {train_acc:<12.4f} | {test_acc:<12.4f} | {len(X_train):<8} | {len(X_test):<8}"
+            )
+
+            results.append(
+                {
+                    "layer": layer_idx,
+                    "train_accuracy": train_acc,
+                    "test_accuracy": test_acc,
+                    "n_train": len(X_train),
+                    "n_test": len(X_test),
+                }
+            )
 
         print("-" * 60)
 
         # Find best layer
         if layer_accuracies:
-            best_layer = max(layer_accuracies.keys(), 
-                           key=lambda l: layer_accuracies[l]["test_accuracy"])
+            best_layer = max(
+                layer_accuracies.keys(), key=lambda layer: layer_accuracies[layer]["test_accuracy"]
+            )
             best_acc = layer_accuracies[best_layer]["test_accuracy"]
             print(f"\nBest probing layer: L{best_layer} (test accuracy: {best_acc:.4f})")
         else:
@@ -175,7 +178,7 @@ class ProbingClassifierExperiment(BaseExperiment):
             "label_distribution": {
                 "positive": int(np.sum(labels)),
                 "negative": int(len(labels) - np.sum(labels)),
-            }
+            },
         }
 
         return ExperimentResult(

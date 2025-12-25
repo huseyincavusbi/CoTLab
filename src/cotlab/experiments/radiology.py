@@ -47,7 +47,7 @@ class RadiologyExperiment(BaseExperiment):
     ) -> ExperimentResult:
         """Run the radiology experiment."""
         n_samples = num_samples if num_samples is not None else self.num_samples
-        
+
         if n_samples > 0 and n_samples < len(dataset):
             samples = dataset.sample(n_samples)
         else:

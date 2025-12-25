@@ -10,7 +10,6 @@ from typing import Any, Dict, Optional
 from ..core.base import BasePromptStrategy
 from ..core.registry import Registry
 
-
 # Target prompt template (longest version - others will pad to match)
 # We use a standardized template where only the "instruction" varies
 # but total token count stays the same via padding.
@@ -28,7 +27,7 @@ Case: {question}
 class ContrarianMatchedStrategy(BasePromptStrategy):
     """
     Length-matched contrarian strategy.
-    
+
     Matches token count with other strategies by using standardized template.
     """
 
@@ -48,9 +47,7 @@ Consider alternative explanations that could fit the symptoms."""
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         question = input_data.get("question", input_data.get("text", ""))
         return STANDARD_QUESTION_TEMPLATE.format(
-            instruction=self.INSTRUCTION,
-            question=question,
-            padding=self.PADDING
+            instruction=self.INSTRUCTION, question=question, padding=self.PADDING
         )
 
     def parse_response(self, response: str) -> Dict[str, Any]:
@@ -68,7 +65,7 @@ Consider alternative explanations that could fit the symptoms."""
 class ChainOfThoughtMatchedStrategy(BasePromptStrategy):
     """
     Length-matched chain-of-thought strategy.
-    
+
     Matches token count with contrarian via padding.
     """
 
@@ -89,9 +86,7 @@ Show your complete reasoning process."""
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         question = input_data.get("question", input_data.get("text", ""))
         return STANDARD_QUESTION_TEMPLATE.format(
-            instruction=self.INSTRUCTION,
-            question=question,
-            padding=self.PADDING
+            instruction=self.INSTRUCTION, question=question, padding=self.PADDING
         )
 
     def parse_response(self, response: str) -> Dict[str, Any]:
@@ -109,7 +104,7 @@ Show your complete reasoning process."""
 class DirectAnswerMatchedStrategy(BasePromptStrategy):
     """
     Length-matched direct answer strategy.
-    
+
     Matches token count with contrarian via padding.
     """
 
@@ -130,9 +125,7 @@ Answer with just the diagnosis name."""
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         question = input_data.get("question", input_data.get("text", ""))
         return STANDARD_QUESTION_TEMPLATE.format(
-            instruction=self.INSTRUCTION,
-            question=question,
-            padding=self.PADDING
+            instruction=self.INSTRUCTION, question=question, padding=self.PADDING
         )
 
     def parse_response(self, response: str) -> Dict[str, Any]:
@@ -154,11 +147,11 @@ def verify_token_counts(tokenizer, question: str = "Patient has chest pain.") ->
         ChainOfThoughtMatchedStrategy(),
         DirectAnswerMatchedStrategy(),
     ]
-    
+
     counts = {}
     for strategy in strategies:
         prompt = strategy.build_prompt({"question": question})
         tokens = tokenizer(prompt, return_tensors="pt")
         counts[strategy.name] = tokens["input_ids"].shape[1]
-    
+
     return counts

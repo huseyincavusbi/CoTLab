@@ -85,7 +85,7 @@ class JSONDataset(BaseDataset):
         if not self.path.exists():
             raise FileNotFoundError(f"Dataset not found: {self.path}")
 
-        if self.path.suffix.lower() == '.csv':
+        if self.path.suffix.lower() == ".csv":
             self._load_csv()
         else:
             self._load_json()
@@ -213,7 +213,7 @@ class SyntheticMedicalDataset(JSONDataset):
         if not self.path.exists():
             raise FileNotFoundError(f"Dataset not found: {self.path}")
 
-        if self.path.suffix.lower() == '.csv':
+        if self.path.suffix.lower() == ".csv":
             self._load_csv_with_repeat()
         else:
             self._load_json_with_repeat()

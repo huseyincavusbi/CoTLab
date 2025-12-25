@@ -1,5 +1,10 @@
 """Prompt strategies module."""
 
+from .length_matched_strategies import (
+    ChainOfThoughtMatchedStrategy,
+    ContrarianMatchedStrategy,
+    DirectAnswerMatchedStrategy,
+)
 from .radiology import RadiologyPromptStrategy
 from .strategies import (
     ArroganceStrategy,
@@ -8,11 +13,6 @@ from .strategies import (
     NoInstructionStrategy,
     SimplePromptStrategy,
     create_prompt_strategy,
-)
-from .length_matched_strategies import (
-    ContrarianMatchedStrategy,
-    ChainOfThoughtMatchedStrategy,
-    DirectAnswerMatchedStrategy,
 )
 
 __all__ = [
