@@ -123,7 +123,7 @@ class ProbingClassifierExperiment(BaseExperiment):
 
         for i, sample in enumerate(samples):
             if i % 10 == 0:
-                print(f"  Processing sample {i+1}/{len(samples)}")
+                print(f"  Processing sample {i + 1}/{len(samples)}")
 
             # Build prompt
             question = sample.text
