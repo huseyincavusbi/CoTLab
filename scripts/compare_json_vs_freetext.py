@@ -117,12 +117,12 @@ def compare_by_dataset(json_df: pd.DataFrame, freetext_df: pd.DataFrame) -> pd.D
 
 def print_table(df: pd.DataFrame, title: str, show_cols: list):
     """Print a formatted table."""
-    print(f"\n{'='*80}")
+    print(f"\n{'=' * 80}")
     print(f"{title}")
-    print(f"{'='*80}")
+    print(f"{'=' * 80}")
     print(
         df[show_cols].to_string(
-            index=False, float_format=lambda x: f"{x*100:.1f}%" if abs(x) < 2 else f"{x:.0f}"
+            index=False, float_format=lambda x: f"{x * 100:.1f}%" if abs(x) < 2 else f"{x:.0f}"
         )
     )
 
@@ -202,10 +202,10 @@ def main():
     print(f"\n{'Metric':<20} {'JSON':>12} {'Free Text':>12} {'Difference':>12}")
     print("-" * 60)
     print(
-        f"{'CoT Accuracy':<20} {json_cot*100:>11.1f}% {freetext_cot*100:>11.1f}% {(json_cot-freetext_cot)*100:>+11.1f}%"
+        f"{'CoT Accuracy':<20} {json_cot * 100:>11.1f}% {freetext_cot * 100:>11.1f}% {(json_cot - freetext_cot) * 100:>+11.1f}%"
     )
     print(
-        f"{'Direct Accuracy':<20} {json_direct*100:>11.1f}% {freetext_direct*100:>11.1f}% {(json_direct-freetext_direct)*100:>+11.1f}%"
+        f"{'Direct Accuracy':<20} {json_direct * 100:>11.1f}% {freetext_direct * 100:>11.1f}% {(json_direct - freetext_direct) * 100:>+11.1f}%"
     )
 
     # Conclusion
@@ -213,9 +213,9 @@ def main():
     print("CONCLUSION")
     print("=" * 80)
     if json_cot > freetext_cot:
-        print(f"\n✅ JSON output IMPROVES CoT accuracy by {(json_cot-freetext_cot)*100:.1f}%")
+        print(f"\n✅ JSON output IMPROVES CoT accuracy by {(json_cot - freetext_cot) * 100:.1f}%")
     else:
-        print(f"\n❌ JSON output DECREASES CoT accuracy by {(freetext_cot-json_cot)*100:.1f}%")
+        print(f"\n❌ JSON output DECREASES CoT accuracy by {(freetext_cot - json_cot) * 100:.1f}%")
 
     # Count which prompts benefit
     benefits = (by_prompt["cot_diff"] > 0).sum()
@@ -225,11 +225,11 @@ def main():
     # Top beneficiaries
     print("\n🏆 Top 3 prompts that BENEFIT from JSON:")
     for _, row in by_prompt.head(3).iterrows():
-        print(f"   • {row['prompt']}: +{row['cot_diff']*100:.1f}%")
+        print(f"   • {row['prompt']}: +{row['cot_diff'] * 100:.1f}%")
 
     print("\n⚠️  Top 3 prompts that are HURT by JSON:")
     for _, row in by_prompt.tail(3).iterrows():
-        print(f"   • {row['prompt']}: {row['cot_diff']*100:.1f}%")
+        print(f"   • {row['prompt']}: {row['cot_diff'] * 100:.1f}%")
 
     print()
 
