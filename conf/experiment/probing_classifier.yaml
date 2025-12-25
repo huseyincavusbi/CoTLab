@@ -1,0 +1,7 @@
+# Probing Classifier Experiment
+_target_: cotlab.experiments.ProbingClassifierExperiment
+
+name: probing_classifier
+description: "Train linear probes on hidden states"
+target_layers: [30, 40, 50, 58]
+num_samples: 50
