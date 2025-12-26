@@ -139,11 +139,15 @@ class AttentionAnalysisExperiment(BaseExperiment):
 
         # Set eager attention to enable output_attentions by reloading if necessary
         # We need to check if the model is already using eager attention
-        current_attn = getattr(model, "config", None) and getattr(model.config, "_attn_implementation", None)
-        
+        current_attn = getattr(model, "config", None) and getattr(
+            model.config, "_attn_implementation", None
+        )
+
         if current_attn != "eager":
             print(f"Current attention implementation: {current_attn}")
-            print("Reloading model with attn_implementation='eager' to support output_attentions=True...")
+            print(
+                "Reloading model with attn_implementation='eager' to support output_attentions=True..."
+            )
             # We need to preserve the model name before unloading
             model_name = backend.model_name
             backend.unload()
@@ -176,10 +180,12 @@ class AttentionAnalysisExperiment(BaseExperiment):
                 print(f"\nWarning: Attention not available for sample {sample.idx}")
                 continue
 
-            sample_results.append({
-                "sample_idx": sample.idx,
-                "layer_results": result,
-            })
+            sample_results.append(
+                {
+                    "sample_idx": sample.idx,
+                    "layer_results": result,
+                }
+            )
 
             # Aggregate stats
             for layer_idx, layer_data in result.items():
@@ -192,7 +198,9 @@ class AttentionAnalysisExperiment(BaseExperiment):
             return ExperimentResult(
                 experiment_name=self.name,
                 model_name=backend.model_name,
-                prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
+                prompt_strategy=prompt_strategy.name
+                if hasattr(prompt_strategy, "name")
+                else "custom",
                 metrics={"error": "attention_not_supported", "num_layers_analyzed": 0},
                 raw_outputs=[],
                 metadata={"target_layers": self.target_layers},
@@ -215,25 +223,32 @@ class AttentionAnalysisExperiment(BaseExperiment):
             # Count most common top tokens
             tokens = all_top_tokens[layer_idx]
             from collections import Counter
+
             token_counts = Counter(tokens)
             top_3_tokens = token_counts.most_common(5)
             top_tokens_str = ", ".join([f"'{t}'" for t, _ in top_3_tokens[:3]])
 
             # Aggregate head-level entropies
-            head_entropies_all = np.array(layer_head_entropy_stats[layer_idx])  # (n_samples, n_heads)
+            head_entropies_all = np.array(
+                layer_head_entropy_stats[layer_idx]
+            )  # (n_samples, n_heads)
             mean_per_head = np.mean(head_entropies_all, axis=0).tolist()
             std_per_head = np.std(head_entropies_all, axis=0).tolist()
 
-            aggregated_results.append({
-                "layer": layer_idx,
-                "mean_entropy": float(mean_entropy),
-                "std_entropy": float(std_entropy),
-                "mean_per_head": mean_per_head,
-                "std_per_head": std_per_head,
-                "top_tokens": [{"token": t, "count": c} for t, c in top_3_tokens],
-            })
+            aggregated_results.append(
+                {
+                    "layer": layer_idx,
+                    "mean_entropy": float(mean_entropy),
+                    "std_entropy": float(std_entropy),
+                    "mean_per_head": mean_per_head,
+                    "std_per_head": std_per_head,
+                    "top_tokens": [{"token": t, "count": c} for t, c in top_3_tokens],
+                }
+            )
 
-            print(f"L{layer_idx:<7} | {mean_entropy:<14.4f} | {std_entropy:<14.4f} | {top_tokens_str}")
+            print(
+                f"L{layer_idx:<7} | {mean_entropy:<14.4f} | {std_entropy:<14.4f} | {top_tokens_str}"
+            )
 
         print("-" * 70)
 
@@ -242,8 +257,14 @@ class AttentionAnalysisExperiment(BaseExperiment):
         overall_mean = np.mean(all_mean_entropies) if all_mean_entropies else 0
 
         # Find most focused layer
-        most_focused_layer = min(aggregated_results, key=lambda x: x["mean_entropy"])["layer"] if aggregated_results else None
-        most_focused_entropy = min(r["mean_entropy"] for r in aggregated_results) if aggregated_results else 0
+        most_focused_layer = (
+            min(aggregated_results, key=lambda x: x["mean_entropy"])["layer"]
+            if aggregated_results
+            else None
+        )
+        most_focused_entropy = (
+            min(r["mean_entropy"] for r in aggregated_results) if aggregated_results else 0
+        )
 
         metrics = {
             "num_samples_analyzed": len(sample_results),

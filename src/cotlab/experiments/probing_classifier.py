@@ -25,11 +25,11 @@ from ..logging import ExperimentLogger
 
 class GPULinearProbe(nn.Module):
     """Simple linear classifier for GPU-accelerated probing."""
-    
+
     def __init__(self, input_dim: int, num_classes: int):
         super().__init__()
         self.linear = nn.Linear(input_dim, num_classes)
-    
+
     def forward(self, x):
         return self.linear(x)
 
@@ -82,7 +82,7 @@ class ProbingClassifierExperiment(BaseExperiment):
         print("Collecting samples...")
         all_samples = list(dataset)
         raw_labels = []
-        
+
         for s in all_samples:
             # Try to get label from specified field
             if self.label_field == "category":
@@ -106,15 +106,17 @@ class ProbingClassifierExperiment(BaseExperiment):
 
         # 3. Filter to classes with at least 2 samples for stratification
         valid_classes = {cls for cls, count in class_counts.items() if count >= 2}
-        
+
         if len(valid_classes) < 2:
-            print("Warning: Not enough classes with 2+ samples. Using all samples without stratification.")
+            print(
+                "Warning: Not enough classes with 2+ samples. Using all samples without stratification."
+            )
             selected_indices = list(range(min(n_samples, len(all_samples))))
         else:
             # Filter samples to valid classes
             valid_indices = [i for i, lbl in enumerate(encoded_labels) if lbl in valid_classes]
             valid_labels = encoded_labels[valid_indices]
-            
+
             # Sample from valid indices
             if len(valid_indices) <= n_samples:
                 selected_indices = valid_indices
@@ -129,6 +131,7 @@ class ProbingClassifierExperiment(BaseExperiment):
                 except ValueError:
                     # Fallback to random sampling
                     import random
+
                     random.seed(42)
                     selected_indices = random.sample(valid_indices, n_samples)
 
@@ -136,7 +139,7 @@ class ProbingClassifierExperiment(BaseExperiment):
         sample_labels = encoded_labels[np.array(selected_indices)]
 
         print(f"Selected {len(samples)} samples for probing.")
-        
+
         # Re-encode labels to be contiguous (important for classification)
         le2 = LabelEncoder()
         sample_labels = le2.fit_transform(sample_labels)
@@ -149,7 +152,7 @@ class ProbingClassifierExperiment(BaseExperiment):
         if self.target_layers is None:
             # Get number of layers from model config
             config = model.config
-            if hasattr(config, 'text_config'):
+            if hasattr(config, "text_config"):
                 config = config.text_config
             num_layers = config.num_hidden_layers
             self.target_layers = list(range(num_layers))
@@ -201,7 +204,7 @@ class ProbingClassifierExperiment(BaseExperiment):
             if layer_idx not in layer_hidden_states or not layer_hidden_states[layer_idx]:
                 print(f"L{layer_idx:<7} | Skipped - no hidden states available")
                 continue
-                
+
             X = np.array(layer_hidden_states[layer_idx])
             y = labels
 
@@ -211,7 +214,7 @@ class ProbingClassifierExperiment(BaseExperiment):
 
             # Split data - use smaller test size if needed
             test_size = min(0.2, max(2, len(X) // 5) / len(X))
-            
+
             try:
                 X_train, X_test, y_train, y_test = train_test_split(
                     X, y, test_size=test_size, random_state=42, stratify=y
@@ -270,7 +273,7 @@ class ProbingClassifierExperiment(BaseExperiment):
 
         # Count class distribution in final labels
         unique_final, counts_final = np.unique(labels, return_counts=True)
-        
+
         metrics = {
             "num_samples": len(samples),
             "num_layers_probed": len(results),
@@ -301,25 +304,25 @@ class ProbingClassifierExperiment(BaseExperiment):
         device: str,
     ) -> tuple[float, float]:
         """Train a linear probe using PyTorch on GPU matching sklearn's LogisticRegression."""
-        
+
         # Convert to tensors and normalize (sklearn does this internally)
         X_train_t = torch.from_numpy(X_train).float().to(device)
         X_test_t = torch.from_numpy(X_test).float().to(device)
         y_train_t = torch.from_numpy(y_train).long().to(device)
         y_test_t = torch.from_numpy(y_test).long().to(device)
-        
+
         # Create model
         input_dim = X_train.shape[1]
         num_classes = len(np.unique(y_train))
         model = GPULinearProbe(input_dim, num_classes).to(device)
-        
+
         # Match sklearn's LogisticRegression settings:
         # - C=1.0 (L2 regularization strength = 1/C)
         # - max_iter=1000
         # - tolerance=1e-4
         criterion = nn.CrossEntropyLoss()
         l2_lambda = 1.0  # sklearn's C=1.0 means regularization strength = 1.0
-        
+
         # LBFGS optimizer with sklearn-like settings
         optimizer = optim.LBFGS(
             model.parameters(),
@@ -329,46 +332,47 @@ class ProbingClassifierExperiment(BaseExperiment):
             tolerance_grad=1e-7,
             tolerance_change=1e-9,
             history_size=100,
-            line_search_fn='strong_wolfe'
+            line_search_fn="strong_wolfe",
         )
-        
+
         # Training loop - call optimizer.step() multiple times until convergence
         max_steps = 50  # max outer steps (total iterations = 20 * 50 = 1000)
-        prev_loss = float('inf')
+        prev_loss = float("inf")
         tolerance = 1e-4
-        
+
         for step in range(max_steps):
+
             def closure():
                 optimizer.zero_grad()
                 outputs = model(X_train_t)
                 loss = criterion(outputs, y_train_t)
-                
+
                 # Add L2 regularization (match sklearn's C=1.0)
                 l2_reg = 0.0
                 for param in model.parameters():
                     l2_reg += torch.norm(param, 2) ** 2
                 loss = loss + (l2_lambda / 2.0) * l2_reg
-                
+
                 loss.backward()
                 return loss
-            
+
             loss = optimizer.step(closure)
-            
+
             # Check convergence
             if abs(prev_loss - loss.item()) < tolerance:
                 break
             prev_loss = loss.item()
-        
+
         # Evaluate
         with torch.no_grad():
             # Train accuracy
             train_outputs = model(X_train_t)
             train_preds = torch.argmax(train_outputs, dim=1)
             train_acc = (train_preds == y_train_t).float().mean().item()
-            
+
             # Test accuracy
             test_outputs = model(X_test_t)
             test_preds = torch.argmax(test_outputs, dim=1)
             test_acc = (test_preds == y_test_t).float().mean().item()
-        
+
         return train_acc, test_acc
