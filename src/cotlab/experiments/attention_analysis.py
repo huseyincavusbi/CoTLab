@@ -137,14 +137,20 @@ class AttentionAnalysisExperiment(BaseExperiment):
         print(f"Attention heads: {num_heads}")
         print(f"Target layers: {self.target_layers}")
 
-        # Set eager attention to enable output_attentions
-        try:
-            model._attn_implementation = "eager"
-            for layer in model.modules():
-                if hasattr(layer, "_attn_implementation"):
-                    layer._attn_implementation = "eager"
-        except Exception as e:
-            print(f"Warning: Could not set eager attention: {e}")
+        # Set eager attention to enable output_attentions by reloading if necessary
+        # We need to check if the model is already using eager attention
+        current_attn = getattr(model, "config", None) and getattr(model.config, "_attn_implementation", None)
+        
+        if current_attn != "eager":
+            print(f"Current attention implementation: {current_attn}")
+            print("Reloading model with attn_implementation='eager' to support output_attentions=True...")
+            # We need to preserve the model name before unloading
+            model_name = backend.model_name
+            backend.unload()
+            # Reload with eager attention
+            backend.load_model(model_name, attn_implementation="eager")
+            model = backend._model
+            tokenizer = backend._tokenizer
 
         # Get samples from dataset
         n_samples = num_samples or self.num_samples
