@@ -3,5 +3,5 @@ _target_: cotlab.experiments.AttentionAnalysisExperiment
 
 name: attention_analysis
 description: "Analyze attention patterns at critical layers"
-# target_layers: [55, 56, 57, 58, 59, 60]  # Uses default
-question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"
+target_layers: [55, 56, 57, 58, 59, 60, 61]
+num_samples: 20

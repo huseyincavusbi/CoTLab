@@ -2,12 +2,16 @@
 
 Extracts attention weights at critical layers (55-60) and computes
 attention entropy to understand which tokens each prompt strategy focuses on.
+
+Enhanced to support multiple dataset samples for statistical robustness.
 """
 
-from typing import Any, List, Optional
+from collections import defaultdict
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from ..backends.base import InferenceBackend
 from ..core.base import BaseExperiment, ExperimentResult
@@ -24,7 +28,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
     Computes:
     1. Attention entropy per head (higher = more distributed attention)
     2. Top-attended tokens per head
-    3. Attention to question vs instruction tokens
+    3. Aggregated statistics across multiple samples
     """
 
     def __init__(
@@ -32,6 +36,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
         name: str = "attention_analysis",
         description: str = "Analyze attention patterns at critical layers",
         target_layers: Optional[List[int]] = None,
+        num_samples: int = 20,
         question: str = "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?",
         **kwargs,
     ):
@@ -40,20 +45,84 @@ class AttentionAnalysisExperiment(BaseExperiment):
         # Default to layers 55-60 (critical reasoning layers found earlier)
         self._target_layers_config = target_layers or [55, 56, 57, 58, 59, 60]
         self.target_layers = self._target_layers_config
-        self.question = question
+        self.num_samples = num_samples
+        self.question = question  # Fallback if no dataset
 
     @property
     def name(self) -> str:
         return self._name
+
+    def _compute_entropy(self, attn_dist: torch.Tensor) -> float:
+        """Compute entropy of attention distribution."""
+        eps = 1e-10
+        return -torch.sum(attn_dist * torch.log(attn_dist + eps)).item()
+
+    def _analyze_single_sample(
+        self,
+        model,
+        tokenizer,
+        prompt: str,
+        device: str,
+        num_heads: int,
+    ) -> Dict[str, Any]:
+        """Analyze attention for a single sample."""
+        tokens = tokenizer(prompt, return_tensors="pt").to(device)
+        input_ids = tokens["input_ids"]
+
+        with torch.no_grad():
+            outputs = model(**tokens, output_attentions=True, return_dict=True)
+
+        attentions = outputs.attentions
+
+        if attentions is None or len(attentions) == 0:
+            return None
+
+        sample_results = {}
+
+        for layer_idx in self.target_layers:
+            if layer_idx >= len(attentions):
+                continue
+
+            attn = attentions[layer_idx]  # (batch, heads, seq, seq)
+            last_token_attn = attn[0, :, -1, :]  # (heads, seq)
+
+            head_entropies = []
+            for h in range(num_heads):
+                entropy = self._compute_entropy(last_token_attn[h])
+                head_entropies.append(entropy)
+
+            avg_entropy = np.mean(head_entropies)
+            min_head = int(np.argmin(head_entropies))
+
+            # Get top-attended tokens for the most focused head
+            focused_head_attn = last_token_attn[min_head]
+            top_positions = torch.topk(focused_head_attn, k=min(5, input_ids.shape[1]))
+
+            top_tokens = []
+            for pos, weight in zip(top_positions.indices.tolist(), top_positions.values.tolist()):
+                token_str = tokenizer.decode([input_ids[0, pos]])
+                top_tokens.append({"token": token_str, "weight": weight})
+
+            sample_results[layer_idx] = {
+                "avg_entropy": avg_entropy,
+                "head_entropies": head_entropies,
+                "min_entropy": min(head_entropies),
+                "max_entropy": max(head_entropies),
+                "focused_head": min_head,
+                "top_tokens": top_tokens,
+            }
+
+        return sample_results
 
     def run(
         self,
         backend: InferenceBackend,
         dataset: BaseDataset,
         prompt_strategy: Any,
+        num_samples: Optional[int] = None,
         logger: Optional[ExperimentLogger] = None,
     ) -> ExperimentResult:
-        """Run attention analysis experiment."""
+        """Run attention analysis experiment on multiple samples."""
 
         tokenizer = backend._tokenizer
         model = backend._model
@@ -68,14 +137,6 @@ class AttentionAnalysisExperiment(BaseExperiment):
         print(f"Attention heads: {num_heads}")
         print(f"Target layers: {self.target_layers}")
 
-        # Build prompt
-        prompt = prompt_strategy.build_prompt({"question": self.question})
-        tokens = tokenizer(prompt, return_tensors="pt").to(backend.device)
-        input_ids = tokens["input_ids"]
-
-        print(f"\nPrompt: {prompt[:100]}...")
-        print(f"Token count: {input_ids.shape[1]}")
-
         # Set eager attention to enable output_attentions
         try:
             model._attn_implementation = "eager"
@@ -85,128 +146,120 @@ class AttentionAnalysisExperiment(BaseExperiment):
         except Exception as e:
             print(f"Warning: Could not set eager attention: {e}")
 
-        # Get attention weights with output_attentions=True
-        with torch.no_grad():
-            outputs = model(**tokens, output_attentions=True, return_dict=True)
+        # Get samples from dataset
+        n_samples = num_samples or self.num_samples
+        samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
+        print(f"\nAnalyzing attention on {len(samples)} samples...")
 
-        attentions = outputs.attentions  # Tuple of (batch, heads, seq, seq)
+        # Aggregate statistics across samples
+        layer_entropy_stats: Dict[int, List[float]] = defaultdict(list)
+        layer_head_entropy_stats: Dict[int, List[List[float]]] = defaultdict(list)
+        all_top_tokens: Dict[int, List[str]] = defaultdict(list)
 
-        if attentions is None or len(attentions) == 0:
-            print("\nWarning: Model did not return attention weights.")
-            print("This model's attention implementation may not support output_attentions=True.")
+        sample_results = []
+
+        for sample in tqdm(samples, desc="Processing samples"):
+            question = sample.text
+            prompt = prompt_strategy.build_prompt({"question": question, "text": question})
+
+            result = self._analyze_single_sample(
+                model, tokenizer, prompt, backend.device, num_heads
+            )
+
+            if result is None:
+                print(f"\nWarning: Attention not available for sample {sample.idx}")
+                continue
+
+            sample_results.append({
+                "sample_idx": sample.idx,
+                "layer_results": result,
+            })
+
+            # Aggregate stats
+            for layer_idx, layer_data in result.items():
+                layer_entropy_stats[layer_idx].append(layer_data["avg_entropy"])
+                layer_head_entropy_stats[layer_idx].append(layer_data["head_entropies"])
+                for tok in layer_data["top_tokens"][:3]:  # Top 3 tokens
+                    all_top_tokens[layer_idx].append(tok["token"])
+
+        if not sample_results:
             return ExperimentResult(
                 experiment_name=self.name,
                 model_name=backend.model_name,
-                prompt_strategy=prompt_strategy.name
-                if hasattr(prompt_strategy, "name")
-                else "custom",
+                prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
                 metrics={"error": "attention_not_supported", "num_layers_analyzed": 0},
                 raw_outputs=[],
-                metadata={"target_layers": self.target_layers, "question": self.question},
+                metadata={"target_layers": self.target_layers},
             )
 
-        results = []
-        layer_entropies = {}
+        # Compute aggregated statistics
+        print("\n" + "=" * 70)
+        print("ATTENTION ANALYSIS: Aggregated Statistics Across Samples")
+        print("=" * 70)
+        print(f"{'Layer':<8} | {'Mean Entropy':<14} | {'Std Entropy':<14} | {'Top Tokens'}")
+        print("-" * 70)
 
-        print("\n" + "=" * 60)
-        print("ATTENTION ANALYSIS: Entropy per Layer/Head")
-        print("=" * 60)
-        print(f"{'Layer':<8} | {'Avg Entropy':<12} | {'Min H (head)':<15} | {'Max H (head)':<15}")
-        print("-" * 60)
+        aggregated_results = []
 
-        for layer_idx in self.target_layers:
-            if layer_idx >= len(attentions):
-                continue
+        for layer_idx in sorted(layer_entropy_stats.keys()):
+            entropies = layer_entropy_stats[layer_idx]
+            mean_entropy = np.mean(entropies)
+            std_entropy = np.std(entropies)
 
-            attn = attentions[layer_idx]  # (batch, heads, seq, seq)
+            # Count most common top tokens
+            tokens = all_top_tokens[layer_idx]
+            from collections import Counter
+            token_counts = Counter(tokens)
+            top_3_tokens = token_counts.most_common(5)
+            top_tokens_str = ", ".join([f"'{t}'" for t, _ in top_3_tokens[:3]])
 
-            # Compute entropy for each head at the last token position
-            # This is what the model attends to when generating the next token
-            last_token_attn = attn[0, :, -1, :]  # (heads, seq)
+            # Aggregate head-level entropies
+            head_entropies_all = np.array(layer_head_entropy_stats[layer_idx])  # (n_samples, n_heads)
+            mean_per_head = np.mean(head_entropies_all, axis=0).tolist()
+            std_per_head = np.std(head_entropies_all, axis=0).tolist()
 
-            head_entropies = []
-            for h in range(num_heads):
-                # Get attention distribution for this head
-                attn_dist = last_token_attn[h]  # (seq,)
+            aggregated_results.append({
+                "layer": layer_idx,
+                "mean_entropy": float(mean_entropy),
+                "std_entropy": float(std_entropy),
+                "mean_per_head": mean_per_head,
+                "std_per_head": std_per_head,
+                "top_tokens": [{"token": t, "count": c} for t, c in top_3_tokens],
+            })
 
-                # Compute entropy: H = -sum(p * log(p))
-                # Add small epsilon to avoid log(0)
-                eps = 1e-10
-                entropy = -torch.sum(attn_dist * torch.log(attn_dist + eps)).item()
-                head_entropies.append(entropy)
+            print(f"L{layer_idx:<7} | {mean_entropy:<14.4f} | {std_entropy:<14.4f} | {top_tokens_str}")
 
-            avg_entropy = np.mean(head_entropies)
-            min_entropy = np.min(head_entropies)
-            max_entropy = np.max(head_entropies)
-            min_head = np.argmin(head_entropies)
-            max_head = np.argmax(head_entropies)
+        print("-" * 70)
 
-            layer_entropies[layer_idx] = {
-                "avg_entropy": avg_entropy,
-                "head_entropies": head_entropies,
-                "min_entropy": min_entropy,
-                "max_entropy": max_entropy,
-                "min_head": int(min_head),
-                "max_head": int(max_head),
-            }
+        # Overall metrics
+        all_mean_entropies = [r["mean_entropy"] for r in aggregated_results]
+        overall_mean = np.mean(all_mean_entropies) if all_mean_entropies else 0
 
-            print(
-                f"L{layer_idx:<7} | {avg_entropy:<12.4f} | H{min_head} ({min_entropy:.3f}) | H{max_head} ({max_entropy:.3f})"
-            )
-
-            # Get top-3 attended positions for lowest entropy head (most focused)
-            focused_head_attn = last_token_attn[min_head]
-            top_positions = torch.topk(focused_head_attn, k=min(5, input_ids.shape[1]))
-
-            top_tokens = []
-            for pos, weight in zip(top_positions.indices.tolist(), top_positions.values.tolist()):
-                token_str = tokenizer.decode([input_ids[0, pos]])
-                top_tokens.append({"position": pos, "token": token_str, "weight": weight})
-
-            results.append(
-                {
-                    "layer": layer_idx,
-                    "avg_entropy": avg_entropy,
-                    "head_entropies": head_entropies,
-                    "focused_head": int(min_head),
-                    "top_attended_tokens": top_tokens,
-                }
-            )
-
-        print("-" * 60)
-
-        # Compute overall metrics
-        all_entropies = [layer_entropies[layer]["avg_entropy"] for layer in layer_entropies]
+        # Find most focused layer
+        most_focused_layer = min(aggregated_results, key=lambda x: x["mean_entropy"])["layer"] if aggregated_results else None
+        most_focused_entropy = min(r["mean_entropy"] for r in aggregated_results) if aggregated_results else 0
 
         metrics = {
-            "num_layers_analyzed": len(results),
+            "num_samples_analyzed": len(sample_results),
+            "num_layers_analyzed": len(aggregated_results),
             "num_heads": num_heads,
-            "overall_avg_entropy": float(np.mean(all_entropies)) if all_entropies else 0,
-            "prompt_length": input_ids.shape[1],
+            "overall_mean_entropy": float(overall_mean),
+            "most_focused_layer": most_focused_layer,
+            "most_focused_entropy": float(most_focused_entropy),
         }
 
-        # Find which layer has most focused attention (lowest entropy)
-        if layer_entropies:
-            most_focused_layer = min(
-                layer_entropies.keys(), key=lambda layer: layer_entropies[layer]["avg_entropy"]
-            )
-            metrics["most_focused_layer"] = most_focused_layer
-            metrics["most_focused_entropy"] = layer_entropies[most_focused_layer]["avg_entropy"]
-
-        print(f"\nOverall average entropy: {metrics['overall_avg_entropy']:.4f}")
-        if "most_focused_layer" in metrics:
-            print(
-                f"Most focused layer: L{metrics['most_focused_layer']} (entropy: {metrics['most_focused_entropy']:.4f})"
-            )
+        print(f"\nOverall mean entropy: {overall_mean:.4f}")
+        print(f"Most focused layer: L{most_focused_layer} (entropy: {most_focused_entropy:.4f})")
 
         return ExperimentResult(
             experiment_name=self.name,
             model_name=backend.model_name,
             prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
             metrics=metrics,
-            raw_outputs=results,
+            raw_outputs=aggregated_results,
             metadata={
                 "target_layers": self.target_layers,
-                "question": self.question,
+                "num_samples": len(samples),
+                "sample_results": sample_results,  # Include per-sample data
             },
         )
