@@ -12,6 +12,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
+from tqdm import tqdm
 
 from ..backends.base import InferenceBackend
 from ..core.base import BaseExperiment, ExperimentResult
@@ -35,14 +36,16 @@ class ProbingClassifierExperiment(BaseExperiment):
         description: str = "Train linear probes on hidden states",
         target_layers: Optional[List[int]] = None,
         num_samples: int = 50,
+        label_field: str = "category",  # Use category instead of individual diagnosis
         **kwargs,
     ):
         self._name = name
         self.description = description
-        # Default to layers 30, 40, 50, 58 (spanning early to critical)
-        self._target_layers_config = target_layers or [30, 40, 50, 58]
-        self.target_layers = self._target_layers_config
+        # None means auto-detect all layers at runtime
+        self._target_layers_config = target_layers
+        self.target_layers = target_layers
         self.num_samples = num_samples
+        self.label_field = label_field
 
     @property
     def name(self) -> str:
@@ -60,58 +63,82 @@ class ProbingClassifierExperiment(BaseExperiment):
 
         n_samples = num_samples or self.num_samples
 
-        # 1. Collect all samples first to understand label distribution
+        # 1. Collect all samples and extract labels based on label_field
         print("Collecting samples...")
         all_samples = list(dataset)
         raw_labels = []
+        
         for s in all_samples:
-            # Use sample.label as primary source, fallback to metadata
-            lbl = s.label
-            if lbl is None:
-                lbl = s.metadata.get("label", s.metadata.get("ground_truth", 0))
-            raw_labels.append(str(lbl))  # Ensure string for encoder
+            # Try to get label from specified field
+            if self.label_field == "category":
+                lbl = s.metadata.get("category", "unknown")
+            elif self.label_field == "label":
+                lbl = s.label if s.label is not None else s.metadata.get("label", "unknown")
+            else:
+                lbl = s.metadata.get(self.label_field, "unknown")
+            raw_labels.append(str(lbl))
 
         # 2. Encode labels
         le = LabelEncoder()
         encoded_labels = le.fit_transform(raw_labels)
         label_mapping = dict(zip(le.classes_, range(len(le.classes_))))
-        print(f"Found {len(label_mapping)} unique labels: {label_mapping}")
+        print(f"Found {len(label_mapping)} unique labels: {list(label_mapping.keys())}")
 
-        # 3. Balanced Sampling (stratified)
-        if len(label_mapping) < 2:
-            print("Warning: Dataset has only 1 class. Probing requires at least 2 classes.")
-            # Proceed anyway to avoid crash, but results will be trivial
-            selected_indices = range(min(n_samples, len(all_samples)))
+        # Count samples per class
+        unique, counts = np.unique(encoded_labels, return_counts=True)
+        class_counts = dict(zip(unique, counts))
+        print(f"Class distribution: {class_counts}")
+
+        # 3. Filter to classes with at least 2 samples for stratification
+        valid_classes = {cls for cls, count in class_counts.items() if count >= 2}
+        
+        if len(valid_classes) < 2:
+            print("Warning: Not enough classes with 2+ samples. Using all samples without stratification.")
+            selected_indices = list(range(min(n_samples, len(all_samples))))
         else:
-            # Try to get balanced n_samples
-            try:
-                # Use stratify to sample
-                indices = np.arange(len(all_samples))
-                _, selected_indices = train_test_split(
-                    indices,
-                    train_size=None,
-                    test_size=min(n_samples, len(all_samples)),
-                    stratify=encoded_labels,
-                    random_state=42,
-                )
-            except ValueError:
-                # Fallback if too few samples for stratification
-                print(
-                    "Warning: Cannot perform stratified sampling (classes too small). Using random sample."
-                )
-                import random
-
-                selected_indices = random.sample(
-                    range(len(all_samples)), min(n_samples, len(all_samples))
-                )
+            # Filter samples to valid classes
+            valid_indices = [i for i, lbl in enumerate(encoded_labels) if lbl in valid_classes]
+            valid_labels = encoded_labels[valid_indices]
+            
+            # Sample from valid indices
+            if len(valid_indices) <= n_samples:
+                selected_indices = valid_indices
+            else:
+                try:
+                    _, selected_indices = train_test_split(
+                        valid_indices,
+                        test_size=n_samples,
+                        stratify=valid_labels,
+                        random_state=42,
+                    )
+                except ValueError:
+                    # Fallback to random sampling
+                    import random
+                    random.seed(42)
+                    selected_indices = random.sample(valid_indices, n_samples)
 
         samples = [all_samples[i] for i in selected_indices]
-        sample_labels = encoded_labels[selected_indices]
+        sample_labels = encoded_labels[np.array(selected_indices)]
 
         print(f"Selected {len(samples)} samples for probing.")
+        
+        # Re-encode labels to be contiguous (important for classification)
+        le2 = LabelEncoder()
+        sample_labels = le2.fit_transform(sample_labels)
+        print(f"Final class count: {len(np.unique(sample_labels))}")
 
         tokenizer = backend._tokenizer
         model = backend._model
+
+        # Auto-detect all layers if not specified
+        if self.target_layers is None:
+            # Get number of layers from model config
+            config = model.config
+            if hasattr(config, 'text_config'):
+                config = config.text_config
+            num_layers = config.num_hidden_layers
+            self.target_layers = list(range(num_layers))
+            print(f"Auto-detected {num_layers} layers from model")
 
         print(f"Model: {backend.model_name}")
         print(f"Target layers: {self.target_layers}")
@@ -121,13 +148,10 @@ class ProbingClassifierExperiment(BaseExperiment):
 
         print("\nExtracting hidden states...")
 
-        for i, sample in enumerate(samples):
-            if i % 10 == 0:
-                print(f"  Processing sample {i + 1}/{len(samples)}")
-
+        for i, sample in enumerate(tqdm(samples, desc="Processing samples")):
             # Build prompt
             question = sample.text
-            prompt = prompt_strategy.build_prompt({"question": question})
+            prompt = prompt_strategy.build_prompt({"question": question, "text": question})
             tokens = tokenizer(prompt, return_tensors="pt").to(backend.device)
 
             # Get hidden states
@@ -159,6 +183,10 @@ class ProbingClassifierExperiment(BaseExperiment):
         layer_accuracies = {}
 
         for layer_idx in self.target_layers:
+            if layer_idx not in layer_hidden_states or not layer_hidden_states[layer_idx]:
+                print(f"L{layer_idx:<7} | Skipped - no hidden states available")
+                continue
+                
             X = np.array(layer_hidden_states[layer_idx])
             y = labels
 
@@ -166,10 +194,18 @@ class ProbingClassifierExperiment(BaseExperiment):
                 print(f"L{layer_idx:<7} | Skipped - only one class present")
                 continue
 
-            # Split data
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42, stratify=y
-            )
+            # Split data - use smaller test size if needed
+            test_size = min(0.2, max(2, len(X) // 5) / len(X))
+            
+            try:
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=test_size, random_state=42, stratify=y
+                )
+            except ValueError:
+                # If stratification fails, try without
+                X_train, X_test, y_train, y_test = train_test_split(
+                    X, y, test_size=test_size, random_state=42
+                )
 
             # Train logistic regression probe
             clf = LogisticRegression(max_iter=1000, random_state=42)
@@ -213,15 +249,16 @@ class ProbingClassifierExperiment(BaseExperiment):
             best_layer = None
             best_acc = 0
 
+        # Count class distribution in final labels
+        unique_final, counts_final = np.unique(labels, return_counts=True)
+        
         metrics = {
             "num_samples": len(samples),
             "num_layers_probed": len(results),
+            "num_classes": len(unique_final),
             "best_layer": best_layer,
             "best_test_accuracy": best_acc,
-            "label_distribution": {
-                "positive": int(np.sum(labels)),
-                "negative": int(len(labels) - np.sum(labels)),
-            },
+            "label_field": self.label_field,
         }
 
         return ExperimentResult(
@@ -232,5 +269,6 @@ class ProbingClassifierExperiment(BaseExperiment):
             raw_outputs=results,
             metadata={
                 "target_layers": self.target_layers,
+                "class_distribution": dict(zip(unique_final.tolist(), counts_final.tolist())),
             },
         )
