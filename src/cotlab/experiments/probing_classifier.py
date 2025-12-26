@@ -8,6 +8,8 @@ from typing import Any, List, Optional
 
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.optim as optim
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
@@ -19,6 +21,17 @@ from ..core.base import BaseExperiment, ExperimentResult
 from ..core.registry import Registry
 from ..datasets.loaders import BaseDataset
 from ..logging import ExperimentLogger
+
+
+class GPULinearProbe(nn.Module):
+    """Simple linear classifier for GPU-accelerated probing."""
+    
+    def __init__(self, input_dim: int, num_classes: int):
+        super().__init__()
+        self.linear = nn.Linear(input_dim, num_classes)
+    
+    def forward(self, x):
+        return self.linear(x)
 
 
 @Registry.register_experiment("probing_classifier")
@@ -37,6 +50,7 @@ class ProbingClassifierExperiment(BaseExperiment):
         target_layers: Optional[List[int]] = None,
         num_samples: int = 50,
         label_field: str = "category",  # Use category instead of individual diagnosis
+        use_gpu_probe: bool = False,  # Use PyTorch GPU probe for speedup
         **kwargs,
     ):
         self._name = name
@@ -46,6 +60,7 @@ class ProbingClassifierExperiment(BaseExperiment):
         self.target_layers = target_layers
         self.num_samples = num_samples
         self.label_field = label_field
+        self.use_gpu_probe = use_gpu_probe
 
     @property
     def name(self) -> str:
@@ -207,13 +222,17 @@ class ProbingClassifierExperiment(BaseExperiment):
                     X, y, test_size=test_size, random_state=42
                 )
 
-            # Train logistic regression probe
-            clf = LogisticRegression(max_iter=1000, random_state=42)
-            clf.fit(X_train, y_train)
-
-            # Evaluate
-            train_acc = accuracy_score(y_train, clf.predict(X_train))
-            test_acc = accuracy_score(y_test, clf.predict(X_test))
+            # Train probe (GPU or CPU)
+            if self.use_gpu_probe:
+                train_acc, test_acc = self._train_gpu_probe(
+                    X_train, X_test, y_train, y_test, backend.device
+                )
+            else:
+                # Train sklearn logistic regression probe (CPU)
+                clf = LogisticRegression(max_iter=1000, random_state=42)
+                clf.fit(X_train, y_train)
+                train_acc = accuracy_score(y_train, clf.predict(X_train))
+                test_acc = accuracy_score(y_test, clf.predict(X_test))
 
             layer_accuracies[layer_idx] = {
                 "train_accuracy": train_acc,
@@ -272,3 +291,53 @@ class ProbingClassifierExperiment(BaseExperiment):
                 "class_distribution": dict(zip(unique_final.tolist(), counts_final.tolist())),
             },
         )
+
+    def _train_gpu_probe(
+        self,
+        X_train: np.ndarray,
+        X_test: np.ndarray,
+        y_train: np.ndarray,
+        y_test: np.ndarray,
+        device: str,
+    ) -> tuple[float, float]:
+        """Train a linear probe using PyTorch on GPU for fast training."""
+        
+        # Convert to tensors
+        X_train_t = torch.from_numpy(X_train).float().to(device)
+        X_test_t = torch.from_numpy(X_test).float().to(device)
+        y_train_t = torch.from_numpy(y_train).long().to(device)
+        y_test_t = torch.from_numpy(y_test).long().to(device)
+        
+        # Create model
+        input_dim = X_train.shape[1]
+        num_classes = len(np.unique(y_train))
+        model = GPULinearProbe(input_dim, num_classes).to(device)
+        
+        # Training setup
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.LBFGS(model.parameters(), max_iter=100, line_search_fn='strong_wolfe')
+        
+        # Training loop (LBFGS needs closure)
+        def closure():
+            optimizer.zero_grad()
+            outputs = model(X_train_t)
+            loss = criterion(outputs, y_train_t)
+            loss.backward()
+            return loss
+        
+        # Train
+        optimizer.step(closure)
+        
+        # Evaluate
+        with torch.no_grad():
+            # Train accuracy
+            train_outputs = model(X_train_t)
+            train_preds = torch.argmax(train_outputs, dim=1)
+            train_acc = (train_preds == y_train_t).float().mean().item()
+            
+            # Test accuracy
+            test_outputs = model(X_test_t)
+            test_preds = torch.argmax(test_outputs, dim=1)
+            test_acc = (test_preds == y_test_t).float().mean().item()
+        
+        return train_acc, test_acc

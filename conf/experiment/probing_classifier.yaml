@@ -1,4 +1,4 @@
-# Probing Classifier Experiment
+# Probing Classifier Experiment (auto-detect all layers with GPU acceleration)
 _target_: cotlab.experiments.ProbingClassifierExperiment
 
 name: probing_classifier
@@ -6,3 +6,4 @@ description: "Train linear probes on hidden states"
 # target_layers: null  # Omit to auto-detect ALL layers from model
 num_samples: 100  # Use all data
 label_field: category  # Use category (cardiology, neurology, etc.)
+use_gpu_probe: true  # Use PyTorch GPU probe for 5-10x speedup!
