@@ -296,3 +296,24 @@ class PatchingPairsDataset(JSONDataset):
                 "category": row.get("Category", "general"),
             },
         )
+
+
+@Registry.register_dataset("tutorial")
+class TutorialDataset(JSONDataset):
+    """Simple Q&A dataset for tutorials and demos."""
+
+    def __init__(
+        self,
+        name: str = "tutorial",
+        path: str = "data/tutorial.json",
+        **kwargs,
+    ):
+        super().__init__(name, path, **kwargs)
+
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        return Sample(
+            idx=idx,
+            text=item["text"],
+            label=item["label"],
+            metadata={},
+        )
