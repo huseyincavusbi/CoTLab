@@ -300,9 +300,9 @@ class ProbingClassifierExperiment(BaseExperiment):
         y_test: np.ndarray,
         device: str,
     ) -> tuple[float, float]:
-        """Train a linear probe using PyTorch on GPU for fast training."""
+        """Train a linear probe using PyTorch on GPU matching sklearn's LogisticRegression."""
         
-        # Convert to tensors
+        # Convert to tensors and normalize (sklearn does this internally)
         X_train_t = torch.from_numpy(X_train).float().to(device)
         X_test_t = torch.from_numpy(X_test).float().to(device)
         y_train_t = torch.from_numpy(y_train).long().to(device)
@@ -313,20 +313,51 @@ class ProbingClassifierExperiment(BaseExperiment):
         num_classes = len(np.unique(y_train))
         model = GPULinearProbe(input_dim, num_classes).to(device)
         
-        # Training setup
+        # Match sklearn's LogisticRegression settings:
+        # - C=1.0 (L2 regularization strength = 1/C)
+        # - max_iter=1000
+        # - tolerance=1e-4
         criterion = nn.CrossEntropyLoss()
-        optimizer = optim.LBFGS(model.parameters(), max_iter=100, line_search_fn='strong_wolfe')
+        l2_lambda = 1.0  # sklearn's C=1.0 means regularization strength = 1.0
         
-        # Training loop (LBFGS needs closure)
-        def closure():
-            optimizer.zero_grad()
-            outputs = model(X_train_t)
-            loss = criterion(outputs, y_train_t)
-            loss.backward()
-            return loss
+        # LBFGS optimizer with sklearn-like settings
+        optimizer = optim.LBFGS(
+            model.parameters(),
+            lr=1.0,
+            max_iter=20,  # iterations per step
+            max_eval=None,
+            tolerance_grad=1e-7,
+            tolerance_change=1e-9,
+            history_size=100,
+            line_search_fn='strong_wolfe'
+        )
         
-        # Train
-        optimizer.step(closure)
+        # Training loop - call optimizer.step() multiple times until convergence
+        max_steps = 50  # max outer steps (total iterations = 20 * 50 = 1000)
+        prev_loss = float('inf')
+        tolerance = 1e-4
+        
+        for step in range(max_steps):
+            def closure():
+                optimizer.zero_grad()
+                outputs = model(X_train_t)
+                loss = criterion(outputs, y_train_t)
+                
+                # Add L2 regularization (match sklearn's C=1.0)
+                l2_reg = 0.0
+                for param in model.parameters():
+                    l2_reg += torch.norm(param, 2) ** 2
+                loss = loss + (l2_lambda / 2.0) * l2_reg
+                
+                loss.backward()
+                return loss
+            
+            loss = optimizer.step(closure)
+            
+            # Check convergence
+            if abs(prev_loss - loss.item()) < tolerance:
+                break
+            prev_loss = loss.item()
         
         # Evaluate
         with torch.no_grad():
