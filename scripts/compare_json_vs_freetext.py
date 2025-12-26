@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
 """
-Compare MedGemma 27B JSON vs Free Text (Non-JSON) Results
+Compare JSON vs Free Text (Non-JSON) Results
 
 Usage:
-    python compare_json_vs_freetext.py
+    python compare_json_vs_freetext.py --json <json_results.csv> --freetext <freetext_results.csv>
 """
 
+import argparse
 from pathlib import Path
 
 import pandas as pd
-
-# Paths to results
-JSON_RESULTS = Path("/Users/huseyin/Documents/CoT/outputs/medgemma27b_json/analysis_results.csv")
-FREETEXT_RESULTS = Path(
-    "/Users/huseyin/Documents/CoT/outputs/outputs_vllm/18-41-38_medgemma27b-text-it-vLLM/analysis_results.csv"
-)
 
 
 def load_and_prepare(path: Path, suffix: str) -> pd.DataFrame:
@@ -128,13 +123,21 @@ def print_table(df: pd.DataFrame, title: str, show_cols: list):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Compare JSON vs Free Text results")
+    parser.add_argument("--json", required=True, help="Path to JSON results CSV")
+    parser.add_argument("--freetext", required=True, help="Path to Free Text results CSV")
+    args = parser.parse_args()
+
+    json_path = Path(args.json)
+    freetext_path = Path(args.freetext)
+
     print("\n" + "=" * 80)
-    print("MedGemma 27B: JSON vs Free Text Comparison")
+    print("JSON vs Free Text Comparison")
     print("=" * 80)
 
     # Load data
-    json_df = pd.read_csv(JSON_RESULTS)
-    freetext_df = pd.read_csv(FREETEXT_RESULTS)
+    json_df = pd.read_csv(json_path)
+    freetext_df = pd.read_csv(freetext_path)
 
     print(f"\nJSON samples: {json_df['num_samples'].sum()}")
     print(f"Free Text samples: {freetext_df['num_samples'].sum()}")
@@ -144,7 +147,9 @@ def main():
     print("\n" + "-" * 80)
     print("COMPARISON BY PROMPT (Excluding Radiology)")
     print("-" * 80)
-    print(f"{'Prompt':<25} {'CoT JSON':>10} {'CoT Free':>10} {'Δ CoT':>10} {'JSON Better?':>12}")
+    print(
+        f"{'Prompt':<25} {'CoT JSON':>10} {'CoT Free':>10} {'Delta CoT':>10} {'JSON Better?':>12}"
+    )
     print("-" * 80)
     for _, row in by_prompt.iterrows():
         json_val = row["cot_accuracy_json"] * 100 if pd.notna(row["cot_accuracy_json"]) else 0
@@ -152,7 +157,7 @@ def main():
             row["cot_accuracy_freetext"] * 100 if pd.notna(row["cot_accuracy_freetext"]) else 0
         )
         diff = row["cot_diff"] * 100 if pd.notna(row["cot_diff"]) else 0
-        better = "✅ Yes" if diff > 0 else "❌ No"
+        better = "Yes" if diff > 0 else "No"
         print(
             f"{row['prompt']:<25} {json_val:>9.1f}% {free_val:>9.1f}% {diff:>+9.1f}% {better:>12}"
         )
@@ -162,7 +167,9 @@ def main():
     print("\n" + "-" * 80)
     print("COMPARISON BY DATASET")
     print("-" * 80)
-    print(f"{'Dataset':<20} {'CoT JSON':>10} {'CoT Free':>10} {'Δ CoT':>10} {'JSON Better?':>12}")
+    print(
+        f"{'Dataset':<20} {'CoT JSON':>10} {'CoT Free':>10} {'Delta CoT':>10} {'JSON Better?':>12}"
+    )
     print("-" * 80)
     for _, row in by_dataset.iterrows():
         json_val = row["cot_accuracy_json"] * 100 if pd.notna(row["cot_accuracy_json"]) else 0
@@ -170,7 +177,7 @@ def main():
             row["cot_accuracy_freetext"] * 100 if pd.notna(row["cot_accuracy_freetext"]) else 0
         )
         diff = row["cot_diff"] * 100 if pd.notna(row["cot_diff"]) else 0
-        better = "✅ Yes" if diff > 0 else "❌ No"
+        better = "Yes" if diff > 0 else "No"
         note = " (classification only)" if "radiology" in row["dataset"].lower() else ""
         print(
             f"{row['dataset']:<20} {json_val:>9.1f}% {free_val:>9.1f}% {diff:>+9.1f}% {better:>12}{note}"
@@ -213,23 +220,23 @@ def main():
     print("CONCLUSION")
     print("=" * 80)
     if json_cot > freetext_cot:
-        print(f"\n✅ JSON output IMPROVES CoT accuracy by {(json_cot - freetext_cot) * 100:.1f}%")
+        print(f"\nJSON output IMPROVES CoT accuracy by {(json_cot - freetext_cot) * 100:.1f}%")
     else:
-        print(f"\n❌ JSON output DECREASES CoT accuracy by {(freetext_cot - json_cot) * 100:.1f}%")
+        print(f"\nJSON output DECREASES CoT accuracy by {(freetext_cot - json_cot) * 100:.1f}%")
 
     # Count which prompts benefit
     benefits = (by_prompt["cot_diff"] > 0).sum()
     total_prompts = len(by_prompt)
-    print(f"\n📊 {benefits}/{total_prompts} prompts benefit from JSON output")
+    print(f"\n{benefits}/{total_prompts} prompts benefit from JSON output")
 
     # Top beneficiaries
-    print("\n🏆 Top 3 prompts that BENEFIT from JSON:")
+    print("\nTop 3 prompts that BENEFIT from JSON:")
     for _, row in by_prompt.head(3).iterrows():
-        print(f"   • {row['prompt']}: +{row['cot_diff'] * 100:.1f}%")
+        print(f"   - {row['prompt']}: +{row['cot_diff'] * 100:.1f}%")
 
-    print("\n⚠️  Top 3 prompts that are HURT by JSON:")
+    print("\nTop 3 prompts that are HURT by JSON:")
     for _, row in by_prompt.tail(3).iterrows():
-        print(f"   • {row['prompt']}: {row['cot_diff'] * 100:.1f}%")
+        print(f"   - {row['prompt']}: {row['cot_diff'] * 100:.1f}%")
 
     print()
 
