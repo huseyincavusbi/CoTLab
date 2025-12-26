@@ -5,7 +5,7 @@ name: probing_classifier
 description: "Train linear probes on hidden states"
 # target_layers: null  # Omit to auto-detect ALL layers from model
 num_samples: 100  # Use all data
-label_field: label  # Probe for diagnosis (Clean_Answer), not category
+label_field: category  # Use category (cardiology, neurology, etc.)
 use_gpu_probe: false  # Use CPU sklearn
 # GPU Probe Note:
 # use_gpu_probe=true provides speedup but may have convergence issues
