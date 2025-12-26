@@ -41,7 +41,8 @@ class TransformersBackend(InferenceBackend):
         trust_remote_code: bool = True,
         **kwargs,
     ):
-        self.device = device
+        self._device_map = device  # Used for model loading (supports "auto")
+        self._resolved_device = None  # Actual device for tensor ops (resolved after load)
         self.dtype = getattr(torch, dtype) if isinstance(dtype, str) else dtype
         self.enable_hooks = enable_hooks
         self.trust_remote_code = trust_remote_code
@@ -51,13 +52,28 @@ class TransformersBackend(InferenceBackend):
         self._model_name: Optional[str] = None
         self._hook_manager: Optional[HookManager] = None
 
+    @property
+    def device(self) -> str:
+        """Get the resolved device for tensor operations."""
+        if self._resolved_device is not None:
+            return self._resolved_device
+        # Fallback to device_map if model not loaded yet
+        if self._device_map in ("auto", "balanced", "sequential"):
+            # Return a sensible default before model is loaded
+            if torch.cuda.is_available():
+                return "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                return "mps"
+            return "cpu"
+        return self._device_map
+
     def load_model(self, model_name: str, **kwargs) -> None:
         """Load model with HuggingFace Transformers."""
         # Get HF token from environment
         hf_token = os.getenv("HF_TOKEN")
 
         # Print device info
-        print(f"  Device: {self.device}")
+        print(f"  Device map: {self._device_map}")
         print(f"  Dtype: {self.dtype}")
         print("  Cache: ~/.cache/huggingface (HF default)")
 
@@ -68,7 +84,7 @@ class TransformersBackend(InferenceBackend):
         self._model = AutoModelForCausalLM.from_pretrained(
             model_name,
             dtype=self.dtype,
-            device_map=self.device,
+            device_map=self._device_map,
             trust_remote_code=self.trust_remote_code,
             token=hf_token,
             **kwargs,
@@ -76,8 +92,39 @@ class TransformersBackend(InferenceBackend):
         self._model.eval()
         self._model_name = model_name
 
+        # Resolve the actual device from the loaded model for tensor operations
+        self._resolved_device = self._resolve_model_device()
+        print(f"  Resolved device: {self._resolved_device}")
+
         if self.enable_hooks:
             self._hook_manager = HookManager(self._model)
+
+    def _resolve_model_device(self) -> str:
+        """Resolve the actual device from the loaded model."""
+        if self._model is None:
+            return "cpu"
+
+        # Try to get device from model parameters
+        try:
+            # Get the device of the first parameter
+            first_param = next(self._model.parameters())
+            device = first_param.device
+            # Return string representation (e.g., "cuda:0" -> "cuda:0", "mps:0" -> "mps")
+            if device.type == "mps":
+                return "mps"
+            return str(device)
+        except StopIteration:
+            pass
+
+        # Fallback: check hf_device_map if available
+        if hasattr(self._model, "hf_device_map") and self._model.hf_device_map:
+            # Get the first device from the device map
+            first_device = next(iter(self._model.hf_device_map.values()))
+            if isinstance(first_device, int):
+                return f"cuda:{first_device}"
+            return str(first_device)
+
+        return "cpu"
 
     def generate(
         self,
