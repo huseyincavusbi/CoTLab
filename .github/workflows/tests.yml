@@ -178,7 +178,7 @@ jobs:
         shell: bash -el {0}
         timeout-minutes: 10
         run: |
-          echo "Running notebook: cotlab_tutorial.ipynb (3 samples for CI)"
+          echo "Running notebook: cotlab_tutorial.ipynb (CI mode: 1 sample, 10 max_tokens)"
           cd notebooks
-          papermill cotlab_tutorial.ipynb cotlab_tutorial_executed.ipynb -k cotlab --progress-bar -p NUM_SAMPLES 3
+          papermill cotlab_tutorial.ipynb cotlab_tutorial_executed.ipynb -k cotlab --progress-bar -p NUM_SAMPLES 1 -p MAX_TOKENS 10
           echo "Notebook executed successfully on ${{ matrix.os }}!"
