@@ -176,5 +176,6 @@ jobs:
       - name: Execute tutorial notebook
         shell: bash -el {0}
         run: |
-          jupyter nbconvert --to notebook --execute notebooks/cotlab_tutorial.ipynb --output executed_tutorial.ipynb
+          echo "Starting notebook execution..."
+          jupyter nbconvert --to notebook --execute notebooks/cotlab_tutorial.ipynb --output executed_tutorial.ipynb --log-level=INFO 2>&1 | grep -E "(Executing|cell)"
           echo "Notebook executed successfully on ${{ matrix.os }}!"
