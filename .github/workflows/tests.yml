@@ -164,18 +164,19 @@ jobs:
           create-args: >-
             python=3.11
             pip
-            jupyter
-            nbconvert
+            papermill
+            ipykernel
           init-shell: bash
 
       - name: Install dependencies
         shell: bash -el {0}
         run: |
           pip install -e ".[dev]"
+          python -m ipykernel install --user --name cotlab --display-name "CoTLab"
 
       - name: Execute tutorial notebook
         shell: bash -el {0}
         run: |
-          echo "Starting notebook execution..."
-          jupyter nbconvert --to notebook --execute notebooks/cotlab_tutorial.ipynb --output executed_tutorial.ipynb --log-level=INFO 2>&1 | grep -E "(Executing|cell)"
+          echo "Running notebook: cotlab_tutorial.ipynb"
+          papermill notebooks/cotlab_tutorial.ipynb notebooks/cotlab_tutorial_executed.ipynb -k cotlab --progress-bar
           echo "Notebook executed successfully on ${{ matrix.os }}!"
