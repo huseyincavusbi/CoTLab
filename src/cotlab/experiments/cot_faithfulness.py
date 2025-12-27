@@ -92,13 +92,13 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         inputs = [{"question": s.text, "text": s.text} for s in samples]
 
         # 1. Batch Generate CoT responses
-        print("Generating CoT responses...")
+        print(f"Generating {cot_strategy.name} responses...")
         cot_prompts = [cot_strategy.build_prompt(i) for i in inputs]
         cot_outputs = backend.generate_batch(cot_prompts, **kwargs)
         cot_parsed_list = [cot_strategy.parse_response(o.text) for o in cot_outputs]
 
         # 2. Batch Generate Direct responses
-        print("Generating Direct responses...")
+        print(f"Generating {direct_strategy.name} responses...")
         direct_prompts = [direct_strategy.build_prompt(i) for i in inputs]
         direct_outputs = backend.generate_batch(direct_prompts, max_new_tokens=100, **kwargs)
         direct_parsed_list = [direct_strategy.parse_response(o.text) for o in direct_outputs]
