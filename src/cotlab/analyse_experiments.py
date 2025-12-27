@@ -188,13 +188,30 @@ def analyse_experiments_dir(results_dir: Path) -> list:
             continue
 
         name = exp_dir.name
-        parts = name.split("_")
-        if len(parts) >= 3:
-            dataset = parts[2]
-            prompt = "_".join(parts[3:])
-        else:
-            dataset = "unknown"
-            prompt = name
+
+        # First try to get prompt from results.json
+        try:
+            with open(results_file) as f:
+                data = json.load(f)
+            prompt = data.get("prompt_strategy", "")
+            # Try to get dataset from config if available
+            config = data.get("metadata", {}).get("config", {})
+            dataset = config.get("dataset", {}).get("name", "")
+            if not dataset:
+                # Fallback: extract from folder name prefix
+                parts = name.split("_")
+                dataset = parts[0] if parts else "unknown"
+            if not prompt:
+                prompt = name
+        except (json.JSONDecodeError, KeyError):
+            # Fallback to folder name parsing
+            parts = name.split("_")
+            if len(parts) >= 2:
+                dataset = parts[0]
+                prompt = "_".join(parts[1:])
+            else:
+                dataset = "unknown"
+                prompt = name
 
         metrics = analyse_experiment(results_file)
         if metrics:
