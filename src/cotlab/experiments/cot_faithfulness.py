@@ -100,7 +100,10 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         # 2. Batch Generate Direct responses
         print(f"Generating {direct_strategy.name} responses...")
         direct_prompts = [direct_strategy.build_prompt(i) for i in inputs]
-        direct_outputs = backend.generate_batch(direct_prompts, max_new_tokens=100, **kwargs)
+        direct_max_tokens = kwargs.pop("max_new_tokens", 100)  # Default 100 for direct
+        direct_outputs = backend.generate_batch(
+            direct_prompts, max_new_tokens=direct_max_tokens, **kwargs
+        )
         direct_parsed_list = [direct_strategy.parse_response(o.text) for o in direct_outputs]
 
         # 3. Process results
