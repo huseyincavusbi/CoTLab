@@ -25,7 +25,11 @@ jobs:
       - name: Print runner info
         run: |
           python -c "import platform; print(f'OS: {platform.system()} {platform.machine()}')"
-          python -c "import platform; print(f'CPU: {platform.processor()}')"
+          if [[ "$OSTYPE" == "darwin"* ]]; then
+            sysctl -n machdep.cpu.brand_string || echo "Unknown CPU"
+          else
+            cat /proc/cpuinfo | grep "model name" | head -1 || echo "Unknown CPU"
+          fi
           python -c "import os; print(f'CPU count: {os.cpu_count()}')"
 
       - name: Install uv
