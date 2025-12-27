@@ -178,5 +178,5 @@ jobs:
         shell: bash -el {0}
         run: |
           echo "Running notebook: cotlab_tutorial.ipynb"
-          papermill notebooks/cotlab_tutorial.ipynb notebooks/cotlab_tutorial_executed.ipynb -k cotlab --progress-bar
+          papermill notebooks/cotlab_tutorial.ipynb notebooks/cotlab_tutorial_executed.ipynb -k cotlab --progress-bar -p NUM_SAMPLES 3
           echo "Notebook executed successfully on ${{ matrix.os }}!"
