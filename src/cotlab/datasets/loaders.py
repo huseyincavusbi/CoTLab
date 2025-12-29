@@ -9,6 +9,9 @@ Supports JSON format with standardized structure:
 }
 
 Also supports CSV format with automatic detection based on file extension.
+
+Datasets can specify compatible prompts via get_compatible_prompts() for
+restricting which prompt strategies can be used.
 """
 
 import csv
@@ -69,6 +72,14 @@ class BaseDataset(ABC):
         random.seed(seed)
         indices = random.sample(range(len(self)), min(n, len(self)))
         return [self[i] for i in indices]
+
+    def get_compatible_prompts(self) -> Optional[List[str]]:
+        """
+        Return list of compatible prompt names, or None if compatible with all.
+
+        Override this in specialized datasets to restrict usage.
+        """
+        return None
 
 
 class JSONDataset(BaseDataset):
@@ -159,6 +170,15 @@ class RadiologyDataset(JSONDataset):
             label=row.get("Flag", ""),
             metadata={},
         )
+
+    def get_compatible_prompts(self) -> list[str]:
+        """
+        Radiology dataset only works with radiology prompt.
+
+        This dataset is for pathological fracture detection and should
+        NOT be used with general medical QA prompts.
+        """
+        return ["radiology"]
 
 
 @Registry.register_dataset("pediatrics")

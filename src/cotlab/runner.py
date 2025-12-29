@@ -126,14 +126,21 @@ def main():
                         prompt_strategy = create_component(cfg.prompt)
                         experiment = create_component(cfg.experiment)
 
-                        # Check prompt-dataset compatibility
+                        # Check prompt-dataset compatibility (prompt side)
                         compatible_datasets = prompt_strategy.get_compatible_datasets()
                         if (
                             compatible_datasets is not None
                             and dataset_name not in compatible_datasets
                         ):
                             print(f"  SKIPPED: {prompt_name} is not compatible with {dataset_name}")
-                            print(f"           (only compatible with: {compatible_datasets})")
+                            print(f"           (prompt only works with: {compatible_datasets})")
+                            continue
+
+                        # Check prompt-dataset compatibility (dataset side)
+                        compatible_prompts = dataset.get_compatible_prompts()
+                        if compatible_prompts is not None and prompt_name not in compatible_prompts:
+                            print(f"  SKIPPED: {dataset_name} is not compatible with {prompt_name}")
+                            print(f"           (dataset only works with: {compatible_prompts})")
                             continue
 
                         # Setup individual run logger
