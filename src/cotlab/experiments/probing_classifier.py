@@ -145,8 +145,8 @@ class ProbingClassifierExperiment(BaseExperiment):
         sample_labels = le2.fit_transform(sample_labels)
         print(f"Final class count: {len(np.unique(sample_labels))}")
 
-        tokenizer = backend._tokenizer
-        model = backend._model
+        tokenizer = backend.tokenizer
+        model = backend.model
 
         # Auto-detect all layers if not specified
         if self.target_layers is None:
@@ -161,16 +161,32 @@ class ProbingClassifierExperiment(BaseExperiment):
         print(f"Model: {backend.model_name}")
         print(f"Target layers: {self.target_layers}")
 
-        # Collect hidden states
+        # Collect hidden states using BATCHING for speedup
         layer_hidden_states = {layer: [] for layer in self.target_layers}
 
         print("\nExtracting hidden states...")
 
-        for i, sample in enumerate(tqdm(samples, desc="Processing samples")):
-            # Build prompt
+        # Build all prompts first
+        all_prompts = []
+        for sample in samples:
             question = sample.text
             prompt = prompt_strategy.build_prompt({"question": question, "text": question})
-            tokens = tokenizer(prompt, return_tensors="pt").to(backend.device)
+            all_prompts.append(prompt)
+
+        # Process in batches for GPU efficiency
+        batch_size = 128  # Adjust based on GPU memory
+        for batch_start in tqdm(range(0, len(all_prompts), batch_size), desc="Batches"):
+            batch_end = min(batch_start + batch_size, len(all_prompts))
+            batch_prompts = all_prompts[batch_start:batch_end]
+
+            # Tokenize batch with padding
+            tokens = tokenizer(
+                batch_prompts,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=2048,
+            ).to(backend.device)
 
             # Get hidden states
             with torch.no_grad():
@@ -179,11 +195,22 @@ class ProbingClassifierExperiment(BaseExperiment):
             hidden_states = outputs.hidden_states  # Tuple of (batch, seq, hidden)
 
             # Extract last token hidden state from each target layer
-            for layer_idx in self.target_layers:
-                if layer_idx < len(hidden_states):
-                    # Get last token representation (cast to float32 for numpy)
-                    h = hidden_states[layer_idx][0, -1, :].float().cpu().numpy()
-                    layer_hidden_states[layer_idx].append(h)
+            # Use attention_mask to find actual last token (not padding)
+            attention_mask = tokens.attention_mask
+            for batch_idx in range(len(batch_prompts)):
+                # Find index of last real token (before padding)
+                seq_len = attention_mask[batch_idx].sum().item()
+                last_token_idx = seq_len - 1
+
+                for layer_idx in self.target_layers:
+                    if layer_idx < len(hidden_states):
+                        h = (
+                            hidden_states[layer_idx][batch_idx, last_token_idx, :]
+                            .float()
+                            .cpu()
+                            .numpy()
+                        )
+                        layer_hidden_states[layer_idx].append(h)
 
         # Labels are already prepared in sample_labels
         labels = sample_labels
@@ -212,8 +239,8 @@ class ProbingClassifierExperiment(BaseExperiment):
                 print(f"L{layer_idx:<7} | Skipped - only one class present")
                 continue
 
-            # Split data - use smaller test size if needed
-            test_size = min(0.2, max(2, len(X) // 5) / len(X))
+            # Split data
+            test_size = 0.25
 
             try:
                 X_train, X_test, y_train, y_test = train_test_split(
@@ -232,10 +259,17 @@ class ProbingClassifierExperiment(BaseExperiment):
                 )
             else:
                 # Train sklearn logistic regression probe (CPU)
+                # Normalize features (same as GPU path) - sklearn doesn't auto-normalize
+                from sklearn.preprocessing import StandardScaler
+
+                scaler = StandardScaler()
+                X_train_scaled = scaler.fit_transform(X_train)
+                X_test_scaled = scaler.transform(X_test)
+
                 clf = LogisticRegression(max_iter=1000, random_state=42)
-                clf.fit(X_train, y_train)
-                train_acc = accuracy_score(y_train, clf.predict(X_train))
-                test_acc = accuracy_score(y_test, clf.predict(X_test))
+                clf.fit(X_train_scaled, y_train)
+                train_acc = accuracy_score(y_train, clf.predict(X_train_scaled))
+                test_acc = accuracy_score(y_test, clf.predict(X_test_scaled))
 
             layer_accuracies[layer_idx] = {
                 "train_accuracy": train_acc,
@@ -305,9 +339,16 @@ class ProbingClassifierExperiment(BaseExperiment):
     ) -> tuple[float, float]:
         """Train a linear probe using PyTorch on GPU matching sklearn's LogisticRegression."""
 
-        # Convert to tensors and normalize (sklearn does this internally)
-        X_train_t = torch.from_numpy(X_train).float().to(device)
-        X_test_t = torch.from_numpy(X_test).float().to(device)
+        # 1. NORMALIZE features (sklearn does this internally with lbfgs solver)
+        mean = X_train.mean(axis=0)
+        std = X_train.std(axis=0)
+        std[std == 0] = 1.0  # Avoid division by zero
+        X_train_normalized = (X_train - mean) / std
+        X_test_normalized = (X_test - mean) / std  # Use train mean/std
+
+        # Convert to tensors
+        X_train_t = torch.from_numpy(X_train_normalized).float().to(device)
+        X_test_t = torch.from_numpy(X_test_normalized).float().to(device)
         y_train_t = torch.from_numpy(y_train).long().to(device)
         y_test_t = torch.from_numpy(y_test).long().to(device)
 
@@ -317,9 +358,10 @@ class ProbingClassifierExperiment(BaseExperiment):
         model = GPULinearProbe(input_dim, num_classes).to(device)
 
         # Match sklearn's LogisticRegression settings:
-        # - C=1.0 (L2 regularization strength = 1/C)
+        # - C=1.0 (regularization strength = 1/C = 1.0)
         # - max_iter=1000
         # - tolerance=1e-4
+        # - penalty='l2' (applied to weights only, NOT bias)
         criterion = nn.CrossEntropyLoss()
         l2_lambda = 1.0  # sklearn's C=1.0 means regularization strength = 1.0
 
@@ -347,11 +389,10 @@ class ProbingClassifierExperiment(BaseExperiment):
                 outputs = model(X_train_t)
                 loss = criterion(outputs, y_train_t)
 
-                # Add L2 regularization (match sklearn's C=1.0)
-                l2_reg = 0.0
-                for param in model.parameters():
-                    l2_reg += torch.norm(param, 2) ** 2
-                loss = loss + (l2_lambda / 2.0) * l2_reg
+                # 2. L2 regularization on WEIGHTS ONLY (not bias) - matches sklearn
+                # sklearn's LogisticRegression does NOT regularize the intercept
+                l2_reg = torch.norm(model.linear.weight, 2) ** 2
+                loss = loss + (l2_lambda / (2.0 * len(y_train))) * l2_reg
 
                 loss.backward()
                 return loss
