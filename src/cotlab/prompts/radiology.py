@@ -129,3 +129,12 @@ class RadiologyPromptStrategy(BasePromptStrategy):
 
     def get_system_message(self) -> Optional[str]:
         return self.system_role
+
+    def get_compatible_datasets(self) -> list[str]:
+        """
+        Radiology prompt is only compatible with radiology dataset.
+
+        This prompt is specifically designed for pathological fracture detection
+        in radiology reports and should NOT be used for general medical QA.
+        """
+        return ["radiology"]

@@ -87,6 +87,14 @@ class BasePromptStrategy(ABC):
         """Return system message if applicable."""
         return None
 
+    def get_compatible_datasets(self) -> Optional[List[str]]:
+        """
+        Return list of compatible dataset names, or None if compatible with all.
+
+        Override this in specialized prompts to restrict usage.
+        """
+        return None
+
 
 # JSON output schema for medical diagnosis tasks
 JSON_OUTPUT_SCHEMA = """\
