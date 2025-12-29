@@ -67,6 +67,16 @@ class TransformersBackend(InferenceBackend):
             return "cpu"
         return self._device_map
 
+    @property
+    def model(self):
+        """Get the underlying model (public API)."""
+        return self._model
+
+    @property
+    def tokenizer(self):
+        """Get the tokenizer (public API)."""
+        return self._tokenizer
+
     def load_model(self, model_name: str, **kwargs) -> None:
         """Load model with HuggingFace Transformers."""
         # Get HF token from environment
