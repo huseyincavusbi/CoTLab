@@ -1,7 +1,9 @@
 """Probing Classifier Experiment.
 
-Trains linear probes on hidden states at specific layers to test
-whether different prompts encode answers differently at each layer.
+Trains linear probes on hidden states at the ANSWER position to test
+whether different prompts encode diagnoses differently at each layer.
+
+This probes AFTER the model generates an answer, not at input position.
 """
 
 from typing import Any, List, Optional
@@ -46,22 +48,23 @@ class ProbingClassifierExperiment(BaseExperiment):
     def __init__(
         self,
         name: str = "probing_classifier",
-        description: str = "Train linear probes on hidden states",
+        description: str = "Train linear probes on answer hidden states",
         target_layers: Optional[List[int]] = None,
-        num_samples: int = 50,
-        label_field: str = "category",  # Use category instead of individual diagnosis
-        use_gpu_probe: bool = False,  # Use PyTorch GPU probe for speedup
-        batch_size: int = 128,  # Batch size for hidden state extraction
-        random_seed: int = 42,  # Random seed for reproducibility
+        num_samples: int = 30,
+        probe_target: str = "diagnosis",  # "diagnosis", "category", or "correctness"
+        max_new_tokens: int = 128,
+        use_gpu_probe: bool = False,
+        batch_size: int = 128,
+        random_seed: int = 42,
         **kwargs,
     ):
         self._name = name
         self.description = description
-        # None means auto-detect all layers at runtime
         self._target_layers_config = target_layers
         self.target_layers = target_layers
         self.num_samples = num_samples
-        self.label_field = label_field
+        self.probe_target = probe_target
+        self.max_new_tokens = max_new_tokens
         self.use_gpu_probe = use_gpu_probe
         self.batch_size = batch_size
         self.random_seed = random_seed
@@ -82,141 +85,104 @@ class ProbingClassifierExperiment(BaseExperiment):
 
         n_samples = num_samples or self.num_samples
 
-        # 1. Collect all samples and extract labels based on label_field
+        # Collect samples
         print("Collecting samples...")
-        all_samples = list(dataset)
-        raw_labels = []
-
-        for s in all_samples:
-            # Try to get label from specified field
-            if self.label_field == "category":
-                lbl = s.metadata.get("category", "unknown")
-            elif self.label_field == "label":
-                lbl = s.label if s.label is not None else s.metadata.get("label", "unknown")
-            else:
-                lbl = s.metadata.get(self.label_field, "unknown")
-            raw_labels.append(str(lbl))
-
-        # 2. Encode labels
-        le = LabelEncoder()
-        encoded_labels = le.fit_transform(raw_labels)
-        label_mapping = dict(zip(le.classes_, range(len(le.classes_))))
-        print(f"Found {len(label_mapping)} unique labels: {list(label_mapping.keys())}")
-
-        # Count samples per class
-        unique, counts = np.unique(encoded_labels, return_counts=True)
-        class_counts = dict(zip(unique, counts))
-        print(f"Class distribution: {class_counts}")
-
-        # 3. Filter to classes with at least 2 samples for stratification
-        valid_classes = {cls for cls, count in class_counts.items() if count >= 2}
-
-        if len(valid_classes) < 2:
-            print(
-                "Warning: Not enough classes with 2+ samples. Using all samples without stratification."
-            )
-            selected_indices = list(range(min(n_samples, len(all_samples))))
-        else:
-            # Filter samples to valid classes
-            valid_indices = [i for i, lbl in enumerate(encoded_labels) if lbl in valid_classes]
-            valid_labels = encoded_labels[valid_indices]
-
-            # Sample from valid indices
-            if len(valid_indices) <= n_samples:
-                selected_indices = valid_indices
-            else:
-                try:
-                    _, selected_indices = train_test_split(
-                        valid_indices,
-                        test_size=n_samples,
-                        stratify=valid_labels,
-                        random_state=self.random_seed,
-                    )
-                except ValueError:
-                    # Fallback to random sampling
-                    import random
-
-                    random.seed(self.random_seed)
-                    selected_indices = random.sample(valid_indices, n_samples)
-
-        samples = [all_samples[i] for i in selected_indices]
-        sample_labels = encoded_labels[np.array(selected_indices)]
-
-        print(f"Selected {len(samples)} samples for probing.")
-
-        # Re-encode labels to be contiguous (important for classification)
-        le2 = LabelEncoder()
-        sample_labels = le2.fit_transform(sample_labels)
-        print(f"Final class count: {len(np.unique(sample_labels))}")
+        all_samples = list(dataset)[:n_samples]
+        print(f"Using {len(all_samples)} samples")
 
         tokenizer = backend.tokenizer
         model = backend.model
 
-        # Auto-detect all layers if not specified
+        # Set random seeds
+        torch.manual_seed(self.random_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(self.random_seed)
+
+        # Auto-detect layers
         if self.target_layers is None:
-            # Get number of layers from model config
             config = model.config
             if hasattr(config, "text_config"):
                 config = config.text_config
             num_layers = config.num_hidden_layers
             self.target_layers = list(range(num_layers))
-            print(f"Auto-detected {num_layers} layers from model")
+            print(f"Auto-detected {num_layers} layers")
 
         print(f"Model: {backend.model_name}")
-        print(f"Target layers: {self.target_layers}")
+        print(f"Target layers: {len(self.target_layers)} layers")
+        print(f"Probe target: {self.probe_target}")
 
-        # Collect hidden states using BATCHING for speedup
+        # Storage
         layer_hidden_states = {layer: [] for layer in self.target_layers}
+        labels = []
+        correctness_labels = []
+        model_answers = []
 
-        print("\nExtracting hidden states...")
+        print("\nGenerating answers and extracting hidden states at answer position...")
 
-        # Build all prompts first
-        all_prompts = []
-        for sample in samples:
+        for sample in tqdm(all_samples, desc="Processing"):
             question = sample.text
+            ground_truth = sample.label
+            category = sample.metadata.get("category", "unknown")
+
+            # Build prompt
             prompt = prompt_strategy.build_prompt({"question": question, "text": question})
-            all_prompts.append(prompt)
+            inputs = tokenizer(prompt, return_tensors="pt").to(backend.device)
+            prompt_length = inputs.input_ids.shape[1]
 
-        # Process in batches for GPU efficiency
-        for batch_start in tqdm(range(0, len(all_prompts), self.batch_size), desc="Batches"):
-            batch_end = min(batch_start + self.batch_size, len(all_prompts))
-            batch_prompts = all_prompts[batch_start:batch_end]
-
-            # Tokenize batch with padding
-            tokens = tokenizer(
-                batch_prompts,
-                return_tensors="pt",
-                padding=True,
-                truncation=True,
-                max_length=2048,
-            ).to(backend.device)
-
-            # Get hidden states
+            # Generate answer with hidden states
             with torch.no_grad():
-                outputs = model(**tokens, output_hidden_states=True, return_dict=True)
+                outputs = model.generate(
+                    **inputs,
+                    max_new_tokens=self.max_new_tokens,
+                    output_hidden_states=True,
+                    return_dict_in_generate=True,
+                    pad_token_id=tokenizer.eos_token_id,
+                )
 
-            hidden_states = outputs.hidden_states  # Tuple of (batch, seq, hidden)
+            # Extract generated tokens
+            generated_ids = outputs.sequences[0, prompt_length:]
+            answer = tokenizer.decode(generated_ids, skip_special_tokens=True)
+            model_answers.append(answer)
 
-            # Extract last token hidden state from each target layer
-            # Use attention_mask to find actual last token (not padding)
-            attention_mask = tokens.attention_mask
-            for batch_idx in range(len(batch_prompts)):
-                # Find index of last real token (before padding)
-                seq_len = attention_mask[batch_idx].sum().item()
-                last_token_idx = seq_len - 1
+            # Check correctness (simple substring match)
+            is_correct = ground_truth.lower() in answer.lower()
+            correctness_labels.append(1 if is_correct else 0)
+
+            # Get hidden states at the LAST generated token (answer position)
+            if hasattr(outputs, "hidden_states") and outputs.hidden_states:
+                last_step_hidden = outputs.hidden_states[-1]
 
                 for layer_idx in self.target_layers:
-                    if layer_idx < len(hidden_states):
-                        h = (
-                            hidden_states[layer_idx][batch_idx, last_token_idx, :]
-                            .float()
-                            .cpu()
-                            .numpy()
-                        )
+                    if layer_idx < len(last_step_hidden):
+                        h = last_step_hidden[layer_idx][0, -1, :].float().cpu().numpy()
                         layer_hidden_states[layer_idx].append(h)
 
-        # Labels are already prepared in sample_labels
-        labels = sample_labels
+            # Store label based on probe_target
+            if self.probe_target == "diagnosis":
+                labels.append(ground_truth)
+            elif self.probe_target == "category":
+                labels.append(category)
+            elif self.probe_target == "correctness":
+                labels.append(1 if is_correct else 0)
+
+            # Clear CUDA cache
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        # Encode labels
+        if self.probe_target in ["diagnosis", "category"]:
+            le = LabelEncoder()
+            encoded_labels = le.fit_transform(labels)
+            label_names = list(le.classes_)
+        else:
+            encoded_labels = np.array(labels)
+            label_names = ["incorrect", "correct"]
+
+        print(f"\nLabels: {len(set(encoded_labels))} unique classes")
+        print(f"Correctness: {sum(correctness_labels)}/{len(correctness_labels)} correct")
+
+        # Use encoded_labels for probing
+        labels = encoded_labels
 
         # Train probes for each layer
         print("\n" + "=" * 60)
@@ -308,16 +274,20 @@ class ProbingClassifierExperiment(BaseExperiment):
             best_layer = None
             best_acc = 0
 
-        # Count class distribution in final labels
+        # Count class distribution
         unique_final, counts_final = np.unique(labels, return_counts=True)
 
         metrics = {
-            "num_samples": len(samples),
+            "num_samples": len(all_samples),
+            "num_correct": sum(correctness_labels),
+            "accuracy_rate": sum(correctness_labels) / len(correctness_labels)
+            if correctness_labels
+            else 0,
             "num_layers_probed": len(results),
             "num_classes": len(unique_final),
             "best_layer": best_layer,
             "best_test_accuracy": best_acc,
-            "label_field": self.label_field,
+            "probe_target": self.probe_target,
         }
 
         return ExperimentResult(
@@ -329,6 +299,8 @@ class ProbingClassifierExperiment(BaseExperiment):
             metadata={
                 "target_layers": self.target_layers,
                 "class_distribution": dict(zip(unique_final.tolist(), counts_final.tolist())),
+                "label_names": label_names,
+                "model_answers": model_answers[:5],  # Save first 5 for inspection
             },
         )
 
