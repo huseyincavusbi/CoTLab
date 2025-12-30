@@ -51,6 +51,8 @@ class ProbingClassifierExperiment(BaseExperiment):
         num_samples: int = 50,
         label_field: str = "category",  # Use category instead of individual diagnosis
         use_gpu_probe: bool = False,  # Use PyTorch GPU probe for speedup
+        batch_size: int = 128,  # Batch size for hidden state extraction
+        random_seed: int = 42,  # Random seed for reproducibility
         **kwargs,
     ):
         self._name = name
@@ -61,6 +63,8 @@ class ProbingClassifierExperiment(BaseExperiment):
         self.num_samples = num_samples
         self.label_field = label_field
         self.use_gpu_probe = use_gpu_probe
+        self.batch_size = batch_size
+        self.random_seed = random_seed
 
     @property
     def name(self) -> str:
@@ -126,13 +130,13 @@ class ProbingClassifierExperiment(BaseExperiment):
                         valid_indices,
                         test_size=n_samples,
                         stratify=valid_labels,
-                        random_state=42,
+                        random_state=self.random_seed,
                     )
                 except ValueError:
                     # Fallback to random sampling
                     import random
 
-                    random.seed(42)
+                    random.seed(self.random_seed)
                     selected_indices = random.sample(valid_indices, n_samples)
 
         samples = [all_samples[i] for i in selected_indices]
@@ -174,9 +178,8 @@ class ProbingClassifierExperiment(BaseExperiment):
             all_prompts.append(prompt)
 
         # Process in batches for GPU efficiency
-        batch_size = 128  # Adjust based on GPU memory
-        for batch_start in tqdm(range(0, len(all_prompts), batch_size), desc="Batches"):
-            batch_end = min(batch_start + batch_size, len(all_prompts))
+        for batch_start in tqdm(range(0, len(all_prompts), self.batch_size), desc="Batches"):
+            batch_end = min(batch_start + self.batch_size, len(all_prompts))
             batch_prompts = all_prompts[batch_start:batch_end]
 
             # Tokenize batch with padding
@@ -244,12 +247,12 @@ class ProbingClassifierExperiment(BaseExperiment):
 
             try:
                 X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=test_size, random_state=42, stratify=y
+                    X, y, test_size=test_size, random_state=self.random_seed, stratify=y
                 )
             except ValueError:
                 # If stratification fails, try without
                 X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=test_size, random_state=42
+                    X, y, test_size=test_size, random_state=self.random_seed
                 )
 
             # Train probe (GPU or CPU)
@@ -266,7 +269,7 @@ class ProbingClassifierExperiment(BaseExperiment):
                 X_train_scaled = scaler.fit_transform(X_train)
                 X_test_scaled = scaler.transform(X_test)
 
-                clf = LogisticRegression(max_iter=1000, random_state=42)
+                clf = LogisticRegression(max_iter=1000, random_state=self.random_seed)
                 clf.fit(X_train_scaled, y_train)
                 train_acc = accuracy_score(y_train, clf.predict(X_train_scaled))
                 test_acc = accuracy_score(y_test, clf.predict(X_test_scaled))
@@ -338,6 +341,11 @@ class ProbingClassifierExperiment(BaseExperiment):
         device: str,
     ) -> tuple[float, float]:
         """Train a linear probe using PyTorch on GPU matching sklearn's LogisticRegression."""
+
+        # Set random seed for reproducibility
+        torch.manual_seed(self.random_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(self.random_seed)
 
         # 1. NORMALIZE features (sklearn does this internally with lbfgs solver)
         mean = X_train.mean(axis=0)
