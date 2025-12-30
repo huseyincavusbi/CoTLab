@@ -1,0 +1,684 @@
+[
+    {
+        "input": {
+            "question": "A 55-year-old man presents with sudden severe chest pain radiating to his left arm, sweating, and shortness of breath. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "myocardial infarction"
+        },
+        "metadata": {
+            "category": "cardiology",
+            "difficulty": "easy",
+            "confounders": [
+                "panic attack",
+                "GERD",
+                "costochondritis"
+            ],
+            "key_features": [
+                "chest pain",
+                "arm radiation",
+                "sweating",
+                "dyspnea"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 28-year-old woman presents with palpitations, weight loss despite increased appetite, heat intolerance, and tremors. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "hyperthyroidism"
+        },
+        "metadata": {
+            "category": "endocrinology",
+            "difficulty": "easy",
+            "confounders": [
+                "anxiety disorder",
+                "pheochromocytoma",
+                "menopause"
+            ],
+            "key_features": [
+                "palpitations",
+                "weight loss",
+                "heat intolerance",
+                "tremors"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 65-year-old smoker presents with progressive dyspnea, chronic cough with sputum production, and barrel-shaped chest. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "COPD"
+        },
+        "metadata": {
+            "category": "pulmonology",
+            "difficulty": "easy",
+            "confounders": [
+                "asthma",
+                "lung cancer",
+                "heart failure"
+            ],
+            "key_features": [
+                "smoking history",
+                "dyspnea",
+                "chronic cough",
+                "barrel chest"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 35-year-old woman presents with fatigue, weight gain, cold intolerance, constipation, and dry skin. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "hypothyroidism"
+        },
+        "metadata": {
+            "category": "endocrinology",
+            "difficulty": "easy",
+            "confounders": [
+                "depression",
+                "anemia",
+                "diabetes"
+            ],
+            "key_features": [
+                "fatigue",
+                "weight gain",
+                "cold intolerance",
+                "dry skin"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 50-year-old man presents with polyuria, polydipsia, blurred vision, and tingling in his feet. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "type 2 diabetes"
+        },
+        "metadata": {
+            "category": "endocrinology",
+            "difficulty": "easy",
+            "confounders": [
+                "diabetes insipidus",
+                "hypercalcemia",
+                "UTI"
+            ],
+            "key_features": [
+                "polyuria",
+                "polydipsia",
+                "neuropathy",
+                "blurred vision"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 22-year-old college student presents with severe headache, stiff neck, fever, and photophobia. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "bacterial meningitis"
+        },
+        "metadata": {
+            "category": "infectious_disease",
+            "difficulty": "medium",
+            "confounders": [
+                "migraine",
+                "viral meningitis",
+                "subarachnoid hemorrhage"
+            ],
+            "key_features": [
+                "headache",
+                "neck stiffness",
+                "fever",
+                "photophobia"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 45-year-old woman presents with episodic headaches with visual aura, nausea, and photophobia lasting 4-72 hours. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "migraine with aura"
+        },
+        "metadata": {
+            "category": "neurology",
+            "difficulty": "easy",
+            "confounders": [
+                "tension headache",
+                "cluster headache",
+                "TIA"
+            ],
+            "key_features": [
+                "visual aura",
+                "nausea",
+                "photophobia",
+                "episodic"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 70-year-old man presents with sudden onset right-sided weakness, facial droop, and slurred speech. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "acute stroke"
+        },
+        "metadata": {
+            "category": "neurology",
+            "difficulty": "easy",
+            "confounders": [
+                "Bell's palsy",
+                "hypoglycemia",
+                "brain tumor"
+            ],
+            "key_features": [
+                "sudden onset",
+                "hemiparesis",
+                "facial droop",
+                "dysarthria"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 30-year-old woman presents with intermittent abdominal cramping, bloating, and alternating diarrhea and constipation with no weight loss. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "irritable bowel syndrome"
+        },
+        "metadata": {
+            "category": "gastroenterology",
+            "difficulty": "medium",
+            "confounders": [
+                "IBD",
+                "celiac disease",
+                "colon cancer"
+            ],
+            "key_features": [
+                "cramping",
+                "bloating",
+                "alternating bowel habits",
+                "no weight loss"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 55-year-old man presents with progressive difficulty swallowing solids then liquids, with significant weight loss. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "esophageal cancer"
+        },
+        "metadata": {
+            "category": "oncology",
+            "difficulty": "medium",
+            "confounders": [
+                "achalasia",
+                "esophageal stricture",
+                "GERD"
+            ],
+            "key_features": [
+                "dysphagia progression",
+                "weight loss",
+                "solids to liquids"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 40-year-old man presents with burning epigastric pain that improves with eating and worsens 2-3 hours after meals. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "duodenal ulcer"
+        },
+        "metadata": {
+            "category": "gastroenterology",
+            "difficulty": "medium",
+            "confounders": [
+                "gastric ulcer",
+                "GERD",
+                "gastritis"
+            ],
+            "key_features": [
+                "epigastric pain",
+                "improves with food",
+                "postprandial worsening"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 25-year-old woman presents with bilateral joint pain and swelling in hands, morning stiffness lasting over an hour, and fatigue. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "rheumatoid arthritis"
+        },
+        "metadata": {
+            "category": "rheumatology",
+            "difficulty": "medium",
+            "confounders": [
+                "osteoarthritis",
+                "SLE",
+                "psoriatic arthritis"
+            ],
+            "key_features": [
+                "bilateral",
+                "morning stiffness",
+                "small joints",
+                "fatigue"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 60-year-old man presents with knee pain that worsens with activity, improves with rest, and brief morning stiffness. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "osteoarthritis"
+        },
+        "metadata": {
+            "category": "orthopedics",
+            "difficulty": "easy",
+            "confounders": [
+                "rheumatoid arthritis",
+                "gout",
+                "meniscal tear"
+            ],
+            "key_features": [
+                "weight-bearing pain",
+                "activity worsening",
+                "brief stiffness"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 45-year-old man presents with sudden severe pain in his big toe that started at night, with redness, swelling, and extreme tenderness. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "gout"
+        },
+        "metadata": {
+            "category": "rheumatology",
+            "difficulty": "easy",
+            "confounders": [
+                "septic arthritis",
+                "pseudogout",
+                "cellulitis"
+            ],
+            "key_features": [
+                "sudden onset",
+                "big toe",
+                "nocturnal",
+                "extreme tenderness"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 20-year-old woman presents with butterfly-shaped facial rash, joint pain, fatigue, and photosensitivity. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "systemic lupus erythematosus"
+        },
+        "metadata": {
+            "category": "rheumatology",
+            "difficulty": "medium",
+            "confounders": [
+                "rosacea",
+                "dermatomyositis",
+                "rheumatoid arthritis"
+            ],
+            "key_features": [
+                "malar rash",
+                "joint pain",
+                "photosensitivity",
+                "young woman"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 6-year-old boy presents with high fever, strawberry tongue, cracked lips, and bilateral non-purulent conjunctivitis. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "Kawasaki disease"
+        },
+        "metadata": {
+            "category": "pediatrics",
+            "difficulty": "medium",
+            "confounders": [
+                "scarlet fever",
+                "viral exanthem",
+                "toxic shock syndrome"
+            ],
+            "key_features": [
+                "fever",
+                "strawberry tongue",
+                "conjunctivitis",
+                "child"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 3-year-old child presents with barking cough, inspiratory stridor, and low-grade fever that worsens at night. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "croup"
+        },
+        "metadata": {
+            "category": "pediatrics",
+            "difficulty": "easy",
+            "confounders": [
+                "epiglottitis",
+                "foreign body aspiration",
+                "asthma"
+            ],
+            "key_features": [
+                "barking cough",
+                "stridor",
+                "nocturnal worsening",
+                "toddler"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 65-year-old woman presents with gradually worsening memory, difficulty finding words, and getting lost in familiar places. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "Alzheimer disease"
+        },
+        "metadata": {
+            "category": "neurology",
+            "difficulty": "medium",
+            "confounders": [
+                "vascular dementia",
+                "depression",
+                "normal aging"
+            ],
+            "key_features": [
+                "gradual onset",
+                "memory loss",
+                "word finding difficulty",
+                "disorientation"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 35-year-old woman presents with episodic vertigo lasting minutes to hours, tinnitus, and fluctuating hearing loss in one ear. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "Meniere disease"
+        },
+        "metadata": {
+            "category": "otology",
+            "difficulty": "medium",
+            "confounders": [
+                "BPPV",
+                "vestibular neuritis",
+                "acoustic neuroma"
+            ],
+            "key_features": [
+                "episodic vertigo",
+                "tinnitus",
+                "hearing loss",
+                "unilateral"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 55-year-old man with a history of smoking presents with painless gross hematuria and no urinary symptoms. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "bladder cancer"
+        },
+        "metadata": {
+            "category": "urology",
+            "difficulty": "medium",
+            "confounders": [
+                "kidney stones",
+                "UTI",
+                "renal cell carcinoma"
+            ],
+            "key_features": [
+                "painless hematuria",
+                "smoker",
+                "no other symptoms"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 70-year-old man presents with difficulty starting urination, weak stream, nocturia, and incomplete bladder emptying. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "benign prostatic hyperplasia"
+        },
+        "metadata": {
+            "category": "urology",
+            "difficulty": "easy",
+            "confounders": [
+                "prostate cancer",
+                "urethral stricture",
+                "neurogenic bladder"
+            ],
+            "key_features": [
+                "hesitancy",
+                "weak stream",
+                "nocturia",
+                "elderly male"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 28-year-old woman presents with painful menstruation, pain during intercourse, and difficulty conceiving. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "endometriosis"
+        },
+        "metadata": {
+            "category": "obstetrics",
+            "difficulty": "medium",
+            "confounders": [
+                "PID",
+                "ovarian cyst",
+                "adenomyosis"
+            ],
+            "key_features": [
+                "dysmenorrhea",
+                "dyspareunia",
+                "infertility"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 50-year-old woman presents with hot flashes, night sweats, mood changes, and irregular periods. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "perimenopause"
+        },
+        "metadata": {
+            "category": "obstetrics",
+            "difficulty": "easy",
+            "confounders": [
+                "hyperthyroidism",
+                "carcinoid syndrome",
+                "pheochromocytoma"
+            ],
+            "key_features": [
+                "hot flashes",
+                "night sweats",
+                "irregular periods",
+                "age"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 35-year-old man presents with sudden severe tearing abdominal pain radiating to the back, hypotension, and a pulsatile abdominal mass. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "ruptured abdominal aortic aneurysm"
+        },
+        "metadata": {
+            "category": "vascular",
+            "difficulty": "medium",
+            "confounders": [
+                "kidney stone",
+                "pancreatitis",
+                "aortic dissection"
+            ],
+            "key_features": [
+                "tearing pain",
+                "hypotension",
+                "pulsatile mass"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 60-year-old diabetic woman presents with unilateral leg swelling, warmth, and calf tenderness. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "deep vein thrombosis"
+        },
+        "metadata": {
+            "category": "vascular",
+            "difficulty": "easy",
+            "confounders": [
+                "cellulitis",
+                "Baker's cyst rupture",
+                "lymphedema"
+            ],
+            "key_features": [
+                "unilateral",
+                "swelling",
+                "warmth",
+                "calf tenderness"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 40-year-old woman presents with fatigue, pallor, and shortness of breath on exertion. Labs show low hemoglobin with microcytic hypochromic RBCs. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "iron deficiency anemia"
+        },
+        "metadata": {
+            "category": "hematology",
+            "difficulty": "easy",
+            "confounders": [
+                "thalassemia",
+                "anemia of chronic disease",
+                "sideroblastic anemia"
+            ],
+            "key_features": [
+                "fatigue",
+                "pallor",
+                "microcytic",
+                "hypochromic"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 25-year-old man presents with recurrent episodes of severe abdominal pain, dark urine, and neuropsychiatric symptoms. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "acute intermittent porphyria"
+        },
+        "metadata": {
+            "category": "genetics",
+            "difficulty": "hard",
+            "confounders": [
+                "appendicitis",
+                "lead poisoning",
+                "hereditary angioedema"
+            ],
+            "key_features": [
+                "recurrent pain",
+                "dark urine",
+                "neuropsychiatric",
+                "young adult"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 30-year-old woman presents with recurrent sinopulmonary infections, chronic diarrhea, and low serum immunoglobulin levels. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "common variable immunodeficiency"
+        },
+        "metadata": {
+            "category": "immunology",
+            "difficulty": "hard",
+            "confounders": [
+                "HIV",
+                "cystic fibrosis",
+                "selective IgA deficiency"
+            ],
+            "key_features": [
+                "recurrent infections",
+                "GI symptoms",
+                "low immunoglobulins"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 55-year-old man presents with coin-shaped, well-demarcated, pruritic plaques on his legs that worsen in dry weather. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "nummular eczema"
+        },
+        "metadata": {
+            "category": "dermatology",
+            "difficulty": "medium",
+            "confounders": [
+                "psoriasis",
+                "tinea corporis",
+                "contact dermatitis"
+            ],
+            "key_features": [
+                "coin-shaped",
+                "pruritic",
+                "legs",
+                "dry weather"
+            ]
+        }
+    },
+    {
+        "input": {
+            "question": "A 20-year-old woman presents with well-defined silvery scaly plaques on elbows and knees with nail pitting. What is the most likely diagnosis?"
+        },
+        "output": {
+            "diagnosis": "psoriasis"
+        },
+        "metadata": {
+            "category": "dermatology",
+            "difficulty": "easy",
+            "confounders": [
+                "eczema",
+                "seborrheic dermatitis",
+                "lichen planus"
+            ],
+            "key_features": [
+                "silvery scales",
+                "elbows knees",
+                "nail pitting"
+            ]
+        }
+    }
+]
