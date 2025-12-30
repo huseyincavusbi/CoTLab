@@ -4,6 +4,7 @@ from .loaders import (
     BaseDataset,
     PatchingPairsDataset,
     PediatricsDataset,
+    ProbingDiagnosisDataset,
     RadiologyDataset,
     Sample,
     SyntheticMedicalDataset,
@@ -16,4 +17,5 @@ __all__ = [
     "PediatricsDataset",
     "SyntheticMedicalDataset",
     "PatchingPairsDataset",
+    "ProbingDiagnosisDataset",
 ]

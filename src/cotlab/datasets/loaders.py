@@ -337,3 +337,38 @@ class TutorialDataset(JSONDataset):
             label=item["label"],
             metadata={},
         )
+
+
+@Registry.register_dataset("probing_diagnosis")
+class ProbingDiagnosisDataset(JSONDataset):
+    """
+    Dataset for probing experiments testing diagnosis encoding.
+
+    Each sample has:
+    - question: Medical scenario
+    - diagnosis: Correct diagnosis (label)
+    - category: Medical specialty
+    - confounders: Alternative diagnoses
+    - key_features: Important clinical features
+    """
+
+    def __init__(
+        self,
+        name: str = "probing_diagnosis",
+        path: str = "data/probing_diagnosis.json",
+        **kwargs,
+    ):
+        super().__init__(name, path, **kwargs)
+
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        return Sample(
+            idx=idx,
+            text=item["input"]["question"],
+            label=item["output"]["diagnosis"],
+            metadata={
+                "category": item.get("metadata", {}).get("category", "general"),
+                "difficulty": item.get("metadata", {}).get("difficulty", "medium"),
+                "confounders": item.get("metadata", {}).get("confounders", []),
+                "key_features": item.get("metadata", {}).get("key_features", []),
+            },
+        )
