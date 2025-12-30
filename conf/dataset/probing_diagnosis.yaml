@@ -1,0 +1,6 @@
+# Probing Diagnosis Dataset
+# Designed specifically for probing experiments testing model's diagnosis encoding
+_target_: cotlab.datasets.ProbingDiagnosisDataset
+
+name: probing_diagnosis
+path: data/probing_diagnosis.json
