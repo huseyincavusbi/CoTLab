@@ -163,6 +163,51 @@ class JSONOutputMixin:
 
         try:
             parsed = json.loads(json_str)
+            
+            # Handle case where model returns a list instead of dict
+            if isinstance(parsed, list):
+                # Try to intelligently extract data from list
+                if not parsed:
+                    return {
+                        "answer": "",
+                        "reasoning": "Empty list returned",
+                        "raw": response,
+                        "parsed_json": parsed,
+                        "parse_success": False,
+                    }
+                
+                # If list of dicts (e.g., multiple diagnoses), extract from first
+                if isinstance(parsed[0], dict):
+                    first_item = parsed[0]
+                    # Build reasoning from all items
+                    reasoning_parts = []
+                    for idx, item in enumerate(parsed, 1):
+                        if isinstance(item, dict):
+                            diag = item.get("diagnosis", item.get("answer", ""))
+                            conf = item.get("confidence", "")
+                            reasoning_parts.append(f"{idx}. {diag} (confidence: {conf}%)")
+                    
+                    return {
+                        "answer": first_item.get("diagnosis", first_item.get("answer", str(first_item))),
+                        "reasoning": "\n".join(reasoning_parts) if reasoning_parts else str(parsed),
+                        "confidence": first_item.get("confidence", 0),
+                        "raw": response,
+                        "parsed_json": parsed,
+                        "parse_success": True,
+                        "multiple_diagnoses": len(parsed),
+                    }
+                else:
+                    # List of strings or other primitives
+                    return {
+                        "answer": str(parsed[0]),
+                        "reasoning": "\n".join(str(x) for x in parsed),
+                        "raw": response,
+                        "parsed_json": parsed,
+                        "parse_success": True,
+                        "list_response": True,
+                    }
+            
+            # Normal dict parsing
             steps = parsed.get("step_by_step", [])
             reasoning = "\n".join(steps) if isinstance(steps, list) else parsed.get("reasoning", "")
 
