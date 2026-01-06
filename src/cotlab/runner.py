@@ -26,20 +26,21 @@ def main():
         help="Model config name (default: medgemma_27b_text_it)",
     )
     parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Enable JSON structured output for all prompts",
+        "--format",
+        type=str,
+        default="plain",
+        choices=["plain", "json", "toon", "toml", "xml", "yaml", "markdown"],
+        help="Output format (default: plain)",
     )
     args = parser.parse_args()
 
     backend_name = args.backend
     model_name = args.model
-    json_output = args.json
+    output_format = args.format
 
     # Setup base output directory with model name and format
     timestamp = datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
-    format_suffix = "json" if json_output else "plain"
-    base_output_dir = Path(f"outputs/{timestamp}_{model_name}_{backend_name}_{format_suffix}")
+    base_output_dir = Path(f"outputs/{timestamp}_{model_name}_{backend_name}_{output_format}")
     base_output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Output directory: {base_output_dir}")
 
@@ -115,9 +116,9 @@ def main():
                         f"prompt={prompt_name}",
                     ]
 
-                    # Add JSON output override if enabled
-                    if json_output:
-                        overrides.append("++prompt.json_output=true")
+                    # Add output format override if not plain
+                    if output_format != "plain":
+                        overrides.append(f"++prompt.output_format={output_format}")
 
                     cfg = compose(config_name="config", overrides=overrides)
 

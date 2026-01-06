@@ -5,6 +5,9 @@ from .base import (
     BasePromptStrategy,
     ExperimentResult,
     GenerationOutput,
+    JSONOutputMixin,
+    OutputFormat,
+    StructuredOutputMixin,
 )
 from .config import (
     BackendConfig,
@@ -21,6 +24,9 @@ __all__ = [
     "ExperimentResult",
     "BasePromptStrategy",
     "BaseExperiment",
+    "OutputFormat",
+    "JSONOutputMixin",
+    "StructuredOutputMixin",
     "BackendConfig",
     "ModelConfig",
     "PromptConfig",
