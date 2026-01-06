@@ -2,4 +2,5 @@
 _target_: cotlab.prompts.RadiologyPromptStrategy
 
 name: radiology
-output_format: plain
+contrarian: false  # Set to true for skeptical reasoning
+output_format: json  # Options: json, toml, yaml, xml, toon, markdown, plain

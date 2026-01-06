@@ -4,13 +4,18 @@ import json
 import re
 from typing import Any, Dict, Optional
 
-from ..core.base import BasePromptStrategy
+from ..core.base import BasePromptStrategy, StructuredOutputMixin
 from ..core.registry import Registry
 
 SYSTEM_ROLE = """You are a radiology expert specialised in paedeatric radiology.
 Your goal is to identify incidence of pathological fractures in the given radiology report.
 Do not make assumptions or diagnoses from the text.
 Think rationally and explain your reasoning."""
+
+SYSTEM_ROLE_CONTRARIAN = """You are a skeptical radiology expert specialised in paedeatric radiology.
+Your goal is to identify incidence of pathological fractures in the given radiology report.
+However, you must question obvious conclusions and consider alternative explanations.
+Think rationally, play devil's advocate, and explain your reasoning."""
 
 
 PROMPT_TEMPLATE = """Follow this structured reasoning on the attached radiology report:
@@ -53,9 +58,51 @@ Radiology report:
 \"\"\"
 """
 
+PROMPT_TEMPLATE_CONTRARIAN = """As a skeptical diagnostician, follow this structured reasoning on the attached radiology report.
+Question obvious patterns and consider alternative explanations before reaching your conclusion.
+
+1. **Fracture Mention**: Determine whether a bone fracture is explicitly described in the report. Consider if what appears to be a fracture might be a normal variant or imaging artifact.
+2. **Pathological Nature**: If a bone fracture is mentioned, critically assess whether it is truly pathological. Question the obvious diagnosis - could there be alternative explanations for the findings?
+
+The instruction is to answer questions strictly based on the content of the provided radiology report.
+Apply skeptical reasoning - if the report suggests a pathological fracture, argue why it might NOT be pathological. If it seems non-pathological, consider why it MIGHT be pathological.
+Only make final judgements when the evidence is overwhelming and alternative explanations are ruled out.
+Ignore non-bone fractures (e.g., device or lead fractures) as they do not indicate bone pathology.
+Follow the format of these two examples and give the output strictly in the json format.
+
+Example 1: Fracture present and signs of pathological fracture (after skeptical review)
+```json
+{{
+    "fracture_mentioned": true,
+    "pathological_fracture": true,
+    "evidence": {{
+        "report_findings": ["bilateral clavicle fractures", "right clavicle fracture shows some periosteal reaction and callus formation"],
+        "rationale": "Initial skepticism: Could these findings represent normal bone remodeling? However, the bilateral nature and explicit mention of periosteal reaction and callus formation in the context of reported pathology provide overwhelming evidence. Alternative explanations (trauma, normal variant) are ruled out by the report's clinical context. Conclusion: pathological fracture confirmed despite initial skepticism."
+    }}
+}}
+```
+
+Example 2: Fracture present but questioning pathological nature (skeptical analysis)
+```json
+{{
+    "fracture_mentioned": true,
+    "pathological_fracture": false,
+    "evidence": {{
+        "report_findings": ["displaced fracture of the right sixth posterolateral rib"],
+        "rationale": "The report mentions a displaced rib fracture. Applying skeptical reasoning: While displacement might suggest pathology, it could equally result from mechanical trauma. The report provides no explicit indicators of metabolic bone disease, no mention of osteopenia, no description of abnormal bone architecture. Playing devil's advocate against a pathological diagnosis: the lack of corroborating features means this is more likely traumatic. Cannot conclude pathological fracture without stronger evidence."
+    }}
+}}
+```
+
+Radiology report:
+\"\"\"
+{report}
+\"\"\"
+"""
+
 
 @Registry.register_prompt("radiology")
-class RadiologyPromptStrategy(BasePromptStrategy):
+class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
     """
     Structured JSON output for radiology pathological fracture detection.
 
@@ -65,9 +112,22 @@ class RadiologyPromptStrategy(BasePromptStrategy):
     - Few-shot examples for format guidance
     """
 
-    def __init__(self, name: str = "radiology", system_role: Optional[str] = None, **kwargs):
+    def __init__(
+        self,
+        name: str = "radiology",
+        system_role: Optional[str] = None,
+        contrarian: bool = False,
+        output_format: str = "json",
+        **kwargs,
+    ):
         self._name = name
-        self.system_role = system_role or SYSTEM_ROLE
+        self.contrarian = contrarian
+        self.output_format = output_format
+        # Choose system role based on contrarian mode
+        if system_role:
+            self.system_role = system_role
+        else:
+            self.system_role = SYSTEM_ROLE_CONTRARIAN if contrarian else SYSTEM_ROLE
 
     @property
     def name(self) -> str:
@@ -76,11 +136,19 @@ class RadiologyPromptStrategy(BasePromptStrategy):
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         """Build prompt with radiology report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
-        return PROMPT_TEMPLATE.format(report=report)
+        # Choose template based on contrarian mode
+        template = PROMPT_TEMPLATE_CONTRARIAN if self.contrarian else PROMPT_TEMPLATE
+        prompt = template.format(report=report)
+
+        # Add format instruction if not using JSON templates
+        if self.output_format != "json" and self.output_format != "plain":
+            prompt += "\n\n" + self._add_format_instruction()
+
+        return prompt
 
     def parse_response(self, response: str) -> Dict[str, Any]:
         """
-        Parse JSON response from model.
+        Parse response from model (supports multiple formats).
 
         Expected format:
         {
@@ -92,19 +160,35 @@ class RadiologyPromptStrategy(BasePromptStrategy):
             }
         }
         """
-        # Try to extract JSON from response
+        # Use mixin's multi-format parser if not JSON/plain
+        if self.output_format != "json" and self.output_format != "plain":
+            try:
+                parsed = self._parse_formatted_response(response)
+                return {
+                    "answer": "pathological"
+                    if parsed.get("pathological_fracture")
+                    else "non-pathological",
+                    "fracture_mentioned": parsed.get("fracture_mentioned", False),
+                    "pathological_fracture": parsed.get("pathological_fracture", False),
+                    "reasoning": parsed.get("evidence", {}).get("rationale", ""),
+                    "findings": parsed.get("evidence", {}).get("report_findings", []),
+                    "raw": response,
+                    "parsed_json": parsed,
+                }
+            except Exception:
+                pass  # Fall back to JSON parsing
+
+        # Original JSON parsing logic
         json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
         if json_match:
             json_str = json_match.group(1)
         else:
-            # Try to find raw JSON
             json_match = re.search(r'\{[^{}]*"fracture_mentioned"[^{}]*\}', response, re.DOTALL)
             if json_match:
                 json_str = json_match.group(0)
             else:
                 json_str = response
 
-        # Parse JSON
         try:
             parsed = json.loads(json_str)
             return {
@@ -119,7 +203,6 @@ class RadiologyPromptStrategy(BasePromptStrategy):
                 "parsed_json": parsed,
             }
         except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
             return {
                 "answer": response.strip(),
                 "reasoning": response,
