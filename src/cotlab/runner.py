@@ -36,9 +36,10 @@ def main():
     model_name = args.model
     json_output = args.json
 
-    # Setup base output directory with model name
+    # Setup base output directory with model name and format
     timestamp = datetime.now().strftime("%Y-%m-%d/%H-%M-%S")
-    base_output_dir = Path(f"outputs/{timestamp}_{model_name}_{backend_name}")
+    format_suffix = "json" if json_output else "plain"
+    base_output_dir = Path(f"outputs/{timestamp}_{model_name}_{backend_name}_{format_suffix}")
     base_output_dir.mkdir(parents=True, exist_ok=True)
     print(f"Output directory: {base_output_dir}")
 
