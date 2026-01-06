@@ -7,6 +7,7 @@ from .length_matched_strategies import (
     DirectAnswerMatchedStrategy,
 )
 from .neurology import NeurologyPromptStrategy
+from .oncology import OncologyPromptStrategy
 from .radiology import RadiologyPromptStrategy
 from .strategies import (
     ArroganceStrategy,
@@ -25,6 +26,7 @@ __all__ = [
     "NoInstructionStrategy",
     "CardiologyPromptStrategy",
     "NeurologyPromptStrategy",
+    "OncologyPromptStrategy",
     "RadiologyPromptStrategy",
     "create_prompt_strategy",
     "ContrarianMatchedStrategy",

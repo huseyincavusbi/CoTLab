@@ -236,6 +236,31 @@ class NeurologyDataset(JSONDataset):
         return ["neurology"]
 
 
+@Registry.register_dataset("oncology")
+class OncologyDataset(JSONDataset):
+    """Oncology reports dataset for malignancy detection."""
+
+    def __init__(
+        self,
+        name: str = "oncology",
+        path: str = "data/oncology.json",
+        **kwargs,
+    ):
+        super().__init__(name, path, **kwargs)
+
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        return Sample(
+            idx=idx,
+            text=item["input"]["report"],
+            label=item["output"]["malignancy"],
+            metadata=item.get("metadata", {}),
+        )
+
+    def get_compatible_prompts(self) -> list[str]:
+        """Oncology dataset only works with oncology prompt."""
+        return ["oncology"]
+
+
 @Registry.register_dataset("pediatrics")
 class PediatricsDataset(JSONDataset):
     """Pediatrics clinical scenarios dataset."""

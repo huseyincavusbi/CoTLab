@@ -1,0 +1,5 @@
+# Oncology malignancy detection prompt
+_target_: cotlab.prompts.OncologyPromptStrategy
+
+name: oncology
+output_format: plain

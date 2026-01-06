@@ -1,0 +1,1202 @@
+[
+  {
+    "id": "onc_001",
+    "input": {
+      "report": "02/01/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Resolved febrile illness. Blood counts normalized. No organomegaly. Clinical improvement noted. No malignancy identified. Reassurance provided.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 02/01/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_002",
+    "input": {
+      "report": "26/10/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Brain Tumor - Medulloblastoma.\n\nFrom clinical notes: Brain Tumor - Medulloblastoma. Paediatric oncology assessment.\n\nFindings: posterior fossa mass with enhancement and hydrocephalus. Restricted diffusion. High-grade medulloblastoma on histology. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 26/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_003",
+    "input": {
+      "report": "03/07/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Follow-up post-treatment. No previous oncology history.\n\nFindings: Reactive lymphadenopathy secondary to viral infection. Node size decreasing on follow-up. No atypical features. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 03/07/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_004",
+    "input": {
+      "report": "27/02/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Non-Hodgkin Lymphoma.\n\nFrom clinical notes: Non-Hodgkin Lymphoma. Paediatric oncology assessment.\n\nFindings: abdominal lymphadenopathy with mesenteric and retroperitoneal nodes. Burkitt lymphoma confirmed on biopsy. High LDH levels. Recommend MDT discussion and treatment planning.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 27/02/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_005",
+    "input": {
+      "report": "04/05/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Acute Lymphoblastic Leukemia.\n\nFrom clinical notes: Acute Lymphoblastic Leukemia. Paediatric oncology assessment.\n\nFindings: bone marrow infiltration with lymphoblasts comprising 85% of nucleated cells. Immunophenotyping consistent with B-cell ALL. CNS involvement negative. Recommend MDT discussion and treatment planning.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 04/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_006",
+    "input": {
+      "report": "17/09/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Reactive lymphadenopathy secondary to viral infection. Node size decreasing on follow-up. No atypical features. No malignancy identified. Reassurance provided.\n\nDr James Chen, Consultant Paediatric Oncologist 17/09/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_007",
+    "input": {
+      "report": "11/07/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Lymphadenopathy. Suspected Neuroblastoma.\n\nFrom clinical notes: Neuroblastoma. Paediatric oncology assessment.\n\nFindings: large heterogeneous suprarenal mass with calcifications. MIBG avidity present. Elevated urinary catecholamines. Stage III disease. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 11/07/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_008",
+    "input": {
+      "report": "21/03/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Normal chest radiograph. Clear lung fields. No mediastinal mass. Heart size normal. No malignancy identified. Reassurance provided.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 21/03/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_009",
+    "input": {
+      "report": "08/02/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Normal CBC with age-appropriate values. No blast cells. Platelets adequate. Hemoglobin within normal limits. No malignancy identified. Reassurance provided.\n\nDr James Chen, Consultant Paediatric Oncologist 08/02/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_010",
+    "input": {
+      "report": "25/04/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Wilms Tumor.\n\nFrom clinical notes: Wilms Tumor. Paediatric oncology assessment.\n\nFindings: large heterogeneous left renal mass with pseudocapsule. No vascular invasion. Favorable histology on biopsy. Stage II. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 25/04/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_011",
+    "input": {
+      "report": "26/12/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Hodgkin Lymphoma.\n\nFrom clinical notes: Hodgkin Lymphoma. Paediatric oncology assessment.\n\nFindings: mediastinal lymphadenopathy with bulky anterior mediastinal mass. PET-CT showing FDG-avid nodes. Classical Hodgkin, nodular sclerosing type. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 26/12/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_012",
+    "input": {
+      "report": "18/09/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Neuroblastoma.\n\nFrom clinical notes: Neuroblastoma. Paediatric oncology assessment.\n\nFindings: large heterogeneous suprarenal mass with calcifications. MIBG avidity present. Elevated urinary catecholamines. Stage III disease. Recommend MDT discussion and treatment planning.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 18/09/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_013",
+    "input": {
+      "report": "15/12/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Hepatoblastoma.\n\nFrom clinical notes: Hepatoblastoma. Paediatric oncology assessment.\n\nFindings: large heterogeneous hepatic mass with elevated AFP. Fetal histology subtype. PRETEXT stage II. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 15/12/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_014",
+    "input": {
+      "report": "26/02/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Langerhans Cell Histiocytosis.\n\nFrom clinical notes: Langerhans Cell Histiocytosis. Paediatric oncology assessment.\n\nFindings: multiple lytic skull lesions with soft tissue component. CD1a and Langerin positive. Multisystem disease. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 26/02/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_015",
+    "input": {
+      "report": "08/09/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Post-viral lymphocytosis. Atypical lymphocytes resolving. Monospot positive. EBV serology confirms. No malignancy identified. Reassurance provided.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 08/09/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_016",
+    "input": {
+      "report": "14/07/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Bone pain. Suspected Acute Myeloid Leukemia.\n\nFrom clinical notes: Acute Myeloid Leukemia. Paediatric oncology assessment.\n\nFindings: myeloblasts accounting for 70% of marrow cellularity. Cytogenetic analysis reveals t(8;21) translocation. Favorable risk category. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 14/07/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_017",
+    "input": {
+      "report": "07/10/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Unexplained fever and weight loss. Suspected Rhabdomyosarcoma.\n\nFrom clinical notes: Rhabdomyosarcoma. Paediatric oncology assessment.\n\nFindings: parameningeal mass with intracranial extension. Embryonal rhabdomyosarcoma on biopsy. PAX-FOXO1 fusion negative. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 07/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_018",
+    "input": {
+      "report": "06/04/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Normal chest radiograph. Clear lung fields. No mediastinal mass. Heart size normal. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 06/04/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_019",
+    "input": {
+      "report": "23/05/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Bone pain. Suspected Brain Tumor - Medulloblastoma.\n\nFrom clinical notes: Brain Tumor - Medulloblastoma. Paediatric oncology assessment.\n\nFindings: posterior fossa mass with enhancement and hydrocephalus. Restricted diffusion. High-grade medulloblastoma on histology. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 23/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_020",
+    "input": {
+      "report": "09/07/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Abnormal imaging. Suspected Neuroblastoma.\n\nFrom clinical notes: Neuroblastoma. Paediatric oncology assessment.\n\nFindings: large heterogeneous suprarenal mass with calcifications. MIBG avidity present. Elevated urinary catecholamines. Stage III disease. Recommend MDT discussion and treatment planning.\n\nDr James Chen, Consultant Paediatric Oncologist 09/07/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_021",
+    "input": {
+      "report": "18/08/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Wilms Tumor.\n\nFrom clinical notes: Wilms Tumor. Paediatric oncology assessment.\n\nFindings: large heterogeneous left renal mass with pseudocapsule. No vascular invasion. Favorable histology on biopsy. Stage II. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 18/08/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_022",
+    "input": {
+      "report": "13/03/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Normal brain MRI for age. No mass lesion. No abnormal enhancement. Headaches attributed to migraine. No malignancy identified. Reassurance provided.\n\nDr James Chen, Consultant Paediatric Oncologist 13/03/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_023",
+    "input": {
+      "report": "18/10/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Wilms Tumor.\n\nFrom clinical notes: Wilms Tumor. Paediatric oncology assessment.\n\nFindings: large heterogeneous left renal mass with pseudocapsule. No vascular invasion. Favorable histology on biopsy. Stage II. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 18/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_024",
+    "input": {
+      "report": "02/05/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Normal brain MRI for age. No mass lesion. No abnormal enhancement. Headaches attributed to migraine. No malignancy identified. Reassurance provided.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 02/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_025",
+    "input": {
+      "report": "16/05/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Normal brain MRI for age. No mass lesion. No abnormal enhancement. Headaches attributed to migraine. No malignancy identified. Reassurance provided.\n\nDr James Chen, Consultant Paediatric Oncologist 16/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_026",
+    "input": {
+      "report": "16/05/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Unexplained fever and weight loss. Suspected Ewing Sarcoma.\n\nFrom clinical notes: Ewing Sarcoma. Paediatric oncology assessment.\n\nFindings: permeative bone destruction in left femoral diaphysis with large soft tissue mass. Onion-skin periosteal reaction. EWSR1 fusion positive. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 16/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_027",
+    "input": {
+      "report": "13/08/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Non-Hodgkin Lymphoma.\n\nFrom clinical notes: Non-Hodgkin Lymphoma. Paediatric oncology assessment.\n\nFindings: abdominal lymphadenopathy with mesenteric and retroperitoneal nodes. Burkitt lymphoma confirmed on biopsy. High LDH levels. Recommend MDT discussion and treatment planning.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 13/08/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_028",
+    "input": {
+      "report": "25/06/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Healing fracture - normal process. No pathological features. Bone density normal. Trauma history consistent. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 25/06/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_029",
+    "input": {
+      "report": "01/07/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Benign bone cyst - resolved. No aggressive features. Normal bone density. No recurrence on imaging. No malignancy identified. Reassurance provided.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 01/07/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_030",
+    "input": {
+      "report": "04/12/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Neuroblastoma.\n\nFrom clinical notes: Neuroblastoma. Paediatric oncology assessment.\n\nFindings: large heterogeneous suprarenal mass with calcifications. MIBG avidity present. Elevated urinary catecholamines. Stage III disease. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 04/12/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_031",
+    "input": {
+      "report": "15/07/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Lymphadenopathy. Suspected Brain Tumor - Medulloblastoma.\n\nFrom clinical notes: Brain Tumor - Medulloblastoma. Paediatric oncology assessment.\n\nFindings: posterior fossa mass with enhancement and hydrocephalus. Restricted diffusion. High-grade medulloblastoma on histology. Recommend MDT discussion and treatment planning.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 15/07/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_032",
+    "input": {
+      "report": "02/04/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Normal chest radiograph. Clear lung fields. No mediastinal mass. Heart size normal. No malignancy identified. Reassurance provided.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 02/04/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_033",
+    "input": {
+      "report": "04/10/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Germ Cell Tumor.\n\nFrom clinical notes: Germ Cell Tumor. Paediatric oncology assessment.\n\nFindings: sacrococcygeal mass with mixed solid and cystic components. Elevated AFP and beta-hCG. Yolk sac tumor elements present. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 04/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_034",
+    "input": {
+      "report": "24/11/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Hodgkin Lymphoma.\n\nFrom clinical notes: Hodgkin Lymphoma. Paediatric oncology assessment.\n\nFindings: mediastinal lymphadenopathy with bulky anterior mediastinal mass. PET-CT showing FDG-avid nodes. Classical Hodgkin, nodular sclerosing type. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 24/11/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_035",
+    "input": {
+      "report": "07/03/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Normal CBC with age-appropriate values. No blast cells. Platelets adequate. Hemoglobin within normal limits. No malignancy identified. Reassurance provided.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 07/03/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_036",
+    "input": {
+      "report": "04/10/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Benign soft tissue mass - lipoma confirmed. Well-circumscribed. No enhancement. No intervention required. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 04/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_037",
+    "input": {
+      "report": "04/01/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Normal chest radiograph. Clear lung fields. No mediastinal mass. Heart size normal. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 04/01/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_038",
+    "input": {
+      "report": "02/04/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Abnormal imaging. Suspected Osteosarcoma.\n\nFrom clinical notes: Osteosarcoma. Paediatric oncology assessment.\n\nFindings: destructive lesion in distal femur with soft tissue component. Sunburst periosteal reaction. Elevated alkaline phosphatase. Recommend MDT discussion and treatment planning.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 02/04/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_039",
+    "input": {
+      "report": "05/03/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Lymphadenopathy. Suspected Osteosarcoma.\n\nFrom clinical notes: Osteosarcoma. Paediatric oncology assessment.\n\nFindings: destructive lesion in distal femur with soft tissue component. Sunburst periosteal reaction. Elevated alkaline phosphatase. Recommend MDT discussion and treatment planning.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 05/03/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_040",
+    "input": {
+      "report": "01/11/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Post-viral lymphocytosis. Atypical lymphocytes resolving. Monospot positive. EBV serology confirms. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 01/11/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_041",
+    "input": {
+      "report": "26/04/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Wilms Tumor.\n\nFrom clinical notes: Wilms Tumor. Paediatric oncology assessment.\n\nFindings: large heterogeneous left renal mass with pseudocapsule. No vascular invasion. Favorable histology on biopsy. Stage II. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 26/04/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_042",
+    "input": {
+      "report": "18/11/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Lymphadenopathy. Suspected Hodgkin Lymphoma.\n\nFrom clinical notes: Hodgkin Lymphoma. Paediatric oncology assessment.\n\nFindings: mediastinal lymphadenopathy with bulky anterior mediastinal mass. PET-CT showing FDG-avid nodes. Classical Hodgkin, nodular sclerosing type. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 18/11/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_043",
+    "input": {
+      "report": "20/04/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Follow-up post-treatment. No previous oncology history.\n\nFindings: Post-viral lymphocytosis. Atypical lymphocytes resolving. Monospot positive. EBV serology confirms. No malignancy identified. Reassurance provided.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 20/04/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_044",
+    "input": {
+      "report": "20/01/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Follow-up post-treatment. No previous oncology history.\n\nFindings: Normal brain MRI for age. No mass lesion. No abnormal enhancement. Headaches attributed to migraine. No malignancy identified. Reassurance provided.\n\nDr James Chen, Consultant Paediatric Oncologist 20/01/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_045",
+    "input": {
+      "report": "22/11/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Abnormal imaging. Suspected Ewing Sarcoma.\n\nFrom clinical notes: Ewing Sarcoma. Paediatric oncology assessment.\n\nFindings: permeative bone destruction in left femoral diaphysis with large soft tissue mass. Onion-skin periosteal reaction. EWSR1 fusion positive. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 22/11/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_046",
+    "input": {
+      "report": "06/05/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Follow-up post-treatment. No previous oncology history.\n\nFindings: Normal brain MRI for age. No mass lesion. No abnormal enhancement. Headaches attributed to migraine. No malignancy identified. Reassurance provided.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 06/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_047",
+    "input": {
+      "report": "24/10/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Physiological splenomegaly for age. No focal lesions. Normal echo texture. Benign finding. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 24/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_048",
+    "input": {
+      "report": "01/02/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Reactive lymphadenopathy secondary to viral infection. Node size decreasing on follow-up. No atypical features. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 01/02/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_049",
+    "input": {
+      "report": "03/10/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Lymphadenopathy. Suspected Osteosarcoma.\n\nFrom clinical notes: Osteosarcoma. Paediatric oncology assessment.\n\nFindings: destructive lesion in distal femur with soft tissue component. Sunburst periosteal reaction. Elevated alkaline phosphatase. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 03/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_050",
+    "input": {
+      "report": "05/08/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Reactive lymphadenopathy secondary to viral infection. Node size decreasing on follow-up. No atypical features. No malignancy identified. Reassurance provided.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 05/08/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_051",
+    "input": {
+      "report": "02/05/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Normal chest radiograph. Clear lung fields. No mediastinal mass. Heart size normal. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 02/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_052",
+    "input": {
+      "report": "26/07/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Follow-up post-treatment. No previous oncology history.\n\nFindings: Benign soft tissue mass - lipoma confirmed. Well-circumscribed. No enhancement. No intervention required. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 26/07/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_053",
+    "input": {
+      "report": "25/03/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Bone pain. Suspected Wilms Tumor.\n\nFrom clinical notes: Wilms Tumor. Paediatric oncology assessment.\n\nFindings: large heterogeneous left renal mass with pseudocapsule. No vascular invasion. Favorable histology on biopsy. Stage II. Recommend MDT discussion and treatment planning.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 25/03/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_054",
+    "input": {
+      "report": "05/01/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Reactive lymphadenopathy secondary to viral infection. Node size decreasing on follow-up. No atypical features. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 05/01/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_055",
+    "input": {
+      "report": "23/03/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Bone pain. Suspected Hepatoblastoma.\n\nFrom clinical notes: Hepatoblastoma. Paediatric oncology assessment.\n\nFindings: large heterogeneous hepatic mass with elevated AFP. Fetal histology subtype. PRETEXT stage II. Recommend MDT discussion and treatment planning.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 23/03/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_056",
+    "input": {
+      "report": "31/08/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Normal chest radiograph. Clear lung fields. No mediastinal mass. Heart size normal. No malignancy identified. Reassurance provided.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 31/08/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_057",
+    "input": {
+      "report": "26/01/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Reactive lymphadenopathy secondary to viral infection. Node size decreasing on follow-up. No atypical features. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 26/01/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_058",
+    "input": {
+      "report": "24/11/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Germ Cell Tumor.\n\nFrom clinical notes: Germ Cell Tumor. Paediatric oncology assessment.\n\nFindings: sacrococcygeal mass with mixed solid and cystic components. Elevated AFP and beta-hCG. Yolk sac tumor elements present. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 24/11/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_059",
+    "input": {
+      "report": "01/01/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Unexplained fever and weight loss. Suspected Germ Cell Tumor.\n\nFrom clinical notes: Germ Cell Tumor. Paediatric oncology assessment.\n\nFindings: sacrococcygeal mass with mixed solid and cystic components. Elevated AFP and beta-hCG. Yolk sac tumor elements present. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 01/01/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_060",
+    "input": {
+      "report": "16/06/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Rhabdomyosarcoma.\n\nFrom clinical notes: Rhabdomyosarcoma. Paediatric oncology assessment.\n\nFindings: parameningeal mass with intracranial extension. Embryonal rhabdomyosarcoma on biopsy. PAX-FOXO1 fusion negative. Recommend MDT discussion and treatment planning.\n\nDr James Chen, Consultant Paediatric Oncologist 16/06/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_061",
+    "input": {
+      "report": "08/05/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Normal brain MRI for age. No mass lesion. No abnormal enhancement. Headaches attributed to migraine. No malignancy identified. Reassurance provided.\n\nDr James Chen, Consultant Paediatric Oncologist 08/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_062",
+    "input": {
+      "report": "09/07/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Follow-up post-treatment. No previous oncology history.\n\nFindings: Post-viral lymphocytosis. Atypical lymphocytes resolving. Monospot positive. EBV serology confirms. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 09/07/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_063",
+    "input": {
+      "report": "08/05/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Reactive lymphadenopathy secondary to viral infection. Node size decreasing on follow-up. No atypical features. No malignancy identified. Reassurance provided.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 08/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_064",
+    "input": {
+      "report": "04/12/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Resolved febrile illness. Blood counts normalized. No organomegaly. Clinical improvement noted. No malignancy identified. Reassurance provided.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 04/12/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_065",
+    "input": {
+      "report": "29/09/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Reactive lymphadenopathy secondary to viral infection. Node size decreasing on follow-up. No atypical features. No malignancy identified. Reassurance provided.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 29/09/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_066",
+    "input": {
+      "report": "09/06/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Abnormal imaging. Suspected Retinoblastoma.\n\nFrom clinical notes: Retinoblastoma. Paediatric oncology assessment.\n\nFindings: intraocular mass with calcifications. Bilateral disease. Family history positive. RB1 germline mutation detected. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 09/06/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_067",
+    "input": {
+      "report": "16/05/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Abnormal imaging. Suspected Neuroblastoma.\n\nFrom clinical notes: Neuroblastoma. Paediatric oncology assessment.\n\nFindings: large heterogeneous suprarenal mass with calcifications. MIBG avidity present. Elevated urinary catecholamines. Stage III disease. Recommend MDT discussion and treatment planning.\n\nDr James Chen, Consultant Paediatric Oncologist 16/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_068",
+    "input": {
+      "report": "21/03/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Follow-up post-treatment. No previous oncology history.\n\nFindings: Normal CBC with age-appropriate values. No blast cells. Platelets adequate. Hemoglobin within normal limits. No malignancy identified. Reassurance provided.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 21/03/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_069",
+    "input": {
+      "report": "27/02/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Bone pain. Suspected Rhabdomyosarcoma.\n\nFrom clinical notes: Rhabdomyosarcoma. Paediatric oncology assessment.\n\nFindings: parameningeal mass with intracranial extension. Embryonal rhabdomyosarcoma on biopsy. PAX-FOXO1 fusion negative. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 27/02/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_070",
+    "input": {
+      "report": "16/10/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Normal chest radiograph. Clear lung fields. No mediastinal mass. Heart size normal. No malignancy identified. Reassurance provided.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 16/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_071",
+    "input": {
+      "report": "29/11/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Unexplained fever and weight loss. Suspected Retinoblastoma.\n\nFrom clinical notes: Retinoblastoma. Paediatric oncology assessment.\n\nFindings: intraocular mass with calcifications. Bilateral disease. Family history positive. RB1 germline mutation detected. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 29/11/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_072",
+    "input": {
+      "report": "11/10/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Abnormal imaging. Suspected Hodgkin Lymphoma.\n\nFrom clinical notes: Hodgkin Lymphoma. Paediatric oncology assessment.\n\nFindings: mediastinal lymphadenopathy with bulky anterior mediastinal mass. PET-CT showing FDG-avid nodes. Classical Hodgkin, nodular sclerosing type. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 11/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_073",
+    "input": {
+      "report": "13/09/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Unexplained fever and weight loss. Suspected Rhabdomyosarcoma.\n\nFrom clinical notes: Rhabdomyosarcoma. Paediatric oncology assessment.\n\nFindings: parameningeal mass with intracranial extension. Embryonal rhabdomyosarcoma on biopsy. PAX-FOXO1 fusion negative. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 13/09/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_074",
+    "input": {
+      "report": "03/12/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Physiological splenomegaly for age. No focal lesions. Normal echo texture. Benign finding. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 03/12/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_075",
+    "input": {
+      "report": "11/10/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Ewing Sarcoma.\n\nFrom clinical notes: Ewing Sarcoma. Paediatric oncology assessment.\n\nFindings: permeative bone destruction in left femoral diaphysis with large soft tissue mass. Onion-skin periosteal reaction. EWSR1 fusion positive. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 11/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_076",
+    "input": {
+      "report": "28/12/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Reactive lymphadenopathy secondary to viral infection. Node size decreasing on follow-up. No atypical features. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 28/12/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_077",
+    "input": {
+      "report": "02/05/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Normal CBC with age-appropriate values. No blast cells. Platelets adequate. Hemoglobin within normal limits. No malignancy identified. Reassurance provided.\n\nDr James Chen, Consultant Paediatric Oncologist 02/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_078",
+    "input": {
+      "report": "06/10/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Healing fracture - normal process. No pathological features. Bone density normal. Trauma history consistent. No malignancy identified. Reassurance provided.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 06/10/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_079",
+    "input": {
+      "report": "27/02/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Acute Lymphoblastic Leukemia.\n\nFrom clinical notes: Acute Lymphoblastic Leukemia. Paediatric oncology assessment.\n\nFindings: bone marrow infiltration with lymphoblasts comprising 85% of nucleated cells. Immunophenotyping consistent with B-cell ALL. CNS involvement negative. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 27/02/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_080",
+    "input": {
+      "report": "17/05/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Post-viral lymphocytosis. Atypical lymphocytes resolving. Monospot positive. EBV serology confirms. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 17/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_081",
+    "input": {
+      "report": "18/02/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Physiological splenomegaly for age. No focal lesions. Normal echo texture. Benign finding. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 18/02/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_082",
+    "input": {
+      "report": "11/06/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Benign soft tissue mass - lipoma confirmed. Well-circumscribed. No enhancement. No intervention required. No malignancy identified. Reassurance provided.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 11/06/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_083",
+    "input": {
+      "report": "27/12/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Abnormal imaging. Suspected Wilms Tumor.\n\nFrom clinical notes: Wilms Tumor. Paediatric oncology assessment.\n\nFindings: large heterogeneous left renal mass with pseudocapsule. No vascular invasion. Favorable histology on biopsy. Stage II. Recommend MDT discussion and treatment planning.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 27/12/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_084",
+    "input": {
+      "report": "05/11/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Osteosarcoma.\n\nFrom clinical notes: Osteosarcoma. Paediatric oncology assessment.\n\nFindings: destructive lesion in distal femur with soft tissue component. Sunburst periosteal reaction. Elevated alkaline phosphatase. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 05/11/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_085",
+    "input": {
+      "report": "23/11/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Healing fracture - normal process. No pathological features. Bone density normal. Trauma history consistent. No malignancy identified. Reassurance provided.\n\nDr James Chen, Consultant Paediatric Oncologist 23/11/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_086",
+    "input": {
+      "report": "14/05/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Normal chest radiograph. Clear lung fields. No mediastinal mass. Heart size normal. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 14/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_087",
+    "input": {
+      "report": "11/06/2025, 00:00, PET-CT\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Hepatoblastoma.\n\nFrom clinical notes: Hepatoblastoma. Paediatric oncology assessment.\n\nFindings: large heterogeneous hepatic mass with elevated AFP. Fetal histology subtype. PRETEXT stage II. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 11/06/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_088",
+    "input": {
+      "report": "16/12/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Abnormal imaging. Suspected Acute Myeloid Leukemia.\n\nFrom clinical notes: Acute Myeloid Leukemia. Paediatric oncology assessment.\n\nFindings: myeloblasts accounting for 70% of marrow cellularity. Cytogenetic analysis reveals t(8;21) translocation. Favorable risk category. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 16/12/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_089",
+    "input": {
+      "report": "29/05/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Wilms Tumor.\n\nFrom clinical notes: Wilms Tumor. Paediatric oncology assessment.\n\nFindings: large heterogeneous left renal mass with pseudocapsule. No vascular invasion. Favorable histology on biopsy. Stage II. Recommend MDT discussion and treatment planning.\n\nDr James Chen, Consultant Paediatric Oncologist 29/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_090",
+    "input": {
+      "report": "16/01/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Acute Lymphoblastic Leukemia.\n\nFrom clinical notes: Acute Lymphoblastic Leukemia. Paediatric oncology assessment.\n\nFindings: bone marrow infiltration with lymphoblasts comprising 85% of nucleated cells. Immunophenotyping consistent with B-cell ALL. CNS involvement negative. Recommend MDT discussion and treatment planning.\n\nDr James Chen, Consultant Paediatric Oncologist 16/01/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_091",
+    "input": {
+      "report": "06/09/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Retinoblastoma.\n\nFrom clinical notes: Retinoblastoma. Paediatric oncology assessment.\n\nFindings: intraocular mass with calcifications. Bilateral disease. Family history positive. RB1 germline mutation detected. Recommend MDT discussion and treatment planning.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 06/09/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_092",
+    "input": {
+      "report": "30/01/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Benign presentation. No previous oncology history.\n\nFindings: Healing fracture - normal process. No pathological features. Bone density normal. Trauma history consistent. No malignancy identified. Reassurance provided.\n\nDr Rachel Patel, Consultant Paediatric Oncologist 30/01/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_093",
+    "input": {
+      "report": "22/05/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Routine surveillance. No previous oncology history.\n\nFindings: Benign bone cyst - resolved. No aggressive features. Normal bone density. No recurrence on imaging. No malignancy identified. Reassurance provided.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 22/05/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_094",
+    "input": {
+      "report": "04/02/2025, 00:00, BONE MARROW BIOPSY\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Healing fracture - normal process. No pathological features. Bone density normal. Trauma history consistent. No malignancy identified. Reassurance provided.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 04/02/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_095",
+    "input": {
+      "report": "05/08/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Rule out malignancy. No previous oncology history.\n\nFindings: Normal brain MRI for age. No mass lesion. No abnormal enhancement. Headaches attributed to migraine. No malignancy identified. Reassurance provided.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 05/08/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_096",
+    "input": {
+      "report": "10/03/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Screening. No previous oncology history.\n\nFindings: Healing fracture - normal process. No pathological features. Bone density normal. Trauma history consistent. No malignancy identified. Reassurance provided.\n\nDr Emma Wilson, Consultant Paediatric Oncologist 10/03/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_097",
+    "input": {
+      "report": "28/09/2025, 00:00, ULTRASOUND\n\nCase History:\n\nReason for Request: Palpable mass. Suspected Hodgkin Lymphoma.\n\nFrom clinical notes: Hodgkin Lymphoma. Paediatric oncology assessment.\n\nFindings: mediastinal lymphadenopathy with bulky anterior mediastinal mass. PET-CT showing FDG-avid nodes. Classical Hodgkin, nodular sclerosing type. Recommend MDT discussion and treatment planning.\n\nDr Michael Taylor, Consultant Paediatric Oncologist 28/09/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_098",
+    "input": {
+      "report": "02/01/2025, 00:00, X-RAY\n\nCase History:\n\nReason for Request: Bone pain. Suspected Brain Tumor - Glioma.\n\nFrom clinical notes: Brain Tumor - Glioma. Paediatric oncology assessment.\n\nFindings: left temporal lobe infiltrative mass with mass effect. FLAIR hyperintensity. Biopsy confirms diffuse astrocytoma WHO grade II. Recommend MDT discussion and treatment planning.\n\nDr Sophie Richardson, Consultant Paediatric Oncologist 02/01/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_099",
+    "input": {
+      "report": "29/06/2025, 00:00, MRI BRAIN\n\nCase History:\n\nReason for Request: Follow-up post-treatment. No previous oncology history.\n\nFindings: Normal CBC with age-appropriate values. No blast cells. Platelets adequate. Hemoglobin within normal limits. No malignancy identified. Reassurance provided.\n\nDr James Chen, Consultant Paediatric Oncologist 29/06/2025, 00:00"
+    },
+    "output": {
+      "malignancy": false
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  },
+  {
+    "id": "onc_100",
+    "input": {
+      "report": "21/03/2025, 00:00, CT CHEST/ABDOMEN\n\nCase History:\n\nReason for Request: Pancytopenia. Suspected Hodgkin Lymphoma.\n\nFrom clinical notes: Hodgkin Lymphoma. Paediatric oncology assessment.\n\nFindings: mediastinal lymphadenopathy with bulky anterior mediastinal mass. PET-CT showing FDG-avid nodes. Classical Hodgkin, nodular sclerosing type. Recommend MDT discussion and treatment planning.\n\nDr Sarah Mitchell, Consultant Paediatric Oncologist 21/03/2025, 00:00"
+    },
+    "output": {
+      "malignancy": true
+    },
+    "metadata": {
+      "source": "synthetic_generated"
+    }
+  }
+]

@@ -1,0 +1,5 @@
+# Oncology dataset - paediatric oncology reports
+_target_: cotlab.datasets.OncologyDataset
+
+name: oncology
+path: data/oncology.json
