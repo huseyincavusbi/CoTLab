@@ -104,8 +104,8 @@ jobs:
               LogitLensExperiment,
               MultiHeadCoTExperiment,
           )
-          from cotlab.prompts import ChainOfThoughtStrategy, RadiologyPromptStrategy
-          from cotlab.datasets import RadiologyDataset, SyntheticMedicalDataset
+          from cotlab.prompts import ChainOfThoughtStrategy, RadiologyPromptStrategy, CardiologyPromptStrategy, NeurologyPromptStrategy, OncologyPromptStrategy
+          from cotlab.datasets import RadiologyDataset, SyntheticMedicalDataset, CardiologyDataset, NeurologyDataset, OncologyDataset
           from cotlab.analysis import CoTParser, FaithfulnessMetrics
           from cotlab.patching import ActivationPatcher
 
@@ -135,15 +135,13 @@ jobs:
         shell: bash -el {0}
         run: |
           python -c "
-          from cotlab.datasets import SyntheticMedicalDataset, RadiologyDataset
+          from cotlab.datasets import SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset
 
-          synthetic = SyntheticMedicalDataset()
-          print(f'Synthetic dataset: {len(synthetic)} samples')
+          for Dataset in [SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset]:
+              dataset = Dataset()
+              print(f'{Dataset.__name__}: {len(dataset)} samples')
 
-          radiology = RadiologyDataset()
-          print(f'Radiology dataset: {len(radiology)} samples')
-
-          print('All datasets load correctly!')
+          print('All 5 datasets load correctly!')
           "
 
       - name: Test CoT parser
@@ -163,6 +161,24 @@ jobs:
           print(f'Steps: {result[\"num_steps\"]}')
           print(f'Conclusion: {result[\"conclusion\"]}')
           print('CoT parser works!')
+          "
+
+      - name: Test specialty prompts (contrarian + multi-format)
+        shell: bash -el {0}
+        run: |
+          python -c "
+          from cotlab.prompts import RadiologyPromptStrategy
+
+          # Test contrarian mode
+          standard = RadiologyPromptStrategy(contrarian=False)
+          contrarian = RadiologyPromptStrategy(contrarian=True)
+          assert standard.build_prompt({'report': 'Test'}) != contrarian.build_prompt({'report': 'Test'})
+          print('Contrarian mode: OK')
+
+          # Test multi-format
+          for fmt in ['json', 'toml', 'yaml', 'xml']:
+              RadiologyPromptStrategy(output_format=fmt).build_prompt({'report': 'Test'})
+          print('Multi-format: OK')
           "
 
   notebook-test:
