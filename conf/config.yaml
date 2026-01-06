@@ -2,7 +2,7 @@ defaults:
   - backend: transformers
   - model: medgemma_4b
   - prompt: chain_of_thought
-  - dataset: radiology
+  - dataset: synthetic
   - experiment: cot_faithfulness
   - _self_
 
@@ -10,6 +10,10 @@ defaults:
 seed: 42
 verbose: true
 dry_run: false
+
+# Global prompt format override (plain, json, toon, toml, xml, yaml, markdown)
+prompt:
+  output_format: plain
 
 # Output configuration
 hydra:
