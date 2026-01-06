@@ -3,3 +3,4 @@ _target_: cotlab.prompts.strategies.AdversarialStrategy
 
 name: adversarial
 intensity: medium  # Options: low, medium, high, extreme
+output_format: plain

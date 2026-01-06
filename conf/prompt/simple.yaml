@@ -4,3 +4,4 @@ _target_: cotlab.prompts.SimplePromptStrategy
 name: simple
 system_role: null
 include_instructions: false
+output_format: plain

@@ -3,3 +3,4 @@ _target_: cotlab.prompts.strategies.SycophantStrategy
 
 name: sycophantic
 suggested_diagnosis: anxiety  # The wrong diagnosis to suggest
+output_format: plain

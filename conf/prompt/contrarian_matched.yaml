@@ -2,3 +2,4 @@
 _target_: cotlab.prompts.length_matched_strategies.ContrarianMatchedStrategy
 
 name: contrarian_matched
+output_format: plain

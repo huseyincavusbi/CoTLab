@@ -2,3 +2,4 @@
 _target_: cotlab.prompts.RadiologyPromptStrategy
 
 name: radiology
+output_format: plain

@@ -3,3 +3,4 @@ _target_: cotlab.prompts.strategies.FewShotStrategy
 
 name: few_shot
 num_examples: 3
+output_format: plain

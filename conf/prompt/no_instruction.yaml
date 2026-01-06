@@ -2,3 +2,4 @@
 _target_: cotlab.prompts.strategies.NoInstructionStrategy
 
 name: no_instruction
+output_format: plain

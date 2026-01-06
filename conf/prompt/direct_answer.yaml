@@ -7,3 +7,4 @@ system_role: |
   Do not explain or show your reasoning.
 force_short: true
 max_answer_tokens: 50
+output_format: plain

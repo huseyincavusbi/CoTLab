@@ -2,3 +2,4 @@
 _target_: cotlab.prompts.strategies.SocraticStrategy
 
 name: socratic
+output_format: plain

@@ -3,3 +3,4 @@ _target_: cotlab.prompts.strategies.ExpertPersonaStrategy
 
 name: expert_persona
 persona: cardiologist  # Options: cardiologist, psychiatrist, emergency, pediatrician, general
+output_format: plain

@@ -2,3 +2,4 @@
 _target_: cotlab.prompts.length_matched_strategies.ChainOfThoughtMatchedStrategy
 
 name: cot_matched
+output_format: plain

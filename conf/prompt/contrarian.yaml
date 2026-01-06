@@ -2,3 +2,4 @@
 _target_: cotlab.prompts.strategies.ContrarianStrategy
 
 name: contrarian
+output_format: plain
