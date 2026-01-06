@@ -211,6 +211,31 @@ class CardiologyDataset(JSONDataset):
         return ["cardiology"]
 
 
+@Registry.register_dataset("neurology")
+class NeurologyDataset(JSONDataset):
+    """Neurology reports dataset for neurological abnormality detection."""
+
+    def __init__(
+        self,
+        name: str = "neurology",
+        path: str = "data/neurology.json",
+        **kwargs,
+    ):
+        super().__init__(name, path, **kwargs)
+
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        return Sample(
+            idx=idx,
+            text=item["input"]["report"],
+            label=item["output"]["neurological_abnormality"],
+            metadata=item.get("metadata", {}),
+        )
+
+    def get_compatible_prompts(self) -> list[str]:
+        """Neurology dataset only works with neurology prompt."""
+        return ["neurology"]
+
+
 @Registry.register_dataset("pediatrics")
 class PediatricsDataset(JSONDataset):
     """Pediatrics clinical scenarios dataset."""

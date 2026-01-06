@@ -1,0 +1,5 @@
+# Neurology dataset - paediatric neuroimaging reports
+_target_: cotlab.datasets.NeurologyDataset
+
+name: neurology
+path: data/neurology.json

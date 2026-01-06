@@ -1,0 +1,5 @@
+# Neurology abnormality detection prompt
+_target_: cotlab.prompts.NeurologyPromptStrategy
+
+name: neurology
+output_format: plain
