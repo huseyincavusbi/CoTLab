@@ -2,6 +2,7 @@
 
 from .loaders import (
     BaseDataset,
+    CardiologyDataset,
     PatchingPairsDataset,
     PediatricsDataset,
     ProbingDiagnosisDataset,
@@ -13,6 +14,7 @@ from .loaders import (
 __all__ = [
     "Sample",
     "BaseDataset",
+    "CardiologyDataset",
     "RadiologyDataset",
     "PediatricsDataset",
     "SyntheticMedicalDataset",

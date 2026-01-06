@@ -1,0 +1,5 @@
+# Cardiology CHD detection prompt
+_target_: cotlab.prompts.CardiologyPromptStrategy
+
+name: cardiology
+output_format: plain

@@ -181,6 +181,36 @@ class RadiologyDataset(JSONDataset):
         return ["radiology"]
 
 
+@Registry.register_dataset("cardiology")
+class CardiologyDataset(JSONDataset):
+    """Cardiology reports dataset for congenital heart defect detection."""
+
+    def __init__(
+        self,
+        name: str = "cardiology",
+        path: str = "data/cardiology.json",
+        **kwargs,
+    ):
+        super().__init__(name, path, **kwargs)
+
+    def _parse_item(self, idx: int, item: Dict[str, Any]) -> Sample:
+        return Sample(
+            idx=idx,
+            text=item["input"]["report"],
+            label=item["output"]["congenital_heart_defect"],
+            metadata=item.get("metadata", {}),
+        )
+
+    def get_compatible_prompts(self) -> list[str]:
+        """
+        Cardiology dataset only works with cardiology prompt.
+
+        This dataset is for congenital heart defect detection and should
+        NOT be used with general medical QA prompts.
+        """
+        return ["cardiology"]
+
+
 @Registry.register_dataset("pediatrics")
 class PediatricsDataset(JSONDataset):
     """Pediatrics clinical scenarios dataset."""

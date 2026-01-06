@@ -1,0 +1,5 @@
+# Cardiology dataset - paediatric cardiac imaging reports
+_target_: cotlab.datasets.CardiologyDataset
+
+name: cardiology
+path: data/cardiology.json
