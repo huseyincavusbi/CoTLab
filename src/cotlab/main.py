@@ -9,6 +9,7 @@ import torch
 from omegaconf import DictConfig, OmegaConf
 
 from .core import create_component
+from .experiment import ExperimentDocumenter
 from .logging import ExperimentLogger
 
 
@@ -48,6 +49,11 @@ def main(cfg: DictConfig) -> None:
     logger = ExperimentLogger(str(output_dir))
     logger.log_config(cfg)
 
+    # Initialize experiment documenter and create initial EXPERIMENT.md
+    documenter = ExperimentDocumenter(cfg, output_dir)
+    doc_path = documenter.save()
+    logger.info(f"Created experiment documentation: {doc_path}")
+
     if cfg.dry_run:
         print("Dry run - exiting without running experiment")
         return
@@ -74,6 +80,11 @@ def main(cfg: DictConfig) -> None:
     print("=" * 60)
 
     try:
+        # Track experiment timing
+        import time
+
+        start_time = time.time()
+
         # num_samples is optional for some experiments
         num_samples = OmegaConf.select(cfg, "experiment.num_samples", default=None)
         result = experiment.run(
@@ -84,6 +95,9 @@ def main(cfg: DictConfig) -> None:
             **(dict(num_samples=num_samples) if num_samples is not None else {}),
         )
 
+        # Calculate duration
+        duration = time.time() - start_time
+
         # Save results
         results_path = logger.save_results(result)
         print(f"\nResults saved to: {results_path}")
@@ -92,6 +106,12 @@ def main(cfg: DictConfig) -> None:
         print("\nMetrics:")
         for name, value in result.metrics.items():
             print(f"  {name}: {value}")
+
+        # Update EXPERIMENT.md with results
+        results_dict = {**result.metrics, "total_samples": len(result.predictions)}
+        updated_doc = documenter.update_with_results(results_dict, duration)
+        documenter.save(updated_doc)
+        print(f"\nExperiment documentation updated: {doc_path}")
 
     finally:
         # Cleanup
