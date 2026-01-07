@@ -117,11 +117,13 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         name: str = "radiology",
         system_role: Optional[str] = None,
         contrarian: bool = False,
+        few_shot: bool = True,
         output_format: str = "json",
         **kwargs,
     ):
         self._name = name
         self.contrarian = contrarian
+        self.few_shot = few_shot
         self.output_format = output_format
         # Choose system role based on contrarian mode
         if system_role:
@@ -138,6 +140,11 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
         # Choose template based on contrarian mode
         template = PROMPT_TEMPLATE_CONTRARIAN if self.contrarian else PROMPT_TEMPLATE
+
+        # Remove examples if few_shot=False
+        if not self.few_shot:
+            template = self._remove_few_shot_examples(template)
+
         prompt = template.format(report=report)
 
         # Add format instruction if not using JSON templates
@@ -145,6 +152,21 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
             prompt += "\n\n" + self._add_format_instruction()
 
         return prompt
+
+    def _remove_few_shot_examples(self, template: str) -> str:
+        """Remove few-shot examples from template for ablation studies."""
+        import re
+
+        # Remove everything from "Example 1:" to just before "Radiology report:" or similar
+        # Match: Example 1: ... Example 2: ... up until the report section
+        pattern = r"Example \d+:.*?(?=(?:Radiology report:|Cardiac imaging report:|Neuroimaging report:|Oncology report:))"
+        cleaned = re.sub(pattern, "", template, flags=re.DOTALL)
+
+        # Clean up instruction text that references examples
+        cleaned = cleaned.replace("Follow the format of these two examples and give", "Give")
+        cleaned = cleaned.replace("follow the format of these two examples and give", "give")
+
+        return cleaned
 
     def parse_response(self, response: str) -> Dict[str, Any]:
         """

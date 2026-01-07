@@ -3,4 +3,5 @@ _target_: cotlab.prompts.OncologyPromptStrategy
 
 name: oncology
 contrarian: false  # Set to true for skeptical reasoning
+few_shot: true  # Set to false to remove examples for ablation studies
 output_format: json  # Options: json, toml, yaml, xml, toon, markdown, plain
