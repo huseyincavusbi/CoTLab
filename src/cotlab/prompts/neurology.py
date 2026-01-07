@@ -116,8 +116,8 @@ Provide your response in JSON format. Follow the format of these two examples an
 Example 1: Initial YES, Confirmed abnormality
 ```json
 {{
-    "abnormality_mentioned": true,
-    "significant_abnormality": true,
+    "neurological_abnormality_mentioned": true,
+    "neurological_abnormality": true,
     "evidence": {{
         "report_findings": ["large subdural hematoma", "midline shift"],
         "rationale": "Initial diagnosis: YES - significant abnormality suspected. Supporting evidence: Large subdural collection with mass effect strongly indicates significant pathology. Contradicting evidence: None identified. Final diagnosis: Confirmed significant neurological abnormality."
@@ -128,8 +128,8 @@ Example 1: Initial YES, Confirmed abnormality
 Example 2: Initial NO, Confirmed normal
 ```json
 {{
-    "abnormality_mentioned": false,
-    "significant_abnormality": false,
+    "neurological_abnormality_mentioned": false,
+    "neurological_abnormality": false,
     "evidence": {{
         "report_findings": ["normal brain parenchyma"],
         "rationale": "Initial diagnosis: NO - appears normal. Supporting evidence: No abnormal signal, mass, or structural abnormality. Contradicting evidence: None suggesting pathology. Final diagnosis: Confirmed no significant abnormality."
