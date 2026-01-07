@@ -4,4 +4,5 @@ _target_: cotlab.prompts.CardiologyPromptStrategy
 name: cardiology
 contrarian: false  # Set to true for skeptical reasoning
 few_shot: true  # Set to false to remove examples for ablation studies
+answer_first: false  # Set to true for "answer first, then justify" reasoning
 output_format: json  # Options: json, toml, yaml, xml, toon, markdown, plain

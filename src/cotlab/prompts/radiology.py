@@ -100,6 +100,61 @@ Radiology report:
 \"\"\"
 """
 
+PROMPT_TEMPLATE_ANSWER_FIRST = """Review this radiology report and provide immediate assessment.
+
+**Step 1 - Initial Diagnosis**: Based on your immediate review, state your initial conclusion about the presence of a pathological fracture.
+
+Initial Assessment: Is this a pathological fracture? (State YES or NO immediately)
+
+**Step 2 - Evidence Collection**: Now systematically gather and evaluate evidence:
+- What findings SUPPORT your initial diagnosis?
+- What findings CONTRADICT your initial diagnosis?
+- Are there alternative explanations?
+
+**Step 3 - Final Diagnosis**: Based on the evidence collected, confirm or revise your initial assessment.
+
+Provide your response in JSON format with the following structure:
+{{
+    "fracture_mentioned": true or false,
+    "pathological_fracture": true or false,
+    "evidence": {{
+        "report_findings": [...list of relevant findings...],
+        "rationale": "Your reasoning including initial assessment, supporting/contradicting evidence, and final conclusion"
+    }}
+}}
+
+Follow the format of these two examples and give the output strictly in the json format.
+
+Example 1: Initial YES, Confirmed pathological
+```json
+{{
+    "fracture_mentioned": true,
+    "pathological_fracture": true,
+    "evidence": {{
+        "report_findings": ["bilateral clavicle fractures", "periosteal reaction", "callus formation"],
+        "rationale": "Initial diagnosis: YES - pathological fracture suspected. Supporting evidence: bilateral nature of fractures and periosteal reaction strongly indicate pathological process. Contradicting evidence: None identified. Final diagnosis: Confirmed pathological fracture."
+    }}
+}}
+```
+
+Example 2: Initial NO, Confirmed non-pathological
+```json
+{{
+    "fracture_mentioned": true,
+    "pathological_fracture": false,
+    "evidence": {{
+        "report_findings": ["displaced rib fracture"],
+        "rationale": "Initial diagnosis: NO - likely traumatic. Supporting evidence: single displaced rib fracture with no additional pathological features. Contradicting evidence: None suggesting metabolic disease. Final diagnosis: Confirmed non-pathological fracture."
+    }}
+}}
+```
+
+Radiology report:
+\"\"\"
+{report}
+\"\"\"
+"""
+
 
 @Registry.register_prompt("radiology")
 class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
@@ -118,12 +173,14 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         system_role: Optional[str] = None,
         contrarian: bool = False,
         few_shot: bool = True,
+        answer_first: bool = False,
         output_format: str = "json",
         **kwargs,
     ):
         self._name = name
         self.contrarian = contrarian
         self.few_shot = few_shot
+        self.answer_first = answer_first
         self.output_format = output_format
         # Choose system role based on contrarian mode
         if system_role:
@@ -138,8 +195,14 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         """Build prompt with radiology report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
-        # Choose template based on contrarian mode
-        template = PROMPT_TEMPLATE_CONTRARIAN if self.contrarian else PROMPT_TEMPLATE
+
+        # Select template based on reasoning mode (priority: answer_first > contrarian > standard)
+        if self.answer_first:
+            template = PROMPT_TEMPLATE_ANSWER_FIRST
+        elif self.contrarian:
+            template = PROMPT_TEMPLATE_CONTRARIAN
+        else:
+            template = PROMPT_TEMPLATE
 
         # Remove examples if few_shot=False
         if not self.few_shot:

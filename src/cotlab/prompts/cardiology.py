@@ -99,6 +99,51 @@ Cardiac imaging report:
 \"\"\"
 """
 
+PROMPT_TEMPLATE_ANSWER_FIRST = """Review this cardiac imaging report and provide immediate assessment.
+
+**Step 1 - Initial Diagnosis**: Based on your immediate review, state your initial conclusion about the presence of congenital heart defect (CHD).
+
+Initial Assessment: Is there a congenital heart defect? (State YES or NO immediately)
+
+**Step 2 - Evidence Collection**: Now systematically gather and evaluate evidence:
+- What findings SUPPORT your initial diagnosis?
+- What findings CONTRADICT your initial diagnosis?
+- Are there alternative explanations?
+
+**Step 3 - Final Diagnosis**: Based on the evidence collected, confirm or revise your initial assessment.
+
+Provide your response in JSON format. Follow the format of these two examples and give the output strictly in the json format.
+
+Example 1: Initial YES, Confirmed CHD
+```json
+{{
+    "cardiac_abnormality": true,
+    "congenital_heart_defect": true,
+    "evidence": {{
+        "report_findings": ["ventricular septal defect", "left-to-right shunt"],
+        "rationale": "Initial diagnosis: YES - CHD suspected. Supporting evidence: Large VSD with hemodynamically significant shunt strongly indicates congenital defect. Contradicting evidence: None identified. Final diagnosis: Confirmed congenital heart defect."
+    }}
+}}
+```
+
+Example 2: Initial NO, Confirmed no CHD
+```json
+{{
+    "cardiac_abnormality": false,
+    "congenital_heart_defect": false,
+    "evidence": {{
+        "report_findings": ["normal cardiac structure", "physiological TR"],
+        "rationale": "Initial diagnosis: NO - appears normal. Supporting evidence: Structurally normal heart with only trace physiological regurgitation. Contradicting evidence: None suggesting structural defect. Final diagnosis: Confirmed no congenital heart defect."
+    }}
+}}
+```
+
+Cardiac imaging report:
+\"\"\"
+{report}
+\"\"\"
+"""
+
 
 @Registry.register_prompt("cardiology")
 class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
@@ -117,12 +162,14 @@ class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         system_role: Optional[str] = None,
         contrarian: bool = False,
         few_shot: bool = True,
+        answer_first: bool = False,
         output_format: str = "json",
         **kwargs,
     ):
         self._name = name
         self.contrarian = contrarian
         self.few_shot = few_shot
+        self.answer_first = answer_first
         self.output_format = output_format
         if system_role:
             self.system_role = system_role
@@ -136,7 +183,14 @@ class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         """Build prompt with cardiac imaging report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
-        template = PROMPT_TEMPLATE_CONTRARIAN if self.contrarian else PROMPT_TEMPLATE
+
+        # Select template based on reasoning mode (priority: answer_first > contrarian > standard)
+        if self.answer_first:
+            template = PROMPT_TEMPLATE_ANSWER_FIRST
+        elif self.contrarian:
+            template = PROMPT_TEMPLATE_CONTRARIAN
+        else:
+            template = PROMPT_TEMPLATE
 
         if not self.few_shot:
             template = self._remove_few_shot_examples(template)

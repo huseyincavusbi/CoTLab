@@ -98,6 +98,50 @@ Oncology report:
 {report}
 \"\"\"
 """
+PROMPT_TEMPLATE_ANSWER_FIRST = """Review this oncology report and provide immediate assessment.
+
+**Step 1 - Initial Diagnosis**: Based on your immediate review, state your initial conclusion about the presence of malignancy.
+
+Initial Assessment: Is there malignancy? (State YES or NO immediately)
+
+**Step 2 - Evidence Collection**: Now systematically gather and evaluate evidence:
+- What findings SUPPORT your initial diagnosis?
+- What findings CONTRADICT your initial diagnosis?
+- Are there alternative explanations?
+
+**Step 3 - Final Diagnosis**: Based on the evidence collected, confirm or revise your initial assessment.
+
+Provide your response in JSON format. Follow the format of these two examples and give the output strictly in the json format.
+
+Example 1: Initial YES, Confirmed malignancy
+```json
+{{
+    "abnormal_findings": true,
+    "malignancy": true,
+    "evidence": {{
+        "report_findings": ["lymphoblasts 85%", "B-cell ALL immunophenotype"],
+        "rationale": "Initial diagnosis: YES - malignancy suspected. Supporting evidence: High blast count with specific immunophenotyping confirms acute lymphoblastic leukemia. Contradicting evidence: None identified. Final diagnosis: Confirmed malignancy."
+    }}
+}}
+```
+
+Example 2: Initial NO, Confirmed no malignancy
+```json
+{{
+    "abnormal_findings": false,
+    "malignancy": false,
+    "evidence": {{
+        "report_findings": ["normal CBC", "no blast cells"],
+        "rationale": "Initial diagnosis: NO - appears normal. Supporting evidence: Normal blood counts with no atypical cells. Contradicting evidence: None suggesting malignancy. Final diagnosis: Confirmed no malignancy."
+    }}
+}}
+```
+
+Oncology report:
+\"\"\"
+{report}
+\"\"\"
+"""
 
 
 @Registry.register_prompt("oncology")
@@ -117,12 +161,14 @@ class OncologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         system_role: Optional[str] = None,
         contrarian: bool = False,
         few_shot: bool = True,
+        answer_first: bool = False,
         output_format: str = "json",
         **kwargs,
     ):
         self._name = name
         self.contrarian = contrarian
         self.few_shot = few_shot
+        self.answer_first = answer_first
         self.output_format = output_format
         if system_role:
             self.system_role = system_role
@@ -135,7 +181,14 @@ class OncologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
 
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
-        template = PROMPT_TEMPLATE_CONTRARIAN if self.contrarian else PROMPT_TEMPLATE
+
+        # Select template based on reasoning mode (priority: answer_first > contrarian > standard)
+        if self.answer_first:
+            template = PROMPT_TEMPLATE_ANSWER_FIRST
+        elif self.contrarian:
+            template = PROMPT_TEMPLATE_CONTRARIAN
+        else:
+            template = PROMPT_TEMPLATE
 
         if not self.few_shot:
             template = self._remove_few_shot_examples(template)

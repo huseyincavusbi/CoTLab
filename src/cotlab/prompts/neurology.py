@@ -98,6 +98,50 @@ Neuroimaging report:
 {report}
 \"\"\"
 """
+PROMPT_TEMPLATE_ANSWER_FIRST = """Review this neuroimaging report and provide immediate assessment.
+
+**Step 1 - Initial Diagnosis**: Based on your immediate review, state your initial conclusion about the presence of significant neurological abnormality.
+
+Initial Assessment: Is there a significant neurological abnormality? (State YES or NO immediately)
+
+**Step 2 - Evidence Collection**: Now systematically gather and evaluate evidence:
+- What findings SUPPORT your initial diagnosis?
+- What findings CONTRADICT your initial diagnosis?
+- Are there alternative explanations?
+
+**Step 3 - Final Diagnosis**: Based on the evidence collected, confirm or revise your initial assessment.
+
+Provide your response in JSON format. Follow the format of these two examples and give the output strictly in the json format.
+
+Example 1: Initial YES, Confirmed abnormality
+```json
+{{
+    "abnormality_mentioned": true,
+    "significant_abnormality": true,
+    "evidence": {{
+        "report_findings": ["large subdural hematoma", "midline shift"],
+        "rationale": "Initial diagnosis: YES - significant abnormality suspected. Supporting evidence: Large subdural collection with mass effect strongly indicates significant pathology. Contradicting evidence: None identified. Final diagnosis: Confirmed significant neurological abnormality."
+    }}
+}}
+```
+
+Example 2: Initial NO, Confirmed normal
+```json
+{{
+    "abnormality_mentioned": false,
+    "significant_abnormality": false,
+    "evidence": {{
+        "report_findings": ["normal brain parenchyma"],
+        "rationale": "Initial diagnosis: NO - appears normal. Supporting evidence: No abnormal signal, mass, or structural abnormality. Contradicting evidence: None suggesting pathology. Final diagnosis: Confirmed no significant abnormality."
+    }}
+}}
+```
+
+Neuroimaging report:
+\"\"\"
+{report}
+\"\"\"
+"""
 
 
 @Registry.register_prompt("neurology")
@@ -117,12 +161,14 @@ class NeurologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         system_role: Optional[str] = None,
         contrarian: bool = False,
         few_shot: bool = True,
+        answer_first: bool = False,
         output_format: str = "json",
         **kwargs,
     ):
         self._name = name
         self.contrarian = contrarian
         self.few_shot = few_shot
+        self.answer_first = answer_first
         self.output_format = output_format
         if system_role:
             self.system_role = system_role
@@ -136,7 +182,14 @@ class NeurologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         """Build prompt with neuroimaging report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
-        template = PROMPT_TEMPLATE_CONTRARIAN if self.contrarian else PROMPT_TEMPLATE
+
+        # Select template based on reasoning mode (priority: answer_first > contrarian > standard)
+        if self.answer_first:
+            template = PROMPT_TEMPLATE_ANSWER_FIRST
+        elif self.contrarian:
+            template = PROMPT_TEMPLATE_CONTRARIAN
+        else:
+            template = PROMPT_TEMPLATE
 
         if not self.few_shot:
             template = self._remove_few_shot_examples(template)
