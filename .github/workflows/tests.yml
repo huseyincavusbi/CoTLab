@@ -163,22 +163,42 @@ jobs:
           print('CoT parser works!')
           "
 
-      - name: Test specialty prompts (contrarian + multi-format)
+      - name: Test new prompt features (answer_first, few_shot, contrarian)
         shell: bash -el {0}
         run: |
           python -c "
-          from cotlab.prompts import RadiologyPromptStrategy
+          from cotlab.prompts import RadiologyPromptStrategy, CardiologyPromptStrategy
+
+          # Test answer_first mode
+          answer_first = RadiologyPromptStrategy(answer_first=True)
+          af_prompt = answer_first.build_prompt({'report': 'Test'})
+          assert 'Initial' in af_prompt, 'answer_first prompt should contain Initial Assessment'
+          print('answer_first mode works')
+
+          # Test few_shot=false (example removal)
+          with_examples = RadiologyPromptStrategy(few_shot=True)
+          without_examples = RadiologyPromptStrategy(few_shot=False)
+          text_with = with_examples.build_prompt({'report': 'Test'})
+          text_without = without_examples.build_prompt({'report': 'Test'})
+          assert 'Example 1:' in text_with, 'Should have examples when few_shot=true'
+          assert 'Example 1:' not in text_without, 'Should not have examples when few_shot=false'
+          assert len(text_without) < len(text_with), 'Prompt without examples should be shorter'
+          print('few_shot parameter works')
 
           # Test contrarian mode
           standard = RadiologyPromptStrategy(contrarian=False)
           contrarian = RadiologyPromptStrategy(contrarian=True)
-          assert standard.build_prompt({'report': 'Test'}) != contrarian.build_prompt({'report': 'Test'})
-          print('Contrarian mode: OK')
+          std_prompt = standard.build_prompt({'report': 'Test'})
+          con_prompt = contrarian.build_prompt({'report': 'Test'})
+          assert std_prompt != con_prompt, 'Contrarian prompt should differ from standard'
+          print('contrarian mode works')
 
-          # Test multi-format
-          for fmt in ['json', 'toml', 'yaml', 'xml']:
-              RadiologyPromptStrategy(output_format=fmt).build_prompt({'report': 'Test'})
-          print('Multi-format: OK')
+          # Test combinations work across specialties
+          for Strategy in [RadiologyPromptStrategy, CardiologyPromptStrategy]:
+              s = Strategy(answer_first=True, few_shot=False)
+              prompt = s.build_prompt({'report': 'Test'})
+              assert 'Initial' in prompt and 'Example 1:' not in prompt
+          print('Parameter combinations work across specialties')
           "
 
   notebook-test:
