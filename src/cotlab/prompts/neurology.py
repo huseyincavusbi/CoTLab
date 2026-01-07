@@ -116,7 +116,7 @@ Provide your response in JSON format. Follow the format of these two examples an
 Example 1: Initial YES, Confirmed abnormality
 ```json
 {{
-    "neurological_abnormality_mentioned": true,
+    "imaging_abnormality": true,
     "neurological_abnormality": true,
     "evidence": {{
         "report_findings": ["large subdural hematoma", "midline shift"],
@@ -128,7 +128,7 @@ Example 1: Initial YES, Confirmed abnormality
 Example 2: Initial NO, Confirmed normal
 ```json
 {{
-    "neurological_abnormality_mentioned": false,
+    "imaging_abnormality": false,
     "neurological_abnormality": false,
     "evidence": {{
         "report_findings": ["normal brain parenchyma"],
