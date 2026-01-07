@@ -459,10 +459,20 @@ class StructuredOutputMixin:
         steps = parsed.get("step_by_step", [])
         reasoning = "\n".join(steps) if isinstance(steps, list) else parsed.get("reasoning", "")
 
+        # Ensure confidence is integer
+        confidence = parsed.get("confidence", 0)
+        if isinstance(confidence, str):
+            try:
+                confidence = int(confidence)
+            except ValueError:
+                confidence = 0
+        elif not isinstance(confidence, int):
+            confidence = int(confidence) if confidence else 0
+
         return {
             "answer": str(parsed.get("diagnosis", "")),
             "reasoning": reasoning,
-            "confidence": parsed.get("confidence", 0),
+            "confidence": confidence,
             "step_by_step": steps,
             "raw": response,
             "parsed_data": parsed,
