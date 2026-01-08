@@ -32,3 +32,30 @@ python -m cotlab.main \
 | `answer_first` | bool | Conclude first, then justify |
 | `contrarian` | bool | Skeptical reasoning |
 | `output_format` | str | json/toml/yaml/xml/plain |
+
+## Using Custom Models
+
+CoTLab supports ANY vLLM-compatible model:
+
+```bash
+# Use any model directly
+python -m cotlab.main model.name=meta-llama/Llama-3.1-8B
+
+# Override parameters
+python -m cotlab.main \
+  model.name=Qwen/Qwen2.5-7B \
+  model.max_tokens=4096
+```
+
+### Create Custom Config (Optional)
+
+```bash
+# Copy base template
+cp conf/model/_base/vllm_default.yaml conf/model/my_model.yaml
+
+# Edit parameters
+# Then use:
+python -m cotlab.main model=my_model
+```
+
+See [Models Guide](models.md) for compatibility details.

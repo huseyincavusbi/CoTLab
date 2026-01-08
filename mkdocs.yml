@@ -44,6 +44,7 @@ nav:
   - User Guide:
     - Configuration: guide/configuration.md
     - Prompt Strategies: guide/prompts.md
+    - Models: guide/models.md
     - Experiments: guide/experiments.md
   - API Reference:
     - Core: api/core.md

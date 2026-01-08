@@ -1,0 +1,21 @@
+# Base template for vLLM models
+# Copy and customize for your model
+# Example: cp conf/model/_base/vllm_default.yaml conf/model/my_model.yaml
+
+# REQUIRED: Change to your model name
+name: "huggingface/model-name"
+
+backend: vllm
+
+# Inference parameters
+max_tokens: 2048
+temperature: 0.0
+top_p: 1.0
+repetition_penalty: 1.0
+
+# vLLM specific settings
+dtype: auto
+trust_remote_code: true
+
+# Note: For mechanistic experiments (head patching, logit lens, etc.),
+# use 'transformers' backend instead and check architecture compatibility

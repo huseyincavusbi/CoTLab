@@ -43,6 +43,7 @@ dev = [
 
 [project.scripts]
 cotlab = "cotlab.main:main"
+cotlab-template = "cotlab.cli:cli"
 
 [tool.hatch.version]
 path = "src/cotlab/__init__.py"
