@@ -1,6 +1,6 @@
 site_name: CoTLab Documentation
 site_description: Chain-of-Thought Laboratory - Research framework for medical LLM prompting strategies
-# site_url: https://huseyincavusbi.github.io/CoTLab
+site_url: https://huseyincavusbi.github.io/CoTLab
 repo_url: https://github.com/huseyincavusbi/CoTLab
 repo_name: huseyincavusbi/CoTLab
 
