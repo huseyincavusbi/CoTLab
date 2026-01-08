@@ -1,0 +1,60 @@
+site_name: CoTLab Documentation
+site_description: Chain-of-Thought Laboratory - Research framework for medical LLM prompting strategies
+# site_url: https://huseyincavusbi.github.io/CoTLab
+repo_url: https://github.com/huseyincavusbi/CoTLab
+repo_name: huseyincavusbi/CoTLab
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - search.suggest
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: true
+            show_root_heading: true
+            heading_level: 2
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quickstart.md
+  - User Guide:
+    - Configuration: guide/configuration.md
+    - Prompt Strategies: guide/prompts.md
+    - Experiments: guide/experiments.md
+  - API Reference:
+    - Core: api/core.md
+    - Prompts: api/prompts.md
+    - Experiments: api/experiments.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - admonition
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
