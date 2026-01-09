@@ -196,7 +196,7 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         """Build prompt with radiology report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
 
-        # Select template based on reasoning mode (priority: answer_first > contrarian > standard)
+        # Select base template based on reasoning mode
         if self.answer_first:
             template = PROMPT_TEMPLATE_ANSWER_FIRST
         elif self.contrarian:
@@ -207,14 +207,76 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         # Remove examples if few_shot=False
         if not self.few_shot:
             template = self._remove_few_shot_examples(template)
+        elif self.output_format != "json":
+            # Convert JSON examples to target format
+            template = self._convert_examples_to_format(template)
 
         prompt = template.format(report=report)
 
-        # Add format instruction if not using JSON templates
-        if self.output_format != "json" and self.output_format != "plain":
-            prompt += "\n\n" + self._add_format_instruction()
-
         return prompt
+
+    def _convert_examples_to_format(self, template: str) -> str:
+        """Convert JSON examples in template to target output format."""
+        # Example data for radiology
+        examples = [
+            {
+                "title": "Example 1: Fracture present and signs of pathological fracture",
+                "data": {
+                    "fracture_mentioned": True,
+                    "pathological_fracture": True,
+                    "evidence": {
+                        "report_findings": [
+                            "bilateral clavicle fractures",
+                            "periosteal reaction and callus formation",
+                        ],
+                        "rationale": "The report explicitly mentions bilateral clavicle fractures with periosteal reaction and callus formation, indicative of a pathological fracture.",
+                    },
+                    "_plain_answer": "PATHOLOGICAL",
+                },
+            },
+            {
+                "title": "Example 2: Fracture present but non-pathological",
+                "data": {
+                    "fracture_mentioned": True,
+                    "pathological_fracture": False,
+                    "evidence": {
+                        "report_findings": [
+                            "displaced fracture of the right sixth posterolateral rib"
+                        ],
+                        "rationale": "The report mentions a displaced rib fracture, but provides no information suggesting it is pathological.",
+                    },
+                    "_plain_answer": "NON-PATHOLOGICAL",
+                },
+            },
+        ]
+
+        # Build examples in target format
+        examples_str = ""
+        for ex in examples:
+            examples_str += f"\n{ex['title']}\n"
+            examples_str += self._format_example(ex["data"]) + "\n"
+
+        # Replace JSON examples section
+        import re
+
+        pattern = r"Example 1:.*?```\s*\n\nRadiology report:"
+        replacement = examples_str.strip() + "\n\nRadiology report:"
+
+        new_template = re.sub(pattern, replacement, template, flags=re.DOTALL)
+
+        # Also update the format instruction in the header
+        if self.output_format == "plain":
+            new_template = new_template.replace(
+                "give the output strictly in the json format",
+                "provide your answer in plain text with FINAL ANSWER: at the end",
+            )
+        else:
+            new_template = new_template.replace(
+                "give the output strictly in the json format",
+                f"give the output in {self.output_format.upper()} format",
+            )
+
+        return new_template
 
     def _remove_few_shot_examples(self, template: str) -> str:
         """Remove few-shot examples from template for ablation studies."""
@@ -245,8 +307,41 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
             }
         }
         """
+        # Plain text parsing - extract FINAL ANSWER
+        if self.output_format == "plain":
+            # Look for FINAL ANSWER pattern
+            final_match = re.search(
+                r"FINAL ANSWER:\s*(PATHOLOGICAL|NON-PATHOLOGICAL|NO FRACTURE)",
+                response,
+                re.IGNORECASE,
+            )
+            if final_match:
+                answer_text = final_match.group(1).upper()
+                is_pathological = answer_text == "PATHOLOGICAL"
+                has_fracture = answer_text != "NO FRACTURE"
+                return {
+                    "answer": "pathological" if is_pathological else "non-pathological",
+                    "fracture_mentioned": has_fracture,
+                    "pathological_fracture": is_pathological,
+                    "reasoning": response,
+                    "findings": [],
+                    "raw": response,
+                }
+            # Fallback: look for pathological/non-pathological keywords
+            if (
+                "pathological fracture" in response.lower()
+                and "non-pathological" not in response.lower()
+            ):
+                return {
+                    "answer": "pathological",
+                    "fracture_mentioned": True,
+                    "pathological_fracture": True,
+                    "reasoning": response,
+                    "raw": response,
+                }
+
         # Use mixin's multi-format parser if not JSON/plain
-        if self.output_format != "json" and self.output_format != "plain":
+        if self.output_format not in ("json", "plain"):
             try:
                 parsed = self._parse_formatted_response(response)
                 return {

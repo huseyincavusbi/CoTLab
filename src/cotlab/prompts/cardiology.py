@@ -184,7 +184,7 @@ class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         """Build prompt with cardiac imaging report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
 
-        # Select template based on reasoning mode (priority: answer_first > contrarian > standard)
+        # Select base template based on reasoning mode
         if self.answer_first:
             template = PROMPT_TEMPLATE_ANSWER_FIRST
         elif self.contrarian:
@@ -192,15 +192,80 @@ class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         else:
             template = PROMPT_TEMPLATE
 
+        # Remove examples if few_shot=False
         if not self.few_shot:
             template = self._remove_few_shot_examples(template)
+        elif self.output_format != "json":
+            # Convert JSON examples to target format
+            template = self._convert_examples_to_format(template)
 
         prompt = template.format(report=report)
 
-        if self.output_format != "json" and self.output_format != "plain":
-            prompt += "\n\n" + self._add_format_instruction()
-
         return prompt
+
+    def _convert_examples_to_format(self, template: str) -> str:
+        """Convert JSON examples in template to target output format."""
+        examples = [
+            {
+                "title": "Example 1: Congenital heart defect present",
+                "data": {
+                    "cardiac_abnormality": True,
+                    "congenital_heart_defect": True,
+                    "evidence": {
+                        "report_findings": [
+                            "ventricular septal defect",
+                            "left-to-right shunt",
+                            "pulmonary artery pressure elevated",
+                        ],
+                        "rationale": "The report explicitly identifies a large ventricular septal defect with hemodynamically significant shunt causing elevated pulmonary pressures, consistent with congenital heart disease requiring intervention.",
+                    },
+                    "_plain_answer": "CHD DETECTED",
+                },
+            },
+            {
+                "title": "Example 2: Normal cardiac findings",
+                "data": {
+                    "cardiac_abnormality": False,
+                    "congenital_heart_defect": False,
+                    "evidence": {
+                        "report_findings": [
+                            "normal cardiac structure",
+                            "physiological tricuspid regurgitation",
+                        ],
+                        "rationale": "The report describes a structurally normal heart with only physiological findings. No evidence of congenital heart defect.",
+                    },
+                    "_plain_answer": "NORMAL",
+                },
+            },
+        ]
+
+        # Build examples in target format
+        examples_str = ""
+        for ex in examples:
+            examples_str += f"\n{ex['title']}\n"
+            examples_str += self._format_example(ex["data"]) + "\n"
+
+        # Replace JSON examples section
+        import re
+
+        pattern = r"Example 1:.*?```\s*\n\nCardiac imaging report:"
+        replacement = examples_str.strip() + "\n\nCardiac imaging report:"
+
+        new_template = re.sub(pattern, replacement, template, flags=re.DOTALL)
+
+        # Update instruction in header
+        if self.output_format == "plain":
+            new_template = new_template.replace(
+                "give the output strictly in the json format",
+                "provide your answer in plain text with FINAL ANSWER: at the end",
+            )
+        else:
+            new_template = new_template.replace(
+                "give the output strictly in the json format",
+                f"give the output in {self.output_format.upper()} format",
+            )
+
+        return new_template
 
     def _remove_few_shot_examples(self, template: str) -> str:
         """Remove few-shot examples from template for ablation studies."""
@@ -216,7 +281,7 @@ class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
 
     def parse_response(self, response: str) -> Dict[str, Any]:
         """
-        Parse JSON response from model.
+        Parse response from model (supports multiple formats).
 
         Expected format:
         {
@@ -228,6 +293,33 @@ class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
             }
         }
         """
+        # Use mixin's multi-format parser if not JSON
+        if self.output_format != "json":
+            try:
+                parsed = self._parse_formatted_response(response)
+                # Map extracted values to standardized keys
+                is_positive = False
+                if self.output_format == "plain":
+                    # Parse final answer string
+                    ans_str = str(parsed.get("answer", "")).upper()
+                    is_positive = "CHD DETECTED" in ans_str
+                else:
+                    is_positive = parsed.get("congenital_heart_defect", False)
+
+                return {
+                    "answer": "CHD present" if is_positive else "no CHD",
+                    "cardiac_abnormality": parsed.get("cardiac_abnormality", is_positive),
+                    "congenital_heart_defect": is_positive,
+                    "reasoning": parsed.get("evidence", {}).get(
+                        "rationale", parsed.get("reasoning", "")
+                    ),
+                    "findings": parsed.get("evidence", {}).get("report_findings", []),
+                    "raw": response,
+                    "parsed_json": parsed,
+                }
+            except Exception:
+                pass  # Fall back to JSON parsing
+
         # Try to extract JSON from response
         json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
         if json_match:

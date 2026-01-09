@@ -113,6 +113,35 @@ class OutputFormat:
         return [cls.PLAIN, cls.JSON, cls.TOON, cls.TOML, cls.XML, cls.YAML, cls.MARKDOWN]
 
 
+# Plain text output schema for medical diagnosis tasks
+PLAIN_OUTPUT_SCHEMA = """\
+
+Provide your answer in plain text. At the end of your response, clearly state:
+
+FINAL ANSWER: [your diagnosis]
+CONFIDENCE: [0-100]
+
+Example:
+Based on the clinical findings, the patient shows signs consistent with the condition.
+
+FINAL ANSWER: positive
+CONFIDENCE: 85"""
+
+PLAIN_COT_SCHEMA = """\
+
+Provide your reasoning step by step in plain text. At the end, clearly state:
+
+FINAL ANSWER: [your diagnosis]
+CONFIDENCE: [0-100]
+
+Example:
+Step 1: The report mentions...
+Step 2: This suggests...
+Step 3: Therefore...
+
+FINAL ANSWER: positive
+CONFIDENCE: 85"""
+
 # JSON output schema for medical diagnosis tasks
 JSON_OUTPUT_SCHEMA = """\
 
@@ -281,6 +310,7 @@ class StructuredOutputMixin:
     def _get_format_schema(self) -> tuple:
         """Return (output_schema, cot_schema) for current format."""
         schemas = {
+            OutputFormat.PLAIN: (PLAIN_OUTPUT_SCHEMA, PLAIN_COT_SCHEMA),
             OutputFormat.JSON: (JSON_OUTPUT_SCHEMA, JSON_COT_SCHEMA),
             OutputFormat.TOON: (TOON_OUTPUT_SCHEMA, TOON_COT_SCHEMA),
             OutputFormat.TOML: (TOML_OUTPUT_SCHEMA, TOML_COT_SCHEMA),
@@ -292,20 +322,150 @@ class StructuredOutputMixin:
 
     def _add_format_instruction(self) -> str:
         """Return format instruction to append to prompt."""
-        if self.output_format == OutputFormat.PLAIN:
-            return ""
         output_schema, cot_schema = self._get_format_schema()
         return cot_schema if self.cot_format else output_schema
 
+    def _format_example(self, example_data: Dict[str, Any], format_type: str = None) -> str:
+        """Format a single example in the specified format.
+
+        Args:
+            example_data: Dictionary with example data
+            format_type: Output format (json, yaml, toml, xml, plain). Uses self.output_format if None.
+
+        Returns:
+            Formatted example string with code block markers
+        """
+        import json
+
+        fmt = format_type or self.output_format
+
+        if fmt == OutputFormat.JSON or fmt == "json":
+            return f"```json\n{json.dumps(example_data, indent=4)}\n```"
+
+        elif fmt == OutputFormat.YAML or fmt == "yaml":
+            # Simple YAML conversion
+            def to_yaml(obj, indent=0):
+                lines = []
+                prefix = "  " * indent
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        if isinstance(v, (dict, list)):
+                            lines.append(f"{prefix}{k}:")
+                            lines.append(to_yaml(v, indent + 1))
+                        else:
+                            val = (
+                                str(v).lower()
+                                if isinstance(v, bool)
+                                else f'"{v}"'
+                                if isinstance(v, str)
+                                else v
+                            )
+                            lines.append(f"{prefix}{k}: {val}")
+                elif isinstance(obj, list):
+                    for item in obj:
+                        if isinstance(item, str):
+                            lines.append(f'{prefix}- "{item}"')
+                        else:
+                            lines.append(f"{prefix}- {to_yaml(item, indent + 1)}")
+                return "\n".join(lines)
+
+            return f"```yaml\n{to_yaml(example_data)}\n```"
+
+        elif fmt == OutputFormat.TOML or fmt == "toml":
+            # Simple TOML conversion
+            def to_toml(obj, section=""):
+                lines = []
+                if section:
+                    lines.append(f"[{section}]")
+                for k, v in obj.items():
+                    if isinstance(v, dict):
+                        lines.append(to_toml(v, f"{section}.{k}" if section else k))
+                    elif isinstance(v, list):
+                        items = ", ".join(f'"{i}"' if isinstance(i, str) else str(i) for i in v)
+                        lines.append(f"{k} = [{items}]")
+                    elif isinstance(v, bool):
+                        lines.append(f"{k} = {str(v).lower()}")
+                    elif isinstance(v, str):
+                        lines.append(f'{k} = "{v}"')
+                    else:
+                        lines.append(f"{k} = {v}")
+                return "\n".join(lines)
+
+            return f"```toml\n{to_toml(example_data)}\n```"
+
+        elif fmt == OutputFormat.PLAIN or fmt == "plain":
+            # Plain text - use plain_answer if available
+            plain_answer = example_data.get("_plain_answer", "")
+            reasoning = example_data.get("evidence", {}).get("rationale", "")
+            return f"{reasoning}\n\nFINAL ANSWER: {plain_answer}"
+
+        elif fmt == OutputFormat.XML or fmt == "xml":
+
+            def to_xml(obj, root="response"):
+                lines = [f"<{root}>"]
+                for k, v in obj.items():
+                    if isinstance(v, dict):
+                        lines.append(to_xml(v, k))
+                    elif isinstance(v, list):
+                        lines.append(f"  <{k}>")
+                        for item in v:
+                            lines.append(f"    <item>{item}</item>")
+                        lines.append(f"  </{k}>")
+                    else:
+                        val = str(v).lower() if isinstance(v, bool) else v
+                        lines.append(f"  <{k}>{val}</{k}>")
+                lines.append(f"</{root}>")
+                return "\n".join(lines)
+
+            return f"```xml\n{to_xml(example_data)}\n```"
+
+        elif fmt == OutputFormat.TOON or fmt == "toon":
+            # TOON: Simple Key-Value pairs
+            lines = []
+            # Extract main fields from example data
+            plain_answer = example_data.get("_plain_answer", "")
+            reasoning = example_data.get("evidence", {}).get("rationale", "")
+
+            lines.append(f"diagnosis: {plain_answer}")
+            lines.append(f"reasoning: {reasoning}")
+            # Add other flat keys if they exist and aren't dicts/lists
+            for k, v in example_data.items():
+                if k not in ["evidence", "_plain_answer"] and not isinstance(v, (dict, list)):
+                    lines.append(f"{k}: {str(v).lower() if isinstance(v, bool) else v}")
+            return f"```toon\n{chr(10).join(lines)}\n```"
+
+        elif fmt == OutputFormat.MARKDOWN or fmt == "markdown":
+            # Markdown: Header sections
+            plain_answer = example_data.get("_plain_answer", "")
+            reasoning = example_data.get("evidence", {}).get("rationale", "")
+
+            md = f"## Diagnosis\n{plain_answer}\n\n"
+            md += f"## Reasoning\n{reasoning}\n\n"
+            md += "## Confidence\n95"  # Example confidence
+            return md
+
+        else:
+            # Default to JSON
+            return f"```json\n{json.dumps(example_data, indent=4)}\n```"
+
     def _parse_formatted_response(self, response: str) -> Dict[str, Any]:
         """Parse response based on output format."""
+        import re
 
         if self.output_format == OutputFormat.PLAIN:
+            # Extract FINAL ANSWER and CONFIDENCE from plain text
+            answer_match = re.search(r"FINAL ANSWER:\s*(.+?)(?:\n|$)", response, re.IGNORECASE)
+            confidence_match = re.search(r"CONFIDENCE:\s*(\d+)", response, re.IGNORECASE)
+
+            answer = answer_match.group(1).strip() if answer_match else response.strip()
+            confidence = int(confidence_match.group(1)) if confidence_match else None
+
             return {
-                "answer": response.strip(),
+                "answer": answer,
+                "confidence": confidence,
                 "reasoning": response,
                 "raw": response,
-                "parse_success": True,
+                "parse_success": bool(answer_match),
                 "format": "plain",
             }
 

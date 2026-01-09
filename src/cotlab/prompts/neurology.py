@@ -183,7 +183,7 @@ class NeurologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         """Build prompt with neuroimaging report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
 
-        # Select template based on reasoning mode (priority: answer_first > contrarian > standard)
+        # Select base template based on reasoning mode
         if self.answer_first:
             template = PROMPT_TEMPLATE_ANSWER_FIRST
         elif self.contrarian:
@@ -191,15 +191,77 @@ class NeurologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         else:
             template = PROMPT_TEMPLATE
 
+        # Remove examples if few_shot=False
         if not self.few_shot:
             template = self._remove_few_shot_examples(template)
+        elif self.output_format != "json":
+            # Convert JSON examples to target format
+            template = self._convert_examples_to_format(template)
 
         prompt = template.format(report=report)
 
-        if self.output_format != "json" and self.output_format != "plain":
-            prompt += "\n\n" + self._add_format_instruction()
-
         return prompt
+
+    def _convert_examples_to_format(self, template: str) -> str:
+        """Convert JSON examples in template to target output format."""
+        examples = [
+            {
+                "title": "Example 1: Neurological abnormality present",
+                "data": {
+                    "imaging_abnormality": True,
+                    "neurological_abnormality": True,
+                    "evidence": {
+                        "report_findings": [
+                            "dilated ventricles",
+                            "periventricular edema",
+                            "hydrocephalus",
+                        ],
+                        "rationale": "The report explicitly identifies dilated lateral ventricles with transependymal CSF flow, consistent with hydrocephalus requiring intervention.",
+                    },
+                    "_plain_answer": "ABNORMALITY DETECTED",
+                },
+            },
+            {
+                "title": "Example 2: Normal neuroimaging findings",
+                "data": {
+                    "imaging_abnormality": False,
+                    "neurological_abnormality": False,
+                    "evidence": {
+                        "report_findings": ["normal brain MRI", "age-appropriate myelination"],
+                        "rationale": "The report describes a structurally normal brain with appropriate myelination for age. No neurological abnormality identified.",
+                    },
+                    "_plain_answer": "NORMAL",
+                },
+            },
+        ]
+
+        # Build examples in target format
+        examples_str = ""
+        for ex in examples:
+            examples_str += f"\n{ex['title']}\n"
+            examples_str += self._format_example(ex["data"]) + "\n"
+
+        # Replace JSON examples section
+        import re
+
+        pattern = r"Example 1:.*?```\s*\n\nNeuroimaging report:"
+        replacement = examples_str.strip() + "\n\nNeuroimaging report:"
+
+        new_template = re.sub(pattern, replacement, template, flags=re.DOTALL)
+
+        # Update instruction in header
+        if self.output_format == "plain":
+            new_template = new_template.replace(
+                "give the output strictly in the json format",
+                "provide your answer in plain text with FINAL ANSWER: at the end",
+            )
+        else:
+            new_template = new_template.replace(
+                "give the output strictly in the json format",
+                f"give the output in {self.output_format.upper()} format",
+            )
+
+        return new_template
 
     def _remove_few_shot_examples(self, template: str) -> str:
         """Remove few-shot examples from template for ablation studies."""
@@ -214,7 +276,32 @@ class NeurologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         return cleaned
 
     def parse_response(self, response: str) -> Dict[str, Any]:
-        """Parse JSON response from model."""
+        """Parse response from model (supports multiple formats)."""
+        # Use mixin's multi-format parser if not JSON
+        if self.output_format != "json":
+            try:
+                parsed = self._parse_formatted_response(response)
+                is_positive = False
+                if self.output_format == "plain":
+                    ans_str = str(parsed.get("answer", "")).upper()
+                    is_positive = "ABNORMALITY DETECTED" in ans_str
+                else:
+                    is_positive = parsed.get("neurological_abnormality", False)
+
+                return {
+                    "answer": "abnormality present" if is_positive else "normal",
+                    "imaging_abnormality": parsed.get("imaging_abnormality", is_positive),
+                    "neurological_abnormality": is_positive,
+                    "reasoning": parsed.get("evidence", {}).get(
+                        "rationale", parsed.get("reasoning", "")
+                    ),
+                    "findings": parsed.get("evidence", {}).get("report_findings", []),
+                    "raw": response,
+                    "parsed_json": parsed,
+                }
+            except Exception:
+                pass  # Fall back
+
         json_match = re.search(r"```json\s*(.*?)\s*```", response, re.DOTALL)
         if json_match:
             json_str = json_match.group(1)
