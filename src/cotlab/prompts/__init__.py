@@ -1,6 +1,7 @@
 """Prompt strategies module."""
 
 from .cardiology import CardiologyPromptStrategy
+from .histopathology import HistopathologyPromptStrategy
 from .length_matched_strategies import (
     ChainOfThoughtMatchedStrategy,
     ContrarianMatchedStrategy,
@@ -25,6 +26,7 @@ __all__ = [
     "ArroganceStrategy",
     "NoInstructionStrategy",
     "CardiologyPromptStrategy",
+    "HistopathologyPromptStrategy",
     "NeurologyPromptStrategy",
     "OncologyPromptStrategy",
     "RadiologyPromptStrategy",

@@ -3,6 +3,7 @@
 from .loaders import (
     BaseDataset,
     CardiologyDataset,
+    HistopathologyDataset,
     NeurologyDataset,
     OncologyDataset,
     PatchingPairsDataset,
@@ -17,6 +18,7 @@ __all__ = [
     "Sample",
     "BaseDataset",
     "CardiologyDataset",
+    "HistopathologyDataset",
     "NeurologyDataset",
     "OncologyDataset",
     "RadiologyDataset",

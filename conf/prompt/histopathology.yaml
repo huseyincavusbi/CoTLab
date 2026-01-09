@@ -1,0 +1,10 @@
+# Histopathology report quality rating prompt
+# 3-class classification: 0 (poor), 1 (partial), 2 (good)
+
+_target_: cotlab.prompts.HistopathologyPromptStrategy
+
+name: histopathology
+output_format: json
+few_shot: true
+answer_first: false
+contrarian: false

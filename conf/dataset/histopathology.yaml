@@ -1,0 +1,8 @@
+# Histopathology report quality evaluation dataset
+# Source: https://github.com/knowlab/HARE/blob/main/human_evaluation_annotation.tsv
+# Labels: 0 (poor), 1 (partial), 2 (good)
+
+_target_: cotlab.datasets.HistopathologyDataset
+
+name: histopathology
+path: data/histopathology.tsv

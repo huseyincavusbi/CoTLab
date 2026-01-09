@@ -201,6 +201,52 @@ jobs:
           print('Parameter combinations work across specialties')
           "
 
+      - name: Test histopathology dataset and prompt
+        shell: bash -el {0}
+        run: |
+          python -c "
+          from cotlab.datasets import HistopathologyDataset
+          from cotlab.prompts import HistopathologyPromptStrategy
+
+          # Test dataset loading (uses sample TSV for CI)
+          # Note: Full dataset not available in CI, testing class structure
+          print('Testing HistopathologyPromptStrategy...')
+
+          # Test standard mode
+          p = HistopathologyPromptStrategy()
+          prompt = p.build_prompt({'text': 'Test histopathology report'})
+          assert 'quality' in prompt.lower(), 'Prompt should mention quality'
+          assert 'Example 1' in prompt, 'Should have few-shot examples by default'
+          print('Standard prompt works')
+
+          # Test few_shot=False removes examples
+          p_no_fs = HistopathologyPromptStrategy(few_shot=False)
+          prompt_no_fs = p_no_fs.build_prompt({'text': 'Test'})
+          assert 'Example 1' not in prompt_no_fs, 'Should not have examples when few_shot=false'
+          print('few_shot=False works')
+
+          # Test contrarian mode
+          p_con = HistopathologyPromptStrategy(contrarian=True)
+          prompt_con = p_con.build_prompt({'text': 'Test'})
+          assert 'skeptical' in prompt_con.lower() or 'critical' in prompt_con.lower(), 'Contrarian should be skeptical'
+          assert 'skeptical' in p_con.get_system_message().lower(), 'System message should be skeptical'
+          print('contrarian mode works')
+
+          # Test answer_first mode
+          p_af = HistopathologyPromptStrategy(answer_first=True)
+          prompt_af = p_af.build_prompt({'text': 'Test'})
+          assert 'First' in prompt_af, 'Answer-first should ask for rating first'
+          print('answer_first mode works')
+
+          # Test parse_response
+          result = p.parse_response('{\"quality_score\": 2, \"reasoning\": \"Good report\"}')
+          assert result['quality_score'] == 2, 'Should parse quality_score'
+          assert result['parse_success'], 'Should mark as success'
+          print('parse_response works')
+
+          print('All histopathology tests passed!')
+          "
+
   notebook-test:
     runs-on: ${{ matrix.os }}
     strategy:

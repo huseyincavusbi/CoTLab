@@ -452,3 +452,79 @@ class ProbingDiagnosisDataset(JSONDataset):
                 "key_features": item.get("metadata", {}).get("key_features", []),
             },
         )
+
+
+@Registry.register_dataset("histopathology")
+class HistopathologyDataset(BaseDataset):
+    """Histopathology report quality evaluation dataset.
+
+    Loads HARE human evaluation annotations and expands each row
+    into 4 samples (one per model output with its human score).
+
+    Labels: 0 (poor), 1 (partial), 2 (good)
+    """
+
+    def __init__(
+        self,
+        name: str = "histopathology",
+        path: str = "data/histopathology.tsv",
+        **kwargs,
+    ):
+        self._name = name
+        self.path = Path(path)
+        self._samples: List[Sample] = []
+        self._load()
+
+    def _load(self):
+        """Load TSV and expand to 4 samples per row."""
+        if not self.path.exists():
+            raise FileNotFoundError(f"Dataset not found: {self.path}")
+
+        with open(self.path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f, delimiter="\t")
+            sample_idx = 0
+            for row_idx, row in enumerate(reader):
+                ground_truth = row.get("ground_truth", "")
+                # Expand 4 model outputs per row
+                for model_num in range(4):
+                    report_col = str(model_num)
+                    score_col = f"Scoring {model_num}"
+                    report_text = row.get(report_col, "")
+                    score = row.get(score_col, "")
+
+                    # Skip if missing data
+                    if not report_text or score == "":
+                        continue
+
+                    try:
+                        label = int(float(score))
+                    except (ValueError, TypeError):
+                        continue
+
+                    self._samples.append(
+                        Sample(
+                            idx=sample_idx,
+                            text=report_text,
+                            label=label,
+                            metadata={
+                                "ground_truth": ground_truth,
+                                "model_id": model_num,
+                                "row_id": row_idx,
+                            },
+                        )
+                    )
+                    sample_idx += 1
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        """Histopathology dataset works with histopathology prompt."""
+        return ["histopathology"]
