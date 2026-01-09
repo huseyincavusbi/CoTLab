@@ -282,7 +282,7 @@ class NeurologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
             try:
                 parsed = self._parse_formatted_response(response)
                 is_positive = False
-                if self.output_format == "plain":
+                if self.output_format in ["plain", "markdown"]:
                     ans_str = str(parsed.get("answer", "")).upper()
                     is_positive = "ABNORMALITY DETECTED" in ans_str
                 else:
@@ -345,4 +345,3 @@ class NeurologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
     def get_prediction_field(self) -> str:
         """Return the JSON field name used for binary classification."""
         return "neurological_abnormality"
-

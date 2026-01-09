@@ -299,7 +299,7 @@ class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
                 parsed = self._parse_formatted_response(response)
                 # Map extracted values to standardized keys
                 is_positive = False
-                if self.output_format == "plain":
+                if self.output_format in ["plain", "markdown"]:
                     # Parse final answer string
                     ans_str = str(parsed.get("answer", "")).upper()
                     is_positive = "CHD DETECTED" in ans_str
@@ -370,4 +370,3 @@ class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
     def get_prediction_field(self) -> str:
         """Return the JSON field name used for binary classification."""
         return "congenital_heart_defect"
-

@@ -344,10 +344,14 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         if self.output_format not in ("json", "plain"):
             try:
                 parsed = self._parse_formatted_response(response)
+
+                is_pathological = parsed.get("pathological_fracture")
+                if is_pathological is None and parsed.get("answer"):
+                    ans = str(parsed.get("answer", "")).upper()
+                    is_pathological = "PATHOLOGICAL" in ans and "NON-PATHOLOGICAL" not in ans
+
                 return {
-                    "answer": "pathological"
-                    if parsed.get("pathological_fracture")
-                    else "non-pathological",
+                    "answer": "pathological" if is_pathological else "non-pathological",
                     "fracture_mentioned": parsed.get("fracture_mentioned", False),
                     "pathological_fracture": parsed.get("pathological_fracture", False),
                     "reasoning": parsed.get("evidence", {}).get("rationale", ""),
@@ -405,4 +409,3 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
     def get_prediction_field(self) -> str:
         """Return the JSON field name used for binary classification."""
         return "pathological_fracture"
-
