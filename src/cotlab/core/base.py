@@ -527,7 +527,13 @@ class StructuredOutputMixin:
                 key = key.strip()
                 value = value.strip()
                 if key and value:
-                    result[key] = value
+                    # Auto-convert booleans
+                    if value.lower() == "true":
+                        result[key] = True
+                    elif value.lower() == "false":
+                        result[key] = False
+                    else:
+                        result[key] = value
 
         if "diagnosis" in result:
             return self._extract_fields(result, response, "toon")
@@ -629,7 +635,7 @@ class StructuredOutputMixin:
         elif not isinstance(confidence, int):
             confidence = int(confidence) if confidence else 0
 
-        return {
+        result = {
             "answer": str(parsed.get("diagnosis", "")),
             "reasoning": reasoning,
             "confidence": confidence,
@@ -639,6 +645,14 @@ class StructuredOutputMixin:
             "parse_success": True,
             "format": fmt,
         }
+
+        # Merge all parsed fields into top-level result for easy access
+        # (excluding standard keys to avoid overwriting processed values)
+        for k, v in parsed.items():
+            if k not in result:
+                result[k] = v
+
+        return result
 
     def _parse_failure(self, response: str, fmt: str) -> Dict[str, Any]:
         """Return parse failure result."""
