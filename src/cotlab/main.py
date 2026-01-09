@@ -52,7 +52,7 @@ def main(cfg: DictConfig) -> None:
     # Initialize experiment documenter and create initial EXPERIMENT.md
     documenter = ExperimentDocumenter(cfg, output_dir)
     doc_path = documenter.save()
-    logger.info(f"Created experiment documentation: {doc_path}")
+    print(f"Created experiment documentation: {doc_path}")
 
     if cfg.dry_run:
         print("Dry run - exiting without running experiment")
@@ -108,7 +108,7 @@ def main(cfg: DictConfig) -> None:
             print(f"  {name}: {value}")
 
         # Update EXPERIMENT.md with results
-        results_dict = {**result.metrics, "total_samples": len(result.predictions)}
+        results_dict = {**result.metrics, "total_samples": len(result.raw_outputs)}
         updated_doc = documenter.update_with_results(results_dict, duration)
         documenter.save(updated_doc)
         print(f"\nExperiment documentation updated: {doc_path}")
