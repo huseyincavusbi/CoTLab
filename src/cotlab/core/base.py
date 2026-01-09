@@ -566,13 +566,62 @@ class StructuredOutputMixin:
         content = xml_match.group(1) if xml_match else response
 
         try:
-            import xml.etree.ElementTree as ET
+            import xmltodict
 
-            root = ET.fromstring(content.strip())
-            parsed = {child.tag: child.text for child in root}
+            def postprocessor(path, key, value):
+                if value and isinstance(value, str):
+                    if value.lower() == "true":
+                        return key, True
+                    if value.lower() == "false":
+                        return key, False
+                return key, value
+
+            parsed = xmltodict.parse(content.strip(), postprocessor=postprocessor)
+            # Remove root element wrapper if present (e.g. <response>)
+            if len(parsed) == 1:
+                key = next(iter(parsed))
+                parsed = parsed[key]
+
             return self._extract_fields(parsed, response, "xml")
         except Exception:
-            return self._parse_failure(response, "xml")
+            # Fallback to ElementTree with recursive parsing
+            try:
+                import xml.etree.ElementTree as ET
+
+                def elem_to_dict(elem):
+                    text = elem.text.strip() if elem.text else None
+                    # Convert booleans
+                    if text:
+                        if text.lower() == "true":
+                            text = True
+                        elif text.lower() == "false":
+                            text = False
+
+                    children = list(elem)
+                    if not children:
+                        return text
+
+                    result = {}
+                    for child in children:
+                        child_val = elem_to_dict(child)
+                        if child.tag in result:
+                            if not isinstance(result[child.tag], list):
+                                result[child.tag] = [result[child.tag]]
+                            result[child.tag].append(child_val)
+                        else:
+                            result[child.tag] = child_val
+                    return result
+
+                root = ET.fromstring(content.strip())
+                parsed = elem_to_dict(root)
+                # If root returned a dict (nested content), use it directly
+                # If root was simple value (not likely for top level), usage might differ
+                if isinstance(parsed, dict):
+                    pass
+
+                return self._extract_fields(parsed, response, "xml")
+            except Exception:
+                return self._parse_failure(response, "xml")
 
     def _parse_yaml(self, response: str) -> Dict[str, Any]:
         """Parse YAML response."""
