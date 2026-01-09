@@ -18,7 +18,7 @@ prompt:
 # Output configuration
 hydra:
   run:
-    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${model.safe_name}_${prompt.name}_${dataset.name}
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${experiment.name}_${model.safe_name}_${prompt.name}_${prompt.output_format}_${dataset.name}
   sweep:
     dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}
