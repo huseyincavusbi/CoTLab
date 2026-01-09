@@ -1,5 +1,5 @@
 defaults:
-  - backend: transformers
+  - backend: vllm
   - model: medgemma_4b
   - prompt: chain_of_thought
   - dataset: synthetic
