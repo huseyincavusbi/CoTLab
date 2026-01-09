@@ -249,3 +249,8 @@ class OncologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
     def get_compatible_datasets(self) -> list[str]:
         """Oncology prompt is only compatible with oncology dataset."""
         return ["oncology"]
+
+    def get_prediction_field(self) -> str:
+        """Return the JSON field name used for binary classification."""
+        return "malignancy"
+

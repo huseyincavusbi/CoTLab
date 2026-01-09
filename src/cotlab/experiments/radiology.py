@@ -14,11 +14,11 @@ from ..logging import ExperimentLogger
 @Registry.register_experiment("radiology")
 class RadiologyExperiment(BaseExperiment):
     """
-    Radiology pathological fracture detection experiment.
+    Generic binary classification experiment for medical reports.
 
     Uses structured JSON output for reliable answer extraction.
-    Compares model prediction (pathological_fracture: true/false)
-    against ground truth labels.
+    Dynamically gets the prediction field from the prompt strategy,
+    making it work with any specialty (radiology, cardiology, neurology, etc.).
     """
 
     def __init__(
@@ -64,7 +64,10 @@ class RadiologyExperiment(BaseExperiment):
             "parse_errors": 0,
         }
 
-        print(f"Running Radiology Experiment on {len(samples)} samples...")
+        # Get prediction field from prompt strategy (e.g., 'pathological_fracture', 'congenital_heart_defect')
+        prediction_field = getattr(prompt_strategy, 'get_prediction_field', lambda: 'pathological_fracture')()
+        print(f"Running Classification Experiment on {len(samples)} samples...")
+        print(f"  Prediction field: {prediction_field}")
 
         # Prepare inputs
         inputs = [{"text": s.text, "report": s.text} for s in samples]
@@ -87,7 +90,7 @@ class RadiologyExperiment(BaseExperiment):
                 metrics["parse_errors"] += 1
                 predicted = None
             else:
-                predicted = parsed.get("pathological_fracture", False)
+                predicted = parsed.get(prediction_field, False)
 
             # Ground truth (sample.label is True/False for pathological fracture)
             ground_truth = sample.label

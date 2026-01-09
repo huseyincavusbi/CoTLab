@@ -274,3 +274,8 @@ class CardiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         in cardiac imaging reports and should NOT be used for general medical QA.
         """
         return ["cardiology"]
+
+    def get_prediction_field(self) -> str:
+        """Return the JSON field name used for binary classification."""
+        return "congenital_heart_defect"
+

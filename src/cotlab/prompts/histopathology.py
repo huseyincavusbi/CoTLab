@@ -230,3 +230,8 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
     def get_compatible_datasets(self) -> list[str]:
         """Histopathology prompt works with histopathology dataset."""
         return ["histopathology"]
+
+    def get_prediction_field(self) -> str:
+        """Return the JSON field name used for classification."""
+        return "quality_score"
+

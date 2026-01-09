@@ -306,3 +306,8 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         in radiology reports and should NOT be used for general medical QA.
         """
         return ["radiology"]
+
+    def get_prediction_field(self) -> str:
+        """Return the JSON field name used for binary classification."""
+        return "pathological_fracture"
+

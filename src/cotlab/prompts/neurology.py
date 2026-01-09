@@ -254,3 +254,8 @@ class NeurologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
     def get_compatible_datasets(self) -> list[str]:
         """Neurology prompt is only compatible with neurology dataset."""
         return ["neurology"]
+
+    def get_prediction_field(self) -> str:
+        """Return the JSON field name used for binary classification."""
+        return "neurological_abnormality"
+
