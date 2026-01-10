@@ -317,12 +317,28 @@ class OncologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
 
         try:
             parsed = json.loads(json_str)
+            if isinstance(parsed, list):
+                # Handle case where model outputs a list of reasoning steps/options
+                # Take the last item as the final conclusion
+                if len(parsed) > 0:
+                    parsed = parsed[-1]
+                else:
+                    parsed = {}
+
+            
+            evidence = parsed.get("evidence", {})
+            if isinstance(evidence, list):
+                if len(evidence) > 0 and isinstance(evidence[0], dict):
+                     evidence = evidence[0]
+                else:
+                     evidence = {}
+            
             return {
                 "answer": "malignancy present" if parsed.get("malignancy") else "benign",
                 "abnormal_findings": parsed.get("abnormal_findings", False),
                 "malignancy": parsed.get("malignancy", False),
-                "reasoning": parsed.get("evidence", {}).get("rationale", ""),
-                "findings": parsed.get("evidence", {}).get("report_findings", []),
+                "reasoning": evidence.get("rationale", ""),
+                "findings": evidence.get("report_findings", []),
                 "raw": response,
                 "parsed_json": parsed,
             }
