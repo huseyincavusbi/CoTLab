@@ -51,6 +51,8 @@ Provide your response in JSON format:
     "reasoning": "Brief explanation of your rating"
 }}
 ```
+
+Response:
 """
 
 # Contrarian prompt - more skeptical evaluation
@@ -83,6 +85,8 @@ Provide your response in JSON format:
     "reasoning": "Brief explanation of your rating"
 }}
 ```
+
+Response:
 """
 
 # Answer-first prompt - conclude then justify
@@ -107,6 +111,8 @@ Provide your response in JSON format:
     "reasoning": "Justification for your rating"
 }}
 ```
+
+Response:
 """
 
 

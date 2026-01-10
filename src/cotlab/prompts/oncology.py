@@ -56,6 +56,8 @@ Oncology report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 PROMPT_TEMPLATE_CONTRARIAN = """As a skeptical oncologist, follow this structured reasoning on the attached oncology report.
@@ -97,6 +99,8 @@ Oncology report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 PROMPT_TEMPLATE_ANSWER_FIRST = """Review this oncology report and provide immediate assessment.
 
@@ -141,6 +145,8 @@ Oncology report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 

@@ -56,6 +56,8 @@ Neuroimaging report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 PROMPT_TEMPLATE_CONTRARIAN = """As a skeptical neuroradiologist, follow this structured reasoning on the attached neuroimaging report.
@@ -97,6 +99,8 @@ Neuroimaging report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 PROMPT_TEMPLATE_ANSWER_FIRST = """Review this neuroimaging report and provide immediate assessment.
 
@@ -141,6 +145,8 @@ Neuroimaging report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 

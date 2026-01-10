@@ -56,6 +56,8 @@ Cardiac imaging report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 PROMPT_TEMPLATE_CONTRARIAN = """As a skeptical cardiologist, follow this structured reasoning on the attached cardiac imaging report.
@@ -97,6 +99,8 @@ Cardiac imaging report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 PROMPT_TEMPLATE_ANSWER_FIRST = """Review this cardiac imaging report and provide immediate assessment.
@@ -142,6 +146,8 @@ Cardiac imaging report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 

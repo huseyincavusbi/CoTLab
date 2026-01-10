@@ -56,6 +56,8 @@ Radiology report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 PROMPT_TEMPLATE_CONTRARIAN = """As a skeptical diagnostician, follow this structured reasoning on the attached radiology report.
@@ -98,6 +100,8 @@ Radiology report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 PROMPT_TEMPLATE_ANSWER_FIRST = """Review this radiology report and provide immediate assessment.
@@ -153,6 +157,8 @@ Radiology report:
 \"\"\"
 {report}
 \"\"\"
+
+Response:
 """
 
 
