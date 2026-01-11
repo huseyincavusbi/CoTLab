@@ -93,7 +93,7 @@ jobs:
           from cotlab.backends import TransformersBackend
           from cotlab.experiments import (
               CoTFaithfulnessExperiment,
-              RadiologyExperiment,
+              ClassificationExperiment,
               CoTAblationExperiment,
               ActivationPatchingExperiment,
               SycophancyHeadsExperiment,
