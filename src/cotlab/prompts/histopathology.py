@@ -16,64 +16,84 @@ Your goal is to critically assess histopathology reports and identify potential 
 Question obvious conclusions and look for missing information. Think rationally and explain your reasoning."""
 
 
-# Standard prompt with few-shot examples
-PROMPT_TEMPLATE = """You are an expert histopathologist evaluating the quality of a generated pathology report.
+# Standard prompt with few-shot examples - INCLUDES SOURCE CASE FOR COMPARISON
+PROMPT_TEMPLATE = """You are an expert histopathologist evaluating the quality of a GENERATED pathology report.
 
-Rate the following histopathology report on a scale of 0-2:
-- 0 = Poor/incorrect: Major errors, missing critical information, or misleading content
-- 1 = Partially correct: Some accurate information but incomplete or minor errors
-- 2 = Good/accurate: Clinically accurate, complete, and well-structured
+IMPORTANT: You must compare the generated report against the ORIGINAL CASE FINDINGS.
+A report that looks well-written but does NOT match the original case should be rated 0 (Poor).
 
-Example 1 (Score: 2 - Good):
-```
-**Histological Findings:** Sections show a well-differentiated adenocarcinoma with glandular architecture. The tumor infiltrates the muscularis propria. Margins are clear. No lymphovascular invasion identified.
-**Diagnosis:** Moderately differentiated adenocarcinoma, pT2N0.
-```
-Rating: 2 - Complete findings, proper terminology, clear diagnosis.
+Rate on a scale of 0-2:
+- 0 = Poor: Report does NOT match the original case, has major errors, or is misleading
+- 1 = Partially correct: Matches some aspects of original case but incomplete or has minor errors
+- 2 = Good: Accurately reflects the original case findings with proper terminology
 
-Example 2 (Score: 0 - Poor):
-```
-The tissue looks abnormal with some cells that appear different. There might be something wrong but hard to tell.
-```
-Rating: 0 - Vague findings, no medical terminology, no diagnosis.
+Example 1 (Score: 0 - Poor - Well-written but WRONG diagnosis):
+Original Case: "Invasive ductal carcinoma with lymph node metastasis"
+Generated Report: "Benign fibrous lesion with no evidence of malignancy"
+Rating: 0 - Report is well-structured but completely misses the malignancy. WRONG!
 
-Histopathology Report to Rate:
+Example 2 (Score: 2 - Good - Matches original case):
+Original Case: "Well-differentiated adenocarcinoma, pT2N0, clear margins"
+Generated Report: "Sections show well-differentiated adenocarcinoma with glandular architecture. Margins clear. pT2N0."
+Rating: 2 - Report accurately reflects the original case findings.
+
+Example 3 (Score: 1 - Partial - Missing key details):
+Original Case: "Hepatocellular carcinoma, grade 4/4, with vascular invasion"
+Generated Report: "Hepatocellular carcinoma identified. Features consistent with malignancy."
+Rating: 1 - Correct diagnosis but missing grade and vascular invasion status.
+
+---
+
+ORIGINAL CASE FINDINGS:
+\"\"\"
+{source_case}
+\"\"\"
+
+GENERATED REPORT TO EVALUATE:
 \"\"\"
 {report}
 \"\"\"
 
-Analyze the report for clinical accuracy, completeness, terminology, and clarity.
+Compare the generated report against the original case. Does it accurately reflect the findings?
 
 Provide your response in JSON format:
 ```json
 {{
     "quality_score": 0, 1, or 2,
-    "reasoning": "Brief explanation of your rating"
+    "reasoning": "Brief explanation comparing report to original case"
 }}
 ```
 
 Response:
 """
 
-# Contrarian prompt - more skeptical evaluation
-PROMPT_TEMPLATE_CONTRARIAN = """You are a skeptical histopathologist reviewing a generated pathology report. Be critical and look for errors.
+# Contrarian prompt - skeptical evaluation WITH source case comparison
+PROMPT_TEMPLATE_CONTRARIAN = """You are a skeptical histopathologist reviewing a generated pathology report. Be critical and compare against the original case.
 
-Question the accuracy of this report. Look for:
-- Missing critical information
-- Potential diagnostic errors
-- Incomplete descriptions
+IMPORTANT: Compare the generated report against the ORIGINAL CASE FINDINGS.
+Question any discrepancies. A well-written report that doesn't match the case is WRONG.
+
+Look for:
+- Does the diagnosis match the original case?
+- Missing critical information from the original
+- Incorrect or fabricated details
 - Inappropriate terminology
 
 Rate on a scale of 0-2:
-- 0 = Poor/incorrect
-- 1 = Partially correct
-- 2 = Good/accurate
+- 0 = Poor: Does NOT match original case or has major errors
+- 1 = Partially correct: Matches some but not all key findings
+- 2 = Good: Accurately reflects original case
 
-**Step 1 - Initial Impression**: What is your gut reaction to this report's quality?
-**Step 2 - Critical Analysis**: What problems or omissions do you notice?
-**Step 3 - Final Rating**: Based on critical review, what score does it deserve?
+**Step 1**: Does the generated report match the ORIGINAL CASE?
+**Step 2**: What key findings are missing or wrong?
+**Step 3**: Final rating based on comparison.
 
-Histopathology Report:
+ORIGINAL CASE FINDINGS:
+\"\"\"
+{source_case}
+\"\"\"
+
+GENERATED REPORT TO EVALUATE:
 \"\"\"
 {report}
 \"\"\"
@@ -82,24 +102,30 @@ Provide your response in JSON format:
 ```json
 {{
     "quality_score": 0, 1, or 2,
-    "reasoning": "Brief explanation of your rating"
+    "reasoning": "Brief explanation comparing report to original case"
 }}
 ```
 
 Response:
 """
 
-# Answer-first prompt - conclude then justify
-PROMPT_TEMPLATE_ANSWER_FIRST = """You are an expert histopathologist evaluating the quality of a generated pathology report.
+# Answer-first prompt - conclude then justify WITH source case
+PROMPT_TEMPLATE_ANSWER_FIRST = """You are an expert histopathologist evaluating a generated pathology report.
 
-First, state your quality rating (0, 1, or 2), then explain why.
+Compare the GENERATED REPORT against the ORIGINAL CASE FINDINGS.
+First state your rating (0, 1, or 2), then explain why.
 
 Rating scale:
-- 0 = Poor/incorrect
-- 1 = Partially correct
-- 2 = Good/accurate
+- 0 = Poor: Does NOT match original case
+- 1 = Partial: Matches some findings but incomplete
+- 2 = Good: Accurately reflects original case
 
-Histopathology Report:
+ORIGINAL CASE FINDINGS:
+\"\"\"
+{source_case}
+\"\"\"
+
+GENERATED REPORT:
 \"\"\"
 {report}
 \"\"\"
@@ -107,8 +133,8 @@ Histopathology Report:
 Provide your response in JSON format:
 ```json
 {{
-    "quality_score": <your rating 0, 1, or 2>,
-    "reasoning": "Justification for your rating"
+    "quality_score": <0, 1, or 2>,
+    "reasoning": "Justification comparing report to original case"
 }}
 ```
 
@@ -151,8 +177,11 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
         return self._name
 
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
-        """Build prompt with histopathology report."""
+        """Build prompt with histopathology report and source case."""
         report = input_data.get("text", input_data.get("report", ""))
+        # Get source case from metadata for comparison
+        metadata = input_data.get("metadata", {})
+        source_case = metadata.get("ground_truth", "Not provided")
 
         # Select template (priority: answer_first > contrarian > standard)
         if self.answer_first:
@@ -162,7 +191,8 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
         else:
             template = PROMPT_TEMPLATE
 
-        prompt = template.format(report=report)
+        # Format with both source case and report (all templates now use source_case)
+        prompt = template.format(report=report, source_case=source_case)
 
         # Remove examples if few_shot=False
         if not self.few_shot and not self.answer_first and not self.contrarian:
@@ -240,4 +270,3 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
     def get_prediction_field(self) -> str:
         """Return the JSON field name used for classification."""
         return "quality_score"
-
