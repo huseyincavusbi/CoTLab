@@ -331,14 +331,13 @@ class OncologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
                 else:
                     parsed = {}
 
-            
             evidence = parsed.get("evidence", {})
             if isinstance(evidence, list):
                 if len(evidence) > 0 and isinstance(evidence[0], dict):
-                     evidence = evidence[0]
+                    evidence = evidence[0]
                 else:
-                     evidence = {}
-            
+                    evidence = {}
+
             return {
                 "answer": "malignancy present" if parsed.get("malignancy") else "benign",
                 "abnormal_findings": parsed.get("abnormal_findings", False),
