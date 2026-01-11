@@ -89,8 +89,8 @@ def main():
                     "radiology",
                 ],
             },
-            # 2. Specialized Radiology Experiment
-            {"experiment": "radiology", "datasets": ["radiology"], "prompts": ["radiology"]},
+            # 2. Classification Experiment (works for all specialties)
+            {"experiment": "classification", "datasets": ["radiology"], "prompts": ["radiology"]},
         ]
 
         total_jobs = sum(len(g["datasets"]) * len(g["prompts"]) for g in grid)

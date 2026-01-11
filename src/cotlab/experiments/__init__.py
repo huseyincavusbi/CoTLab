@@ -2,6 +2,7 @@
 
 from .activation_patching import ActivationPatchingExperiment
 from .attention_analysis import AttentionAnalysisExperiment
+from .classification import ClassificationExperiment
 from .cot_ablation import CoTAblationExperiment
 from .cot_faithfulness import CoTFaithfulnessExperiment
 from .cot_heads import CoTHeadsExperiment
@@ -11,7 +12,6 @@ from .logit_lens import LogitLensExperiment
 from .multi_head_cot import MultiHeadCoTExperiment
 from .multi_head_patching import MultiHeadPatchingExperiment
 from .probing_classifier import ProbingClassifierExperiment
-from .radiology import RadiologyExperiment
 from .steering_vectors import SteeringVectorsExperiment
 from .sycophancy_heads import SycophancyHeadsExperiment
 
@@ -21,7 +21,7 @@ __all__ = [
     "ActivationPatchingExperiment",
     "AttentionAnalysisExperiment",
     "ProbingClassifierExperiment",
-    "RadiologyExperiment",
+    "ClassificationExperiment",
     "SycophancyHeadsExperiment",
     "MultiHeadPatchingExperiment",
     "FullLayerPatchingExperiment",

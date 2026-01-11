@@ -1,4 +1,4 @@
-"""Radiology-specific experiment using JSON structured output."""
+"""Generic binary classification experiment for medical reports."""
 
 from typing import Optional
 
@@ -11,8 +11,8 @@ from ..datasets.loaders import BaseDataset
 from ..logging import ExperimentLogger
 
 
-@Registry.register_experiment("radiology")
-class RadiologyExperiment(BaseExperiment):
+@Registry.register_experiment("classification")
+class ClassificationExperiment(BaseExperiment):
     """
     Generic binary classification experiment for medical reports.
 
@@ -23,8 +23,8 @@ class RadiologyExperiment(BaseExperiment):
 
     def __init__(
         self,
-        name: str = "radiology",
-        description: str = "Pathological fracture detection from radiology reports",
+        name: str = "classification",
+        description: str = "Binary classification from medical reports",
         num_samples: int = -1,  # Default to -1 (all samples)
         **kwargs,
     ):
@@ -45,7 +45,7 @@ class RadiologyExperiment(BaseExperiment):
         logger: Optional[ExperimentLogger] = None,
         **kwargs,
     ) -> ExperimentResult:
-        """Run the radiology experiment."""
+        """Run the classification experiment."""
         n_samples = num_samples if num_samples is not None else self.num_samples
 
         if n_samples > 0 and n_samples < len(dataset):
@@ -65,7 +65,9 @@ class RadiologyExperiment(BaseExperiment):
         }
 
         # Get prediction field from prompt strategy (e.g., 'pathological_fracture', 'congenital_heart_defect')
-        prediction_field = getattr(prompt_strategy, 'get_prediction_field', lambda: 'pathological_fracture')()
+        prediction_field = getattr(
+            prompt_strategy, "get_prediction_field", lambda: "pathological_fracture"
+        )()
         print(f"Running Classification Experiment on {len(samples)} samples...")
         print(f"  Prediction field: {prediction_field}")
 
