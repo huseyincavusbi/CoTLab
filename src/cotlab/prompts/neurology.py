@@ -115,7 +115,17 @@ Initial Assessment: Is there a significant neurological abnormality? (State YES 
 
 **Step 3 - Final Diagnosis**: Based on the evidence collected, confirm or revise your initial assessment.
 
-Provide your response in JSON format. Follow the format of these two examples and give the output strictly in the json format.
+Provide your response in JSON format with the following structure:
+{{
+    "imaging_abnormality": true or false,
+    "neurological_abnormality": true or false,
+    "evidence": {{
+        "report_findings": [...list of relevant findings...],
+        "rationale": "Your reasoning including initial assessment, supporting/contradicting evidence, and final conclusion"
+    }}
+}}
+
+Follow the format of these two examples and give the output strictly in the json format.
 
 Example 1: Initial YES, Confirmed abnormality
 ```json

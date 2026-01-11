@@ -115,7 +115,17 @@ Initial Assessment: Is there malignancy? (State YES or NO immediately)
 
 **Step 3 - Final Diagnosis**: Based on the evidence collected, confirm or revise your initial assessment.
 
-Provide your response in JSON format. Follow the format of these two examples and give the output strictly in the json format.
+Provide your response in JSON format with the following structure:
+{{
+    "abnormal_findings": true or false,
+    "malignancy": true or false,
+    "evidence": {{
+        "report_findings": [...list of relevant findings...],
+        "rationale": "Your reasoning including initial assessment, supporting/contradicting evidence, and final conclusion"
+    }}
+}}
+
+Follow the format of these two examples and give the output strictly in the json format.
 
 Example 1: Initial YES, Confirmed malignancy
 ```json
@@ -331,14 +341,13 @@ class OncologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
                 else:
                     parsed = {}
 
-            
             evidence = parsed.get("evidence", {})
             if isinstance(evidence, list):
                 if len(evidence) > 0 and isinstance(evidence[0], dict):
-                     evidence = evidence[0]
+                    evidence = evidence[0]
                 else:
-                     evidence = {}
-            
+                    evidence = {}
+
             return {
                 "answer": "malignancy present" if parsed.get("malignancy") else "benign",
                 "abnormal_findings": parsed.get("abnormal_findings", False),
