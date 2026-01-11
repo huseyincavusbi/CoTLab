@@ -1,0 +1,6 @@
+# Classification experiment for all medical specialties (radiology, cardiology, neurology, oncology, histopathology)
+_target_: cotlab.experiments.ClassificationExperiment
+
+name: classification
+description: Classification from medical reports
+num_samples: -1  # -1 = use full dataset, or specify a number
