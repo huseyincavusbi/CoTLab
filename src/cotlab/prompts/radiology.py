@@ -346,11 +346,14 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
                     ans = str(parsed.get("answer", "")).upper()
                     is_pathological = "PATHOLOGICAL" in ans and "NON-PATHOLOGICAL" not in ans
 
+                # Derive fracture_mentioned from answer (if diagnosis given, fracture was mentioned)
+                has_fracture = parsed.get("fracture_mentioned", is_pathological is not None)
+                
                 return {
                     "answer": "pathological" if is_pathological else "non-pathological",
-                    "fracture_mentioned": parsed.get("fracture_mentioned", False),
-                    "pathological_fracture": parsed.get("pathological_fracture", False),
-                    "reasoning": parsed.get("evidence", {}).get("rationale", ""),
+                    "fracture_mentioned": has_fracture,
+                    "pathological_fracture": is_pathological if is_pathological is not None else False,
+                    "reasoning": parsed.get("reasoning", parsed.get("evidence", {}).get("rationale", "")),
                     "findings": parsed.get("evidence", {}).get("report_findings", []),
                     "raw": response,
                     "parsed_json": parsed,
