@@ -1,0 +1,7 @@
+# MedGemma 1.5 4B-it model
+name: google/medgemma-1.5-4b-it
+variant: 4b
+max_new_tokens: 512
+temperature: 0.7
+top_p: 0.9
+safe_name: medgemma_1_5_4b_it
