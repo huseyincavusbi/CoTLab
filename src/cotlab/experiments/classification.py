@@ -71,8 +71,8 @@ class ClassificationExperiment(BaseExperiment):
         print(f"Running Classification Experiment on {len(samples)} samples...")
         print(f"  Prediction field: {prediction_field}")
 
-        # Prepare inputs
-        inputs = [{"text": s.text, "report": s.text} for s in samples]
+        # Prepare inputs - include metadata for prompts that need it (e.g., histopathology)
+        inputs = [{"text": s.text, "report": s.text, "metadata": s.metadata} for s in samples]
 
         # Batch Generate
         print("Generating responses...")
