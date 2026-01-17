@@ -89,3 +89,4 @@ HF_TOKEN=your_token_here
 
 ```bash
 python -c "import cotlab; print('OK')"
+```
