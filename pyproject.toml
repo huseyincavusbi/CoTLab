@@ -28,8 +28,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-cuda = [
-    "vllm>=0.4.0",
+# vLLM is installed separately based on GPU:
+# - NVIDIA: pip install vllm
+# - AMD ROCm: Use Docker (./scripts/cotlab-rocm.sh)
+vllm = [
+    "vllm>=0.6.0",
 ]
 dev = [
     "pytest>=7.0.0",
@@ -39,7 +42,6 @@ dev = [
     "ipython>=8.0.0",
     "jupyter>=1.0.0",
     "pre-commit>=3.0.0",
-    "vllm>=0.4.0",
 ]
 
 [project.scripts]

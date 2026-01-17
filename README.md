@@ -19,7 +19,13 @@ cd CoTLab
 uv venv cotlab --python 3.11
 source cotlab/bin/activate
 uv pip install -e ".[dev]"
+
+# GPU Setup:
+# NVIDIA: uv pip install vllm
+# AMD ROCm: ./scripts/cotlab-rocm.sh (uses Docker)
 ```
+
+See [Installation Docs](docs/getting-started/installation.md) for detailed GPU setup.
 
 ## Backend Compatibility
 

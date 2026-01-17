@@ -1,0 +1,31 @@
+services:
+  cotlab:
+    build:
+      context: .
+      dockerfile: Dockerfile.rocm
+    user: "1000:1000"
+    privileged: true
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    group_add:
+      - "44"    # video group GID
+      - "993"   # render group GID
+    volumes:
+      # Mount project for live code changes
+      - ./src:/app/src:ro
+      - ./conf:/app/conf:ro
+      - ./data:/app/data:ro
+      # Mount HuggingFace cache for model persistence
+      - ~/.cache/huggingface:/home/user/.cache/huggingface
+      # Mount outputs directory
+      - ./outputs:/app/outputs
+    environment:
+      - HOME=/home/user
+      - HF_HOME=/home/user/.cache/huggingface
+      - HF_TOKEN=${HF_TOKEN}
+      - TRITON_CACHE_DIR=/home/user/.cache/triton
+      - TORCHINDUCTOR_CACHE_DIR=/home/user/.cache/torch_inductor
+    ipc: host
+    security_opt:
+      - seccomp=unconfined

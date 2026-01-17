@@ -43,6 +43,40 @@ mamba activate cotlab
 pip install -e ".[dev]"
 ```
 
+## GPU Setup (vLLM Backend)
+
+CoTLab supports high-performance inference via vLLM. Installation varies by GPU.
+
+> **For AMD GPU users**: See the comprehensive [ROCm Setup Guide](../rocm-setup.md) for detailed Docker-based installation.
+
+### NVIDIA GPU (CUDA)
+
+```bash
+# Standard installation - pulls CUDA-enabled vLLM from PyPI
+uv pip install vllm
+```
+
+### AMD GPU (ROCm) - Docker (Recommended)
+
+The official way to run vLLM on AMD GPUs is via Docker:
+
+```bash
+# Run experiments using the ROCm Docker wrapper
+./scripts/cotlab-rocm.sh model=gemma_270m
+
+# First run downloads base image (~10 GB) and compiles kernels (~30 sec)
+# Subsequent runs start in seconds (cached)
+```
+
+**Base Image**: `rocm/vllm-dev:rocm7.1.1_navi_ubuntu24.04_py3.12_pytorch_2.8_vllm_0.10.2rc1`
+- Native RDNA 4 support
+- ROCm 7.1.1, PyTorch 2.8, vLLM 0.10.2
+
+**Requirements:**
+- Docker installed
+- ROCm drivers on host (`rocminfo` should show your GPU)
+- User in `docker`, `video`, and `render` groups
+
 ## Environment Setup
 
 Create `.env` file with your HuggingFace token:
@@ -55,4 +89,3 @@ HF_TOKEN=your_token_here
 
 ```bash
 python -c "import cotlab; print('OK')"
-```

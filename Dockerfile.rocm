@@ -1,0 +1,18 @@
+FROM rocm/vllm-dev:rocm7.1.1_navi_ubuntu24.04_py3.12_pytorch_2.8_vllm_0.10.2rc1
+
+# Ensure cache directory exists (base image already has user with UID 1000)
+RUN mkdir -p /home/user/.cache/huggingface && \
+    chown -R 1000:1000 /home/user 2>/dev/null || true
+
+WORKDIR /app
+
+# Copy project files
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+COPY conf/ ./conf/
+
+# Install CoTLab (without vllm since it's already in the base image)
+RUN pip install -e .
+
+# Default entrypoint
+ENTRYPOINT ["python", "-m", "cotlab.main"]
