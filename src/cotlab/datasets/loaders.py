@@ -87,14 +87,75 @@ class JSONDataset(BaseDataset):
 
     def __init__(self, name: str, path: str, **kwargs):
         self._name = name
-        self.path = Path(path)
+        self.path = self._resolve_path_from_registry(name, path)
         self._samples: List[Sample] = []
         self._load()
+
+    def _resolve_path_from_registry(self, name: str, default_path: str) -> Path:
+        """Resolve path from data/datasets.yaml registry or fallback to default."""
+        import yaml
+        from huggingface_hub import hf_hub_download
+
+        registry_path = Path("data/datasets.yaml")
+        if not registry_path.exists():
+            return Path(default_path)
+
+        try:
+            with open(registry_path, "r") as f:
+                config = yaml.safe_load(f)
+
+            # 1. Get Repo ID
+            ds_config = config.get("datasets", {}).get(name, {})
+            repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
+
+            if not repo_id:
+                return Path(default_path)
+
+            # 2. Determine Filename
+            # If explicit path in registry, use it.
+            # Otherwise, infer from default locally-styled path (e.g. data/radiology.json -> radiology.json)
+            filename = ds_config.get("path")
+            if not filename:
+                # heuristic: strip 'data/' prefix if present to map to HF root
+                p = Path(default_path)
+                if "data" in p.parts:
+                    # e.g. data/foo -> foo, data/tcga/foo -> tcga/foo
+                    try:
+                        filename = str(p.relative_to("data"))
+                    except ValueError:
+                        filename = p.name
+                else:
+                    filename = p.name
+
+            # 3. Download
+            try:
+                cached_path = hf_hub_download(
+                    repo_id=repo_id, filename=filename, repo_type="dataset"
+                )
+                return Path(cached_path)
+            except Exception as e:
+                print(
+                    f"Warning: Failed to download {name} ({filename}) from HF repo {repo_id}: {e}"
+                )
+                pass
+        except Exception as e:
+            print(f"Warning: Failed to load registry: {e}")
+
+        return Path(default_path)
 
     def _load(self):
         """Load samples from JSON or CSV file based on extension."""
         if not self.path.exists():
-            raise FileNotFoundError(f"Dataset not found: {self.path}")
+            # If resolved path doesn't exist, try resolving as relative to cwd
+            if Path(self.path.name).exists():
+                self.path = Path(self.path.name)
+            else:
+                # One last attempt: maybe it's in data/
+                p = Path("data") / self.path.name
+                if p.exists():
+                    self.path = p
+                else:
+                    raise FileNotFoundError(f"Dataset not found: {self.path}")
 
         if self.path.suffix.lower() == ".csv":
             self._load_csv()
@@ -543,15 +604,17 @@ class TCGADataset(BaseDataset):
     def __init__(
         self,
         name: str = "tcga",
-        path: str = "data/tcga/TCGA_Reports.csv",
-        labels_path: str = "data/tcga/tcga_patient_to_cancer_type.csv",
+        repo_id: Optional[str] = None,
+        reports_filename: str = "tcga/TCGA_Reports.csv",
+        labels_filename: str = "tcga/tcga_patient_to_cancer_type.csv",
         split: str = "test",  # train, test, or all
         random_seed: int = 0,
         **kwargs,
     ):
         self._name = name
-        self.path = Path(path)
-        self.labels_path = Path(labels_path)
+        self.repo_id = repo_id
+        self.reports_filename = reports_filename
+        self.labels_filename = labels_filename
         self.split = split
         self.random_seed = random_seed
         self._samples: List[Sample] = []
@@ -559,6 +622,42 @@ class TCGADataset(BaseDataset):
 
     def _load(self):
         import random
+
+        import yaml
+        from huggingface_hub import hf_hub_download
+
+        # Resolve Repo ID: Config > Registry > None
+        repo_id = self.repo_id
+        if not repo_id:
+            registry_path = Path("data/datasets.yaml")
+            if registry_path.exists():
+                try:
+                    with open(registry_path, "r") as f:
+                        config = yaml.safe_load(f)
+                    # Check explicit "tcga" entry or default
+                    ds_config = config.get("datasets", {}).get("tcga", {})
+                    repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
+                except Exception as e:
+                    print(f"Warning: Failed to load registry for TCGA: {e}")
+
+        # Download or get cached files
+        if repo_id:
+            try:
+                reports_path = hf_hub_download(
+                    repo_id=repo_id, filename=self.reports_filename, repo_type="dataset"
+                )
+                labels_path = hf_hub_download(
+                    repo_id=repo_id, filename=self.labels_filename, repo_type="dataset"
+                )
+                self.path = Path(reports_path)
+                self.labels_path = Path(labels_path)
+            except Exception as e:
+                raise FileNotFoundError(f"Failed to download from HF repo {repo_id}: {e}")
+        else:
+            # Fallback for legacy initialization (if used without config)
+            # This path logic needs to be robust if arguments provided differently
+            self.path = Path(self.reports_filename)
+            self.labels_path = Path(self.labels_filename)
 
         if not self.path.exists():
             raise FileNotFoundError(f"Reports not found: {self.path}")

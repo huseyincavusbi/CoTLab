@@ -2,6 +2,6 @@
 _target_: cotlab.datasets.loaders.TCGADataset
 name: tcga
 
-path: data/tcga/TCGA_Reports.csv
-labels_path: data/tcga/tcga_patient_to_cancer_type.csv
+reports_filename: "tcga/TCGA_Reports.csv"
+labels_filename: "tcga/tcga_patient_to_cancer_type.csv"
 split: test  # train, test, or all
