@@ -96,9 +96,16 @@ class JSONDataset(BaseDataset):
         import yaml
         from huggingface_hub import hf_hub_download
 
-        registry_path = Path("data/datasets.yaml")
+        # Locate registry relative to this file (src/cotlab/datasets/loaders.py -> root/data/datasets.yaml)
+        # root is 3 levels up from this file's directory: src/cotlab/datasets -> src/cotlab -> src -> root
+        root_dir = Path(__file__).parent.parent.parent.parent
+        registry_path = root_dir / "data/datasets.yaml"
+
         if not registry_path.exists():
-            return Path(default_path)
+            # Fallback: try CWD
+            registry_path = Path("data/datasets.yaml")
+            if not registry_path.exists():
+                return Path(default_path)
 
         try:
             with open(registry_path, "r") as f:
