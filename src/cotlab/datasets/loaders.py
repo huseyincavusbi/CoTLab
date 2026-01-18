@@ -528,3 +528,122 @@ class HistopathologyDataset(BaseDataset):
     def get_compatible_prompts(self) -> list[str]:
         """Histopathology dataset works with histopathology prompt."""
         return ["histopathology"]
+
+
+@Registry.register_dataset("tcga")
+class TCGADataset(BaseDataset):
+    """TCGA Cancer Type Classification dataset.
+
+    Input: Pathology report text
+    Output: Cancer type (e.g., BRCA, LUAD)
+
+    Implements official 15% stratified test split using patient IDs.
+    """
+
+    def __init__(
+        self,
+        name: str = "tcga",
+        path: str = "data/tcga/TCGA_Reports.csv",
+        labels_path: str = "data/tcga/tcga_patient_to_cancer_type.csv",
+        split: str = "test",  # train, test, or all
+        random_seed: int = 0,
+        **kwargs,
+    ):
+        self._name = name
+        self.path = Path(path)
+        self.labels_path = Path(labels_path)
+        self.split = split
+        self.random_seed = random_seed
+        self._samples: List[Sample] = []
+        self._load()
+
+    def _load(self):
+        import random
+
+        if not self.path.exists():
+            raise FileNotFoundError(f"Reports not found: {self.path}")
+        if not self.labels_path.exists():
+            raise FileNotFoundError(f"Labels not found: {self.labels_path}")
+
+        # 1. Load Labels
+        labels = {}
+        with open(self.labels_path, "r", encoding="utf-8") as f:
+            reader = csv.reader(f)
+            next(reader, None)  # Skip header
+            for row in reader:
+                if len(row) >= 2:
+                    labels[row[0]] = row[1]
+
+        # 2. Load Reports and Link
+        data_by_class = {}  # ctype -> list of (patient_id, text)
+
+        with open(self.path, "r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                pid_full = row.get("patient_filename", "")
+                text = row.get("text", "")
+
+                # Extract patient ID (TCGA-XX-YYYY)
+                if len(pid_full) < 12:
+                    continue
+                pid = pid_full[:12]
+
+                if pid in labels:
+                    ctype = labels[pid]
+                    if ctype not in data_by_class:
+                        data_by_class[ctype] = []
+                    data_by_class[ctype].append((pid, text))
+
+        # 3. Stratified Split
+        final_samples = []
+
+        # Sort classes for deterministic order before shuffling
+        sorted_classes = sorted(data_by_class.keys())
+
+        for ctype in sorted_classes:
+            items = data_by_class[ctype]
+
+            # Deterministic shuffle
+            random.Random(self.random_seed).shuffle(items)
+
+            # Split index (15% test)
+            n_total = len(items)
+            n_test = int(n_total * 0.15)
+
+            if self.split == "all":
+                selected = items
+            elif self.split == "test":
+                # Test set is the first 15%
+                selected = items[:n_test]
+            elif self.split == "train":
+                selected = items[n_test:]
+            else:
+                selected = []
+
+            # Add to samples
+            for pid, text in selected:
+                final_samples.append((pid, text, ctype))
+
+        # 4. Create Sample objects
+        for i, (pid, text, ctype) in enumerate(final_samples):
+            self._samples.append(
+                Sample(
+                    idx=i,
+                    text=text,
+                    label=ctype,
+                    metadata={"patient_id": pid, "cancer_type": ctype},
+                )
+            )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        return ["tcga"]
