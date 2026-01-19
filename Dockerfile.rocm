@@ -10,6 +10,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/ ./src/
 COPY conf/ ./conf/
+COPY data/ ./data/
 
 # Install CoTLab (without vllm since it's already in the base image)
 RUN pip install -e .
