@@ -5,3 +5,7 @@ tensor_parallel_size: 1
 dtype: bfloat16
 trust_remote_code: true
 max_model_len: null
+quantization: null
+gpu_memory_utilization: 0.9
+enforce_eager: false
+limit_mm_per_prompt: null
