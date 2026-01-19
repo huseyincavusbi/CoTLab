@@ -71,7 +71,7 @@ class VLLMBackend(InferenceBackend):
         }
         if self.max_model_len is not None:
             llm_kwargs["max_model_len"] = self.max_model_len
-        
+
         if self.quantization is not None:
             llm_kwargs["quantization"] = self.quantization
 
