@@ -23,18 +23,18 @@ Follow the format of these examples and give the output strictly in the json for
 
 Example 1: Kidney Renal Clear Cell Carcinoma
 ```json
-{
+{{
     "cancer_type": "KIRC",
     "reasoning": "1. Site: Kidney (Left Upper Pole). 2. Findings: Renal cell carcinoma, conventional (clear cell) type, Fuhrman Grade II. 3. Code: Kidney Renal Clear Cell Carcinoma maps to KIRC."
-}
+}}
 ```
 
 Example 2: Breast Invasive Carcinoma
 ```json
-{
+{{
     "cancer_type": "BRCA",
     "reasoning": "1. Site: Breast. 2. Findings: Invasive ductal carcinoma. 3. Code: Breast Invasive Carcinoma maps to BRCA."
-}
+}}
 ```
 
 Pathology report:
