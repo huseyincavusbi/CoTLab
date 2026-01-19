@@ -33,7 +33,7 @@ class VLLMBackend(InferenceBackend):
         self,
         tensor_parallel_size: int = 1,
         dtype: str = "bfloat16",
-        max_model_len: int = 4096,
+        max_model_len: int | None = None,
         trust_remote_code: bool = True,
         **kwargs,
     ):
@@ -51,14 +51,18 @@ class VLLMBackend(InferenceBackend):
         except ImportError:
             raise ImportError("vLLM not installed. Run: pip install vllm")
 
-        self._model = LLM(
-            model=model_name,
-            tensor_parallel_size=self.tensor_parallel_size,
-            dtype=self.dtype,
-            max_model_len=self.max_model_len,
-            trust_remote_code=self.trust_remote_code,
+        # Only pass max_model_len if it's explicitly set
+        llm_kwargs = {
+            "model": model_name,
+            "tensor_parallel_size": self.tensor_parallel_size,
+            "dtype": self.dtype,
+            "trust_remote_code": self.trust_remote_code,
             **kwargs,
-        )
+        }
+        if self.max_model_len is not None:
+            llm_kwargs["max_model_len"] = self.max_model_len
+
+        self._model = LLM(**llm_kwargs)
         self._model_name = model_name
 
     def generate(
