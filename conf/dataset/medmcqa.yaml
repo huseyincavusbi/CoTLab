@@ -1,0 +1,7 @@
+# MedMCQA dataset (Indian medical entrance exams)
+# Reuses MedQADataset since format is compatible
+_target_: cotlab.datasets.loaders.MedQADataset
+
+name: medmcqa
+filename: medmcqa/validation.jsonl
+split: validation
