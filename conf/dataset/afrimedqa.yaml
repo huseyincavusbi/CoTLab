@@ -1,0 +1,6 @@
+# AfriMedQA MCQ subset (African medical context, 4-5 options)
+_target_: cotlab.datasets.loaders.MedQADataset
+
+name: afrimedqa
+filename: afrimedqa/mcq.jsonl
+split: mcq
