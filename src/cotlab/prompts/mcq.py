@@ -174,3 +174,6 @@ Where X is the letter (A, B, C, or D) of the correct answer."""
 
         result["reasoning"] = response
         return result
+
+    def get_prediction_field(self) -> str:
+        return "answer"
