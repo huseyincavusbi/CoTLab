@@ -1,0 +1,6 @@
+# MedXpertQA 10-option expert-level MCQ (reuses MedQA loader)
+_target_: cotlab.datasets.loaders.MedQADataset
+
+name: medxpertqa
+filename: medxpertqa/test.jsonl
+split: test
