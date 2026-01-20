@@ -955,3 +955,103 @@ class MMLUMedicalDataset(BaseDataset):
 
     def get_compatible_prompts(self) -> list[str]:
         return ["mcq"]
+
+
+@Registry.register_dataset("pubmedqa")
+class PubMedQADataset(BaseDataset):
+    """PubMedQA research question answering dataset.
+
+    Format: JSONL with fields:
+    - question: Research question
+    - context: Abstract context
+    - answer: yes/no/maybe
+    - pmid: PubMed ID
+    """
+
+    def __init__(
+        self,
+        name: str = "pubmedqa",
+        repo_id: Optional[str] = None,
+        filename: str = "pubmedqa/test.jsonl",
+        **kwargs,
+    ):
+        self._name = name
+        self.repo_id = repo_id
+        self.filename = filename
+        self._samples: List[Sample] = []
+        self._load()
+
+    def _load(self):
+        import json
+
+        import yaml
+        from huggingface_hub import hf_hub_download
+
+        # Resolve repo_id from registry if not provided
+        repo_id = self.repo_id
+        if not repo_id:
+            root_dir = Path(__file__).parent.parent.parent.parent
+            registry_path = root_dir / "data/datasets.yaml"
+            if registry_path.exists():
+                try:
+                    with open(registry_path, "r") as f:
+                        config = yaml.safe_load(f)
+                    ds_config = config.get("datasets", {}).get("pubmedqa", {})
+                    repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
+                except Exception as e:
+                    print(f"Warning: Failed to load registry for PubMedQA: {e}")
+
+        if not repo_id:
+            raise ValueError("No repo_id found for PubMedQA dataset")
+
+        # Download from HF
+        try:
+            local_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=self.filename,
+                repo_type="dataset",
+            )
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to download PubMedQA from {repo_id}: {e}")
+
+        # Parse JSONL
+        with open(local_path, "r") as f:
+            for i, line in enumerate(f):
+                data = json.loads(line.strip())
+
+                # Format: question + context, predict yes/no/maybe
+                question = data["question"]
+                context = data.get("context", "")
+
+                # Truncate very long contexts
+                if len(context) > 1500:
+                    context = context[:1500] + "..."
+
+                text = f"Question: {question}\n\nContext: {context}"
+
+                # Label is yes/no/maybe
+                label = data["answer"]
+
+                self._samples.append(
+                    Sample(
+                        idx=i,
+                        text=text,
+                        label=label,
+                        metadata={
+                            "pmid": data.get("pmid", ""),
+                        },
+                    )
+                )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        return ["pubmedqa", "mcq"]

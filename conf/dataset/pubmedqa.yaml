@@ -1,0 +1,5 @@
+# PubMedQA research question answering (yes/no/maybe)
+_target_: cotlab.datasets.loaders.PubMedQADataset
+
+name: pubmedqa
+filename: pubmedqa/test.jsonl
