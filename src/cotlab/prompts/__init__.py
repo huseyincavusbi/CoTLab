@@ -7,6 +7,7 @@ from .length_matched_strategies import (
     ContrarianMatchedStrategy,
     DirectAnswerMatchedStrategy,
 )
+from .mcq import MCQPromptStrategy
 from .neurology import NeurologyPromptStrategy
 from .oncology import OncologyPromptStrategy
 from .radiology import RadiologyPromptStrategy
@@ -27,6 +28,7 @@ __all__ = [
     "NoInstructionStrategy",
     "CardiologyPromptStrategy",
     "HistopathologyPromptStrategy",
+    "MCQPromptStrategy",
     "NeurologyPromptStrategy",
     "OncologyPromptStrategy",
     "RadiologyPromptStrategy",

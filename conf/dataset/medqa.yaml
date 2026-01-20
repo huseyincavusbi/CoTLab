@@ -1,0 +1,6 @@
+# MedQA USMLE-style 4-option MCQ dataset
+_target_: cotlab.datasets.loaders.MedQADataset
+
+name: medqa
+filename: medqa/test.jsonl
+split: test

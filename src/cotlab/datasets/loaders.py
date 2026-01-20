@@ -753,3 +753,104 @@ class TCGADataset(BaseDataset):
 
     def get_compatible_prompts(self) -> list[str]:
         return ["tcga"]
+
+
+@Registry.register_dataset("medqa")
+class MedQADataset(BaseDataset):
+    """MedQA USMLE-style 4-option MCQ dataset.
+
+    Format: JSONL with fields:
+    - question: Clinical vignette
+    - options: Dict {"A": "...", "B": "...", "C": "...", "D": "..."}
+    - answer_idx: Correct answer letter (A/B/C/D)
+    - meta_info: USMLE step (step1, step2, step3)
+    """
+
+    def __init__(
+        self,
+        name: str = "medqa",
+        repo_id: Optional[str] = None,
+        filename: str = "medqa/test.jsonl",
+        split: str = "test",
+        **kwargs,
+    ):
+        self._name = name
+        self.repo_id = repo_id
+        self.filename = filename
+        self.split = split
+        self._samples: List[Sample] = []
+        self._load()
+
+    def _load(self):
+        import json
+
+        import yaml
+        from huggingface_hub import hf_hub_download
+
+        # Resolve repo_id from registry if not provided
+        repo_id = self.repo_id
+        if not repo_id:
+            root_dir = Path(__file__).parent.parent.parent.parent
+            registry_path = root_dir / "data/datasets.yaml"
+            if registry_path.exists():
+                try:
+                    with open(registry_path, "r") as f:
+                        config = yaml.safe_load(f)
+                    ds_config = config.get("datasets", {}).get("medqa", {})
+                    repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
+                except Exception as e:
+                    print(f"Warning: Failed to load registry for MedQA: {e}")
+
+        if not repo_id:
+            raise ValueError("No repo_id found for MedQA dataset")
+
+        # Download from HF
+        try:
+            local_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=self.filename,
+                repo_type="dataset",
+            )
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to download MedQA from {repo_id}: {e}")
+
+        # Parse JSONL
+        with open(local_path, "r") as f:
+            for i, line in enumerate(f):
+                data = json.loads(line.strip())
+
+                # Format question with options
+                question = data["question"]
+                options = data["options"]
+                formatted_options = "\n".join(
+                    f"{key}) {val}" for key, val in sorted(options.items())
+                )
+                text = f"{question}\n\n{formatted_options}"
+
+                # Answer is the letter (A, B, C, D)
+                label = data["answer_idx"]
+
+                self._samples.append(
+                    Sample(
+                        idx=i,
+                        text=text,
+                        label=label,
+                        metadata={
+                            "step": data.get("meta_info", "unknown"),
+                            "answer_text": data.get("answer", ""),
+                        },
+                    )
+                )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        return ["mcq", "medqa"]
