@@ -1,0 +1,5 @@
+# MMLU Medical subset
+_target_: cotlab.datasets.loaders.MMLUMedicalDataset
+
+name: mmlu_medical
+filename: mmlu/medical_test.jsonl

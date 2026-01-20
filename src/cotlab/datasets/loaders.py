@@ -854,3 +854,104 @@ class MedQADataset(BaseDataset):
 
     def get_compatible_prompts(self) -> list[str]:
         return ["mcq", "medqa"]
+
+
+@Registry.register_dataset("mmlu_medical")
+class MMLUMedicalDataset(BaseDataset):
+    """MMLU Medical subset dataset (anatomy, clinical_knowledge, medical_genetics, college_biology).
+
+    Format: JSONL with fields:
+    - question: Question text
+    - choices: List of 4 options
+    - answer: Integer index (0-3)
+    - subject: Subject name
+    """
+
+    def __init__(
+        self,
+        name: str = "mmlu_medical",
+        repo_id: Optional[str] = None,
+        filename: str = "mmlu/medical_test.jsonl",
+        **kwargs,
+    ):
+        self._name = name
+        self.repo_id = repo_id
+        self.filename = filename
+        self._samples: List[Sample] = []
+        self._load()
+
+    def _load(self):
+        import json
+
+        import yaml
+        from huggingface_hub import hf_hub_download
+
+        # Resolve repo_id from registry if not provided
+        repo_id = self.repo_id
+        if not repo_id:
+            root_dir = Path(__file__).parent.parent.parent.parent
+            registry_path = root_dir / "data/datasets.yaml"
+            if registry_path.exists():
+                try:
+                    with open(registry_path, "r") as f:
+                        config = yaml.safe_load(f)
+                    ds_config = config.get("datasets", {}).get("mmlu_medical", {})
+                    repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
+                except Exception as e:
+                    print(f"Warning: Failed to load registry for MMLU Medical: {e}")
+
+        if not repo_id:
+            raise ValueError("No repo_id found for MMLU Medical dataset")
+
+        # Download from HF
+        try:
+            local_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=self.filename,
+                repo_type="dataset",
+            )
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to download MMLU Medical from {repo_id}: {e}")
+
+        # Parse JSONL
+        index_to_letter = {0: "A", 1: "B", 2: "C", 3: "D"}
+
+        with open(local_path, "r") as f:
+            for i, line in enumerate(f):
+                data = json.loads(line.strip())
+
+                # Format question with options
+                question = data["question"]
+                choices = data["choices"]
+                formatted_options = "\n".join(
+                    f"{chr(65 + j)}) {opt}" for j, opt in enumerate(choices)
+                )
+                text = f"{question}\n\n{formatted_options}"
+
+                # Convert integer answer to letter
+                answer_idx = data["answer"]
+                label = index_to_letter.get(answer_idx, "A")
+
+                self._samples.append(
+                    Sample(
+                        idx=i,
+                        text=text,
+                        label=label,
+                        metadata={
+                            "subject": data.get("subject", "unknown"),
+                        },
+                    )
+                )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        return ["mcq"]
