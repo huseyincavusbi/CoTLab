@@ -29,7 +29,7 @@ Analyze this medical question carefully. Consider:
 3. Standard diagnostic and treatment guidelines
 4. Why each option is correct or incorrect
 
-After your analysis, select the single best answer (A, B, C, or D).
+After your analysis, select the single best answer from the provided options.
 
 {format_instructions}"""
 
@@ -123,15 +123,15 @@ D) Observation with repeat imaging in 3 months""",
 ```json
 {"answer": "X", "reasoning": "Your step-by-step explanation"}
 ```
-Where X is the letter (A, B, C, or D) of the correct answer."""
+Where X is the letter (e.g., A, B, C, D, ...) of the correct answer."""
             else:
                 return """Respond with a JSON object in this exact format:
 ```json
 {"reasoning": "Your step-by-step explanation", "answer": "X"}
 ```
-Where X is the letter (A, B, C, or D) of the correct answer."""
+Where X is the letter (e.g., A, B, C, D, ...) of the correct answer."""
         else:
-            return "Provide your reasoning, then state your final answer as a single letter (A, B, C, or D)."
+            return "Provide your reasoning, then state your final answer as a single letter."
 
     def parse_response(self, response: str) -> Dict[str, Any]:
         """Parse model response to extract answer and reasoning."""
@@ -154,10 +154,10 @@ Where X is the letter (A, B, C, or D) of the correct answer."""
 
         # Fallback: Look for answer pattern
         answer_patterns = [
-            r"(?:answer|selection|choice)[:\s]*([A-D])",
-            r"\b([A-D])\s*(?:is|would be)\s+(?:the\s+)?(?:correct|best|right)",
-            r"(?:^|\n)\s*([A-D])\s*(?:\)|\.|\:)",
-            r"\*\*([A-D])\*\*",
+            r"(?:answer|selection|choice)[:\s]*([A-Z])",
+            r"\b([A-Z])\s*(?:is|would be)\s+(?:the\s+)?(?:correct|best|right)",
+            r"(?:^|\n)\s*([A-Z])\s*(?:\)|\.|\:)",
+            r"\*\*([A-Z])\*\*",
         ]
 
         for pattern in answer_patterns:
@@ -168,7 +168,7 @@ Where X is the letter (A, B, C, or D) of the correct answer."""
 
         # If still no answer, look for lone letter
         if not result["answer"]:
-            letters = re.findall(r"\b([A-D])\b", response)
+            letters = re.findall(r"\b([A-Z])\b", response)
             if letters:
                 result["answer"] = letters[-1].upper()  # Take last mentioned
 
