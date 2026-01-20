@@ -1,0 +1,6 @@
+# PubMedQA prompt strategy
+_target_: cotlab.prompts.pubmedqa.PubMedQAPromptStrategy
+
+name: pubmedqa
+output_format: plain # Using plain as default for consistency with other tests, though code defaults to json if not set.
+# Note: few_shot examples not yet implemented for this strategy
