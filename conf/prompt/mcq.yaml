@@ -1,7 +1,8 @@
-# MCQ (Multiple Choice Question) prompt strategy
+# MCQ prompt strategy
 _target_: cotlab.prompts.mcq.MCQPromptStrategy
 
 name: mcq
 few_shot: true
-output_format: json
-answer_first: false  # Set to true for "answer first, then justify" reasoning
+output_format: plain # json or plain
+answer_first: false # If true, output answer then reasoning
+contrarian: false # If true, use skeptical/critical system role

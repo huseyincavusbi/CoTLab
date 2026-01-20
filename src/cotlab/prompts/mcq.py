@@ -14,8 +14,12 @@ class MCQPromptStrategy(BasePromptStrategy, StructuredOutputMixin):
     """Generic MCQ prompt strategy for medical question answering."""
 
     SYSTEM_ROLE = """You are an expert medical professional taking a medical licensing examination.
-You must carefully analyze each question and select the single best answer from the options provided.
-Think through your reasoning step by step before selecting your final answer."""
+    You must carefully analyze each question and select the single best answer from the options provided.
+    Think through your reasoning step by step before selecting your final answer."""
+
+    SYSTEM_ROLE_CONTRARIAN = """You are a skeptical medical expert reviewing a licensing question.
+    Critically analyze the scenario. Actively look for distractors and "red herrings" that might lead to a common trap answer.
+    Consider why the "obvious" choice might be wrong and justify your final selection with rigorous evidence."""
 
     PROMPT_TEMPLATE = """## Medical Question
 
@@ -62,19 +66,21 @@ D) Observation with repeat imaging in 3 months""",
         few_shot: bool = True,
         output_format: str = "json",
         answer_first: bool = False,
+        contrarian: bool = False,
         **kwargs,
     ):
         self._name = name
         self.few_shot = few_shot
         self.output_format = output_format
         self.answer_first = answer_first
+        self.contrarian = contrarian
 
     @property
     def name(self) -> str:
         return self._name
 
     def get_system_prompt(self) -> str:
-        return self.SYSTEM_ROLE
+        return self.SYSTEM_ROLE_CONTRARIAN if self.contrarian else self.SYSTEM_ROLE
 
     def build_prompt(
         self,
@@ -131,7 +137,10 @@ Where X is the letter (e.g., A, B, C, D, ...) of the correct answer."""
 ```
 Where X is the letter (e.g., A, B, C, D, ...) of the correct answer."""
         else:
-            return "Provide your reasoning, then state your final answer as a single letter."
+            if self.answer_first:
+                return "State your final answer as a single letter, followed by your reasoning."
+            else:
+                return "Provide your reasoning, then state your final answer as a single letter."
 
     def parse_response(self, response: str) -> Dict[str, Any]:
         """Parse model response to extract answer and reasoning."""

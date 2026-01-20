@@ -853,7 +853,15 @@ class MedQADataset(BaseDataset):
         return self._samples[idx]
 
     def get_compatible_prompts(self) -> list[str]:
-        return ["mcq", "medqa"]
+        return [
+            "mcq",
+            "medqa",
+            "direct_answer",
+            "chain_of_thought",
+            "uncertainty",
+            "contrarian",
+            "few_shot",
+        ]
 
 
 @Registry.register_dataset("mmlu_medical")
@@ -954,7 +962,14 @@ class MMLUMedicalDataset(BaseDataset):
         return self._samples[idx]
 
     def get_compatible_prompts(self) -> list[str]:
-        return ["mcq"]
+        return [
+            "mcq",
+            "direct_answer",
+            "chain_of_thought",
+            "uncertainty",
+            "contrarian",
+            "few_shot",
+        ]
 
 
 @Registry.register_dataset("pubmedqa")
@@ -1054,4 +1069,12 @@ class PubMedQADataset(BaseDataset):
         return self._samples[idx]
 
     def get_compatible_prompts(self) -> list[str]:
-        return ["pubmedqa", "mcq"]
+        return [
+            "pubmedqa",
+            "mcq",
+            "direct_answer",
+            "chain_of_thought",
+            "uncertainty",
+            "contrarian",
+            "few_shot",
+        ]
