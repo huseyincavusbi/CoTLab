@@ -1,6 +1,13 @@
-"""vLLM backend for high-throughput inference."""
+"""vLLM backend for high-throughput inference.
+
+Supports multiple platforms:
+- CUDA (NVIDIA GPUs) - standard vLLM
+- ROCm (AMD GPUs) - via ROCm Docker or HIP
+- Metal (Apple Silicon) - via vllm-metal plugin
+"""
 
 import os
+import platform as plat
 from typing import List, Optional
 
 import torch
@@ -15,6 +22,26 @@ from .base import InferenceBackend
 os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
 
 
+def _is_apple_silicon() -> bool:
+    """Detect if running on Apple Silicon."""
+    return plat.system() == "Darwin" and plat.processor() == "arm"
+
+
+def _detect_platform() -> str:
+    """Detect the GPU platform.
+
+    Returns:
+        "metal" for Apple Silicon
+        "cuda" for NVIDIA/AMD GPUs (ROCm uses CUDA-compatible API)
+        "cpu" if no GPU available
+    """
+    if _is_apple_silicon():
+        return "metal"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
 @Registry.register_backend("vllm")
 class VLLMBackend(InferenceBackend):
     """
@@ -24,6 +51,11 @@ class VLLMBackend(InferenceBackend):
     - Large-scale experiments (1000+ samples)
     - Batch inference
     - When activation access is not needed
+
+    Platforms:
+    - CUDA: Standard vLLM (pip install vllm)
+    - ROCm: vLLM in ROCm Docker container
+    - Metal: vLLM-Metal plugin (install via curl script)
 
     Note:
         Does NOT support activation extraction or patching.
@@ -39,6 +71,7 @@ class VLLMBackend(InferenceBackend):
         gpu_memory_utilization: float = 0.9,
         enforce_eager: bool = False,
         limit_mm_per_prompt: dict | str | None = None,
+        platform: str = "auto",
         **kwargs,
     ):
         self.tensor_parallel_size = tensor_parallel_size
@@ -52,23 +85,49 @@ class VLLMBackend(InferenceBackend):
         self._model = None
         self._model_name: Optional[str] = None
 
+        # Platform detection
+        self._platform = _detect_platform() if platform == "auto" else platform
+        self._setup_platform_env()
+
+    def _setup_platform_env(self) -> None:
+        """Configure environment variables for the detected platform."""
+        if self._platform == "metal":
+            # vLLM-Metal configuration
+            os.environ.setdefault("VLLM_METAL_MEMORY_FRACTION", str(self.gpu_memory_utilization))
+            os.environ.setdefault("VLLM_METAL_USE_MLX", "1")
+            os.environ.setdefault("VLLM_METAL_BLOCK_SIZE", "16")
+            print("  Platform: Apple Silicon (Metal/MLX)")
+        elif self._platform == "cuda":
+            print("  Platform: CUDA")
+        else:
+            print(f"  Platform: {self._platform}")
+
     def load_model(self, model_name: str, **kwargs) -> None:
         """Load model with vLLM."""
         try:
             from vllm import LLM
         except ImportError:
+            if self._platform == "metal":
+                raise ImportError(
+                    "vLLM not found. On Apple Silicon, install vllm-metal:\n"
+                    "curl -fsSL https://raw.githubusercontent.com/vllm-project/vllm-metal/main/install.sh | bash"
+                )
             raise ImportError("vLLM not installed. Run: pip install vllm")
 
-        # Only pass max_model_len if it's explicitly set
+        # Build LLM kwargs
         llm_kwargs = {
             "model": model_name,
             "tensor_parallel_size": self.tensor_parallel_size,
             "dtype": self.dtype,
             "trust_remote_code": self.trust_remote_code,
-            "gpu_memory_utilization": self.gpu_memory_utilization,
             "enforce_eager": self.enforce_eager,
             **kwargs,
         }
+
+        # gpu_memory_utilization only applies to CUDA/ROCm
+        if self._platform != "metal":
+            llm_kwargs["gpu_memory_utilization"] = self.gpu_memory_utilization
+
         if self.max_model_len is not None:
             llm_kwargs["max_model_len"] = self.max_model_len
 
@@ -144,6 +203,11 @@ class VLLMBackend(InferenceBackend):
         return [f"{system_prompt}\n\n{prompt}" for prompt in prompts]
 
     @property
+    def platform(self) -> str:
+        """Return the detected platform (cuda, metal, cpu)."""
+        return self._platform
+
+    @property
     def supports_activations(self) -> bool:
         """vLLM optimizes away intermediate activations."""
         return False
@@ -157,4 +221,7 @@ class VLLMBackend(InferenceBackend):
         if self._model is not None:
             del self._model
             self._model = None
+
+        # Platform-specific cleanup
+        if self._platform != "metal" and torch.cuda.is_available():
             torch.cuda.empty_cache()
