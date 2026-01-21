@@ -132,8 +132,6 @@ class ClassificationExperiment(BaseExperiment):
         # Batch Generate
         print("Generating responses...")
         prompts = [prompt_strategy.build_prompt(i) for i in inputs]
-        outputs = backend.generate_batch(prompts, **kwargs)
-
         system_prompt = None
         get_system_message = getattr(prompt_strategy, "get_system_message", None)
         if callable(get_system_message):
@@ -142,6 +140,8 @@ class ClassificationExperiment(BaseExperiment):
             get_system_prompt = getattr(prompt_strategy, "get_system_prompt", None)
             if callable(get_system_prompt):
                 system_prompt = get_system_prompt()
+
+        outputs = backend.generate_batch(prompts, system_prompt=system_prompt, **kwargs)
 
         # Process results
         print("Analyzing results...")
