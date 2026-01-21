@@ -143,12 +143,14 @@ class TransformersBackend(InferenceBackend):
         temperature: float = 0.7,
         top_p: float = 0.9,
         do_sample: bool = True,
+        system_prompt: Optional[str] = None,
         **kwargs,
     ) -> GenerationOutput:
         """Generate from a single prompt."""
         if self._model is None or self._tokenizer is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
+        prompt = self._apply_system_prompt(prompt, system_prompt)
         inputs = self._tokenizer(prompt, return_tensors="pt").to(self.device)
 
         with torch.no_grad():
@@ -172,7 +174,26 @@ class TransformersBackend(InferenceBackend):
         self, prompts: List[str], max_new_tokens: int = 512, temperature: float = 0.7, **kwargs
     ) -> List[GenerationOutput]:
         """Generate from multiple prompts (sequential for simplicity)."""
-        return [self.generate(prompt, max_new_tokens, temperature, **kwargs) for prompt in prompts]
+        system_prompt = kwargs.pop("system_prompt", None)
+        return [
+            self.generate(
+                prompt,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                system_prompt=system_prompt,
+                **kwargs,
+            )
+            for prompt in prompts
+        ]
+
+    @staticmethod
+    def _apply_system_prompt(prompt: str, system_prompt: Optional[str]) -> str:
+        if not system_prompt:
+            return prompt
+        system_prompt = system_prompt.strip()
+        if not system_prompt:
+            return prompt
+        return f"{system_prompt}\n\n{prompt}"
 
     def generate_with_cache(
         self, prompt: str, layers: Optional[List[int]] = None, max_new_tokens: int = 512, **kwargs

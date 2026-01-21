@@ -88,10 +88,18 @@ class VLLMBackend(InferenceBackend):
         max_new_tokens: int = 512,
         temperature: float = 0.7,
         top_p: float = 0.9,
+        system_prompt: Optional[str] = None,
         **kwargs,
     ) -> GenerationOutput:
         """Generate from a single prompt."""
-        outputs = self.generate_batch([prompt], max_new_tokens, temperature, top_p, **kwargs)
+        outputs = self.generate_batch(
+            [prompt],
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=top_p,
+            system_prompt=system_prompt,
+            **kwargs,
+        )
         return outputs[0]
 
     def generate_batch(
@@ -100,6 +108,7 @@ class VLLMBackend(InferenceBackend):
         max_new_tokens: int = 512,
         temperature: float = 0.7,
         top_p: float = 0.9,
+        system_prompt: Optional[str] = None,
         **kwargs,
     ) -> List[GenerationOutput]:
         """Generate from multiple prompts efficiently."""
@@ -107,6 +116,8 @@ class VLLMBackend(InferenceBackend):
 
         if self._model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        prompts = self._apply_system_prompt(prompts, system_prompt)
 
         sampling_params = SamplingParams(
             max_tokens=max_new_tokens, temperature=temperature, top_p=top_p, **kwargs
@@ -122,6 +133,15 @@ class VLLMBackend(InferenceBackend):
             )
             for output in outputs
         ]
+
+    @staticmethod
+    def _apply_system_prompt(prompts: List[str], system_prompt: Optional[str]) -> List[str]:
+        if not system_prompt:
+            return prompts
+        system_prompt = system_prompt.strip()
+        if not system_prompt:
+            return prompts
+        return [f"{system_prompt}\n\n{prompt}" for prompt in prompts]
 
     @property
     def supports_activations(self) -> bool:
