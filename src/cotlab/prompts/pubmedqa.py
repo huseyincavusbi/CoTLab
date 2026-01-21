@@ -60,15 +60,13 @@ Context: A systematic review of 10 randomized trials found inconsistent results.
         few_shot: bool = True,
         contrarian: bool = False,
         answer_first: bool = False,
-        direct_answer: bool = False,
         **kwargs,
     ):
         self._name = name
         self.output_format = output_format
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.answer_first = answer_first or direct_answer
-        self.direct_answer = direct_answer
+        self.answer_first = answer_first
 
     @property
     def name(self) -> str:
@@ -101,9 +99,6 @@ Context: A systematic review of 10 randomized trials found inconsistent results.
 
         if examples_str:
             prompt = f"## Examples\n\n{examples_str}\n\n{prompt}"
-
-        if self.direct_answer:
-            prompt += "\n\nProvide ONLY the final answer (yes/no/maybe). Do not include reasoning."
 
         return prompt
 

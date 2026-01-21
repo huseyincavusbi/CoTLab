@@ -61,13 +61,11 @@ class TCGAPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         system_role: Optional[str] = None,
         few_shot: bool = True,
         contrarian: bool = False,
-        direct_answer: bool = False,
         **kwargs,
     ):
         self._name = name
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         if system_role:
             self.system_role = system_role
         else:
@@ -87,8 +85,6 @@ class TCGAPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
             template = self._remove_few_shot_examples(template)
 
         prompt = template.format(report=report)
-        if self.direct_answer:
-            prompt += "\n\nReturn ONLY the cancer_type code in JSON. Omit reasoning."
         return prompt
 
     def _remove_few_shot_examples(self, template: str) -> str:

@@ -164,7 +164,6 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
         few_shot: bool = True,
         answer_first: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         **kwargs,
     ):
         self._name = name
@@ -172,7 +171,6 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
         self.few_shot = few_shot
         self.answer_first = answer_first
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
 
     @property
     def name(self) -> str:
@@ -199,9 +197,6 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
         # Remove examples if few_shot=False
         if not self.few_shot and not self.answer_first and not self.contrarian:
             prompt = self._remove_few_shot_examples(prompt)
-
-        if self.direct_answer:
-            prompt += "\n\nProvide ONLY the quality_score (0, 1, or 2). Reasoning is optional."
 
         return prompt
 

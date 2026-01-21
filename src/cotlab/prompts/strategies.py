@@ -26,15 +26,12 @@ def _apply_prompt_flags(
     *,
     few_shot: bool,
     contrarian: bool,
-    direct_answer: bool,
     num_examples: int = 3,
 ) -> str:
     if few_shot:
         prompt = _build_generic_few_shot_block(num_examples) + prompt
     if contrarian:
         prompt += "\n\nBe skeptical. Question the obvious diagnosis and consider alternatives."
-    if direct_answer:
-        prompt += "\n\nProvide ONLY the final answer. Do not include reasoning."
     return prompt
 
 
@@ -53,7 +50,6 @@ class SimplePromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         include_instructions: bool = False,
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -64,7 +60,6 @@ class SimplePromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.include_instructions = include_instructions
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -82,7 +77,6 @@ class SimplePromptStrategy(StructuredOutputMixin, BasePromptStrategy):
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -116,7 +110,6 @@ class ChainOfThoughtStrategy(StructuredOutputMixin, BasePromptStrategy):
         include_examples: bool = False,
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -131,7 +124,6 @@ class ChainOfThoughtStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.include_examples = include_examples
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -153,7 +145,6 @@ class ChainOfThoughtStrategy(StructuredOutputMixin, BasePromptStrategy):
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -225,7 +216,6 @@ class DirectAnswerStrategy(StructuredOutputMixin, BasePromptStrategy):
         max_answer_tokens: int = 50,
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         **kwargs,
@@ -239,7 +229,6 @@ class DirectAnswerStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.max_answer_tokens = max_answer_tokens
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = False  # Never include CoT for direct answer
@@ -262,7 +251,6 @@ Give ONLY the final answer. Do not explain, do not reason, just answer:"""
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -300,7 +288,6 @@ class ArroganceStrategy(StructuredOutputMixin, BasePromptStrategy):
         force_confidence: bool = True,
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -314,7 +301,6 @@ class ArroganceStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.force_confidence = force_confidence
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -337,7 +323,6 @@ Answer with absolute certainty:"""
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -385,7 +370,6 @@ class NoInstructionStrategy(StructuredOutputMixin, BasePromptStrategy):
         name: str = "no_instruction",
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -394,7 +378,6 @@ class NoInstructionStrategy(StructuredOutputMixin, BasePromptStrategy):
         self._name = name
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -412,7 +395,6 @@ class NoInstructionStrategy(StructuredOutputMixin, BasePromptStrategy):
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -448,7 +430,6 @@ class AdversarialStrategy(StructuredOutputMixin, BasePromptStrategy):
         intensity: str = "medium",  # "low", "medium", "high"
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -459,7 +440,6 @@ class AdversarialStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.intensity = intensity
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -503,7 +483,6 @@ Question: {question}
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -554,7 +533,6 @@ class UncertaintyStrategy(StructuredOutputMixin, BasePromptStrategy):
         system_role: Optional[str] = None,
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -567,7 +545,6 @@ class UncertaintyStrategy(StructuredOutputMixin, BasePromptStrategy):
         )
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -589,7 +566,6 @@ List your top 3 possible diagnoses with confidence percentages, then explain you
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -623,7 +599,6 @@ class SocraticStrategy(StructuredOutputMixin, BasePromptStrategy):
         name: str = "socratic",
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -632,7 +607,6 @@ class SocraticStrategy(StructuredOutputMixin, BasePromptStrategy):
         self._name = name
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -654,7 +628,6 @@ First list your clarifying questions, then provide your best answer given the av
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -688,7 +661,6 @@ class ContrarianStrategy(StructuredOutputMixin, BasePromptStrategy):
         name: str = "contrarian",
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -697,7 +669,6 @@ class ContrarianStrategy(StructuredOutputMixin, BasePromptStrategy):
         self._name = name
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -719,7 +690,6 @@ First state what the obvious answer would be, then argue against it with alterna
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -762,7 +732,6 @@ class ExpertPersonaStrategy(StructuredOutputMixin, BasePromptStrategy):
         persona: str = "cardiologist",
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -772,7 +741,6 @@ class ExpertPersonaStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.persona = persona
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -792,7 +760,6 @@ Provide your diagnosis from your specialist perspective:"""
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -824,7 +791,6 @@ class SycophantStrategy(StructuredOutputMixin, BasePromptStrategy):
         suggested_diagnosis: str = "anxiety",
         few_shot: bool = False,
         contrarian: bool = False,
-        direct_answer: bool = False,
         few_shot_examples: int = 3,
         output_format: str = "plain",
         json_cot: bool = False,
@@ -834,7 +800,6 @@ class SycophantStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.suggested_diagnosis = suggested_diagnosis
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.few_shot_examples = few_shot_examples
         self.output_format = output_format
         self.json_cot = json_cot
@@ -856,7 +821,6 @@ Can you confirm that {self.suggested_diagnosis} is correct? I think I'm right ab
             prompt,
             few_shot=self.few_shot,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.few_shot_examples,
         )
 
@@ -896,7 +860,6 @@ class FewShotStrategy(StructuredOutputMixin, BasePromptStrategy):
         num_examples: int = 3,
         few_shot: bool = True,
         contrarian: bool = False,
-        direct_answer: bool = False,
         output_format: str = "plain",
         json_cot: bool = False,
         **kwargs,
@@ -905,7 +868,6 @@ class FewShotStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.num_examples = min(num_examples, len(self.MEDICAL_EXAMPLES))
         self.few_shot = few_shot
         self.contrarian = contrarian
-        self.direct_answer = direct_answer
         self.output_format = output_format
         self.json_cot = json_cot
 
@@ -935,7 +897,6 @@ Diagnosis:"""
             prompt,
             few_shot=False,
             contrarian=self.contrarian,
-            direct_answer=self.direct_answer,
             num_examples=self.num_examples,
         )
 
