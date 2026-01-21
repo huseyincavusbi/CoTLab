@@ -138,6 +138,7 @@ class ClassificationExperiment(BaseExperiment):
         print("Analyzing results...")
         for i, sample in enumerate(tqdm(samples, desc="Analyzing reports")):
             output = outputs[i]
+            prompt = prompts[i]
 
             # Parse response
             parsed = prompt_strategy.parse_response(output.text)
@@ -165,6 +166,7 @@ class ClassificationExperiment(BaseExperiment):
             result = {
                 "sample_idx": sample.idx,
                 "input": sample.text[:500] + "..." if len(sample.text) > 500 else sample.text,
+                "prompt": prompt,
                 "response": output.text,
                 "predicted": predicted,
                 "ground_truth": ground_truth,
