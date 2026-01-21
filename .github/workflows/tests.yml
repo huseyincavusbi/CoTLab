@@ -57,7 +57,70 @@ jobs:
         run: |
           python -m pytest tests/ -v --tb=short
 
+  vllm-metal:
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Print Apple Silicon info
+        run: |
+          sysctl -n machdep.cpu.brand_string
+          uname -m
+
+      - name: Setup micromamba
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          micromamba-version: "2.0.5-0"
+          environment-name: cotlab
+          create-args: >-
+            python=3.12
+            pip
+          init-shell: bash
+
+      - name: Install CoTLab
+        shell: bash -el {0}
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Install vLLM 0.13.0 from source
+        shell: bash -el {0}
+        run: |
+          cd /tmp
+          curl -OL https://github.com/vllm-project/vllm/releases/download/v0.13.0/vllm-0.13.0.tar.gz
+          tar xf vllm-0.13.0.tar.gz && cd vllm-0.13.0
+          pip install -r requirements/cpu.txt
+          pip install .
+
+      - name: Install vllm-metal plugin
+        shell: bash -el {0}
+        run: |
+          pip install vllm-metal
+
+      - name: Test vllm-metal installation
+        shell: bash -el {0}
+        run: |
+          python -c "
+          from vllm import LLM
+          import vllm_metal
+          print(f'vLLM-Metal ready!')
+          print(f'vllm-metal version: {vllm_metal.__version__}')
+          "
+
+      - name: Test VLLMBackend platform detection
+        shell: bash -el {0}
+        run: |
+          python -c "
+          from cotlab.backends.vllm_backend import VLLMBackend, _detect_platform, _is_apple_silicon
+          assert _is_apple_silicon(), 'Should detect Apple Silicon'
+          assert _detect_platform() == 'metal', 'Should detect metal platform'
+          backend = VLLMBackend()
+          assert backend.platform == 'metal', 'Backend should use metal platform'
+          print('VLLMBackend metal platform detection works!')
+          "
+
   integration:
+
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
