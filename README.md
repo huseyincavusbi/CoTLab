@@ -26,6 +26,9 @@ uv pip install -e ".[dev]"
 
 # AMD ROCm (Transformers backend): install ROCm PyTorch wheels
 # uv pip install --reinstall --index-url https://download.pytorch.org/whl/rocm6.4 torch torchvision torchaudio
+
+# Apple Silicon: requires Python 3.12 and vllm-metal plugin
+# See docs/getting-started/installation.md for Metal setup instructions
 ```
 
 See [Installation Docs](docs/getting-started/installation.md) for detailed GPU setup.

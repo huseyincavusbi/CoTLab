@@ -77,6 +77,33 @@ The official way to run vLLM on AMD GPUs is via Docker:
 - ROCm drivers on host (`rocminfo` should show your GPU)
 - User in `docker`, `video`, and `render` groups
 
+### Apple Silicon (Metal)
+
+Requires **Python 3.12** and the vllm-metal plugin:
+
+```bash
+# Create venv with Python 3.12
+uv venv cotlab --python 3.12
+source cotlab/bin/activate
+uv pip install -e ".[dev]"
+
+# Install vLLM 0.13.0 from source (CPU build for macOS)
+cd /tmp
+curl -OL https://github.com/vllm-project/vllm/releases/download/v0.13.0/vllm-0.13.0.tar.gz
+tar xf vllm-0.13.0.tar.gz && cd vllm-0.13.0
+uv pip install -r requirements/cpu.txt --index-strategy unsafe-best-match
+uv pip install .
+cd -
+
+# Install vllm-metal plugin (MLX-accelerated)
+uv pip install vllm-metal
+
+# Verify
+python -c "from vllm import LLM; import vllm_metal; print('Metal ready!')"
+```
+
+Metal is auto-detected when you run with `backend=vllm` - no additional configuration needed.
+
 ## Environment Setup
 
 Create `.env` file with your HuggingFace token:
