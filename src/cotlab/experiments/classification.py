@@ -134,6 +134,15 @@ class ClassificationExperiment(BaseExperiment):
         prompts = [prompt_strategy.build_prompt(i) for i in inputs]
         outputs = backend.generate_batch(prompts, **kwargs)
 
+        system_prompt = None
+        get_system_message = getattr(prompt_strategy, "get_system_message", None)
+        if callable(get_system_message):
+            system_prompt = get_system_message()
+        if system_prompt is None:
+            get_system_prompt = getattr(prompt_strategy, "get_system_prompt", None)
+            if callable(get_system_prompt):
+                system_prompt = get_system_prompt()
+
         # Process results
         print("Analyzing results...")
         for i, sample in enumerate(tqdm(samples, desc="Analyzing reports")):
@@ -167,6 +176,7 @@ class ClassificationExperiment(BaseExperiment):
                 "sample_idx": sample.idx,
                 "input": sample.text[:500] + "..." if len(sample.text) > 500 else sample.text,
                 "prompt": prompt,
+                "system_prompt": system_prompt,
                 "response": output.text,
                 "predicted": predicted,
                 "ground_truth": ground_truth,
