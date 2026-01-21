@@ -74,21 +74,19 @@ python -m cotlab.main -m prompt=chain_of_thought,direct_answer,sycophantic
 
 ## Supported Models
 
-| Family | Models |
-|--------|--------|
-| **Gemma 3** | 270m, 1b, 4b, 12b, 27b (pt + it) |
-| **MedGemma** | 4b-pt, 4b-it, 27b-text-it |
-| **Reasoning** | DeepSeek-R1-32B, Ministral-14B, Olmo-3/3.1-32B-Think, Nemotron-30B |
+CoTLab ships config files for some models, but in principle it supports any model
+that the selected backend can load. Mechanistic experiments can still fail for
+models with unusual architectures.
 
-> **Note on Model Compatibility:**
-> - **Nemotron-30B**: Uses Mamba (SSM) + MoE hybrid architecture. Only `logit_lens` is supported; activation patching fails due to MoE routing.
-> - **Ministral-14B**: Multimodal model requiring `AutoModelWithImageTextToText`. Not supported with current text-only backend.
+You can add a model config file for more control over hyperparameters, but you
+can also run any experiment by passing a Hugging Face model name directly.
 
 ```bash
-# Use any model config
+# Use a built-in model config
 python -m cotlab.main model=medgemma_4b
-python -m cotlab.main model=deepseek_r1_32b
-python -m cotlab.main model=olmo_31_32b_think
+
+# Or pass any HF model name directly
+python -m cotlab.main model.name=google/gemma-3-270m
 ```
 
 ## Datasets
