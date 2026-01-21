@@ -1,0 +1,16 @@
+# Activation comparison experiment
+_target_: cotlab.experiments.ActivationCompareExperiment
+
+name: activation_compare
+description: Compare residual stream activations across runs
+
+num_samples: 20
+seed: 42
+pooling: last_token  # last_token or mean
+layers: null         # null = all layers
+comparison_mode: pairwise  # pairwise or baseline
+store_per_layer: true
+log_samples: false
+
+# Optional per-run overrides
+variants: []

@@ -1,5 +1,6 @@
 """Experiments module."""
 
+from .activation_compare import ActivationCompareExperiment
 from .activation_patching import ActivationPatchingExperiment
 from .attention_analysis import AttentionAnalysisExperiment
 from .classification import ClassificationExperiment
@@ -19,6 +20,7 @@ __all__ = [
     "CoTAblationExperiment",
     "CoTFaithfulnessExperiment",
     "ActivationPatchingExperiment",
+    "ActivationCompareExperiment",
     "AttentionAnalysisExperiment",
     "ProbingClassifierExperiment",
     "ClassificationExperiment",
