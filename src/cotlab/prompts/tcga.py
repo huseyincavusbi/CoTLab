@@ -10,6 +10,9 @@ SYSTEM_ROLE = """You are an expert pathologist specializing in cancer classifica
 Your goal is to identify the specific TCGA Cancer Type Code (e.g., BRCA, LUAD) from the pathology report.
 Think rationally and explain your reasoning step-by-step."""
 
+SYSTEM_ROLE_CONTRARIAN = """You are a skeptical pathologist reviewing a cancer classification.
+Question obvious conclusions and consider alternate cancer type codes before deciding."""
+
 PROMPT_TEMPLATE = """Follow this structured reasoning on the attached pathology report:
 
 1. **Anatomic Site**: Identify the organ and specific site of the specimen.
@@ -57,14 +60,18 @@ class TCGAPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         name: str = "tcga",
         system_role: Optional[str] = None,
         few_shot: bool = True,
+        contrarian: bool = False,
+        direct_answer: bool = False,
         **kwargs,
     ):
         self._name = name
         self.few_shot = few_shot
+        self.contrarian = contrarian
+        self.direct_answer = direct_answer
         if system_role:
             self.system_role = system_role
         else:
-            self.system_role = SYSTEM_ROLE
+            self.system_role = SYSTEM_ROLE_CONTRARIAN if contrarian else SYSTEM_ROLE
 
     @property
     def name(self) -> str:
@@ -80,6 +87,8 @@ class TCGAPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
             template = self._remove_few_shot_examples(template)
 
         prompt = template.format(report=report)
+        if self.direct_answer:
+            prompt += "\n\nReturn ONLY the cancer_type code in JSON. Omit reasoning."
         return prompt
 
     def _remove_few_shot_examples(self, template: str) -> str:

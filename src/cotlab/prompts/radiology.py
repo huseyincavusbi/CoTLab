@@ -170,6 +170,7 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         contrarian: bool = False,
         few_shot: bool = True,
         answer_first: bool = False,
+        direct_answer: bool = False,
         output_format: str = "json",
         **kwargs,
     ):
@@ -177,6 +178,7 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.contrarian = contrarian
         self.few_shot = few_shot
         self.answer_first = answer_first
+        self.direct_answer = direct_answer
         self.output_format = output_format
         # Choose system role based on contrarian mode
         if system_role:
@@ -208,6 +210,9 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
             template = self._convert_examples_to_format(template)
 
         prompt = template.format(report=report)
+
+        if self.direct_answer:
+            prompt += "\n\nProvide ONLY the final answer. Do not include reasoning."
 
         return prompt
 

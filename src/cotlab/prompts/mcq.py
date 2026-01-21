@@ -67,13 +67,15 @@ D) Observation with repeat imaging in 3 months""",
         output_format: str = "json",
         answer_first: bool = False,
         contrarian: bool = False,
+        direct_answer: bool = False,
         **kwargs,
     ):
         self._name = name
         self.few_shot = few_shot
         self.output_format = output_format
-        self.answer_first = answer_first
+        self.answer_first = answer_first or direct_answer
         self.contrarian = contrarian
+        self.direct_answer = direct_answer
 
     @property
     def name(self) -> str:
@@ -109,6 +111,9 @@ D) Observation with repeat imaging in 3 months""",
 
         if examples_str:
             prompt = f"## Examples\n\n{examples_str}\n\n{prompt}"
+
+        if self.direct_answer:
+            prompt += "\n\nProvide ONLY the final answer letter. Do not include reasoning."
 
         return prompt
 
