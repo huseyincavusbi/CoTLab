@@ -79,6 +79,7 @@ class TransformersBackend(InferenceBackend):
 
     def load_model(self, model_name: str, **kwargs) -> None:
         """Load model with HuggingFace Transformers."""
+        kwargs = self._normalize_load_kwargs(kwargs)
         # Get HF token from environment
         hf_token = os.getenv("HF_TOKEN")
 
@@ -108,6 +109,14 @@ class TransformersBackend(InferenceBackend):
 
         if self.enable_hooks:
             self._hook_manager = HookManager(self._model)
+
+    @staticmethod
+    def _normalize_load_kwargs(kwargs: dict) -> dict:
+        if "bnb_4bit_compute_dtype" in kwargs:
+            compute_dtype = kwargs["bnb_4bit_compute_dtype"]
+            if isinstance(compute_dtype, str) and hasattr(torch, compute_dtype):
+                kwargs["bnb_4bit_compute_dtype"] = getattr(torch, compute_dtype)
+        return kwargs
 
     def _resolve_model_device(self) -> str:
         """Resolve the actual device from the loaded model."""

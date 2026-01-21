@@ -9,6 +9,18 @@ from cotlab.core import create_component
 from cotlab.logging import ExperimentLogger
 
 
+def _extract_backend_load_kwargs(cfg_backend) -> dict:
+    backend_cfg = OmegaConf.to_container(cfg_backend, resolve=True)
+    keys = [
+        "load_in_4bit",
+        "load_in_8bit",
+        "bnb_4bit_quant_type",
+        "bnb_4bit_compute_dtype",
+        "bnb_4bit_use_double_quant",
+    ]
+    return {key: backend_cfg.get(key) for key in keys if backend_cfg.get(key) is not None}
+
+
 def main():
     # Parse CLI arguments
     parser = argparse.ArgumentParser(description="Run CoTLab experiment batch")
@@ -64,7 +76,7 @@ def main():
         )
 
         backend = create_component(base_cfg.backend)
-        backend.load_model(base_cfg.model.name)
+        backend.load_model(base_cfg.model.name, **_extract_backend_load_kwargs(base_cfg.backend))
         print("Backend initialized successfully.")
 
         # Define Experiment Grid

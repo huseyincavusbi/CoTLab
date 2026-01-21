@@ -22,6 +22,18 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def _extract_backend_load_kwargs(cfg_backend: DictConfig) -> dict:
+    backend_cfg = OmegaConf.to_container(cfg_backend, resolve=True)
+    keys = [
+        "load_in_4bit",
+        "load_in_8bit",
+        "bnb_4bit_quant_type",
+        "bnb_4bit_compute_dtype",
+        "bnb_4bit_use_double_quant",
+    ]
+    return {key: backend_cfg.get(key) for key in keys if backend_cfg.get(key) is not None}
+
+
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     """
@@ -63,7 +75,7 @@ def main(cfg: DictConfig) -> None:
     backend = create_component(cfg.backend)
 
     print(f"Loading model: {cfg.model.name}")
-    backend.load_model(cfg.model.name)
+    backend.load_model(cfg.model.name, **_extract_backend_load_kwargs(cfg.backend))
 
     print(f"Creating prompt strategy: {cfg.prompt.name}")
     prompt_strategy = create_component(cfg.prompt)
