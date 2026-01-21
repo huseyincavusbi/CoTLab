@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 
 class ExperimentDocumenter:
@@ -23,9 +23,37 @@ class ExperimentDocumenter:
         self.output_dir = Path(output_dir)
         self.start_time = datetime.now()
 
+    def _experiment_name(self) -> str:
+        return self.config.get("experiment", {}).get("name", "")
+
+    def _experiment_variants(self) -> list[dict]:
+        exp_cfg = self.config.get("experiment", {})
+        variants = exp_cfg.get("variants", [])
+        if isinstance(variants, (DictConfig, ListConfig)):
+            variants = OmegaConf.to_container(variants, resolve=True)
+        return list(variants) if variants else []
+
+    @staticmethod
+    def _format_variant_value(value: Any, base_value: str, default_label: str) -> str:
+        if isinstance(value, DictConfig):
+            value = OmegaConf.to_container(value, resolve=True)
+        if isinstance(value, dict):
+            value = value.get("name", default_label)
+        if value in ("base", "default"):
+            return base_value
+        return value if value else base_value
+
     def generate_title(self) -> str:
         """Generate human-readable experiment title from config."""
         parts = []
+
+        exp_name = self._experiment_name()
+        if exp_name == "activation_compare":
+            variants = self._experiment_variants()
+            if variants:
+                run_names = [v.get("name", "run") for v in variants]
+                return f"Activation Compare: {' vs '.join(run_names)}"
+            return "Activation Compare"
 
         # Dataset
         dataset_name = self.config.get("dataset", {}).get("name", "unknown")
@@ -54,6 +82,15 @@ class ExperimentDocumenter:
     def infer_research_questions(self) -> list[str]:
         """Infer research questions from configuration."""
         questions = []
+        exp_name = self._experiment_name()
+
+        if exp_name == "activation_compare":
+            return [
+                "How do residual stream activations differ across runs and datasets?",
+                "Which layers show the largest activation divergence between runs?",
+                "Do activation differences align with task or prompt changes?",
+            ]
+
         prompt_cfg = self.config.get("prompt", {})
 
         # Few-shot ablation
@@ -86,8 +123,17 @@ class ExperimentDocumenter:
         parts = ["python -m cotlab.main"]
 
         # Add overrides from config
+        exp_cfg = self.config.get("experiment", {})
         prompt_cfg = self.config.get("prompt", {})
         dataset_cfg = self.config.get("dataset", {})
+
+        exp_name = exp_cfg.get("name")
+        if exp_name:
+            parts.append(f"experiment={exp_name}")
+        if exp_cfg.get("num_samples") is not None:
+            parts.append(f"experiment.num_samples={exp_cfg['num_samples']}")
+        if exp_cfg.get("seed") is not None:
+            parts.append(f"experiment.seed={exp_cfg['seed']}")
 
         # Prompt selection
         if "name" in prompt_cfg:
@@ -150,7 +196,31 @@ class ExperimentDocumenter:
 **Few-Shot Examples:** {few_shot}
 **Output Format:** {output_fmt}
 **Dataset:** {dataset_name}
+"""
 
+        exp_name = self._experiment_name()
+        if exp_name == "activation_compare":
+            variants = self._experiment_variants()
+            if variants:
+                doc += "\n**Variants:**\n"
+                for variant in variants:
+                    variant_name = variant.get("name", "run")
+                    variant_dataset = variant.get("dataset", "base")
+                    variant_prompt = variant.get("prompt", "base")
+                    variant_samples = variant.get("num_samples", "default")
+                    variant_seed = variant.get("seed", "default")
+                    variant_dataset = self._format_variant_value(
+                        variant_dataset, dataset_name, "dataset"
+                    )
+                    variant_prompt = self._format_variant_value(
+                        variant_prompt, prompt_cfg.get("name", "prompt"), "prompt"
+                    )
+                    doc += (
+                        f"- {variant_name}: dataset={variant_dataset}, "
+                        f"prompt={variant_prompt}, samples={variant_samples}, seed={variant_seed}\n"
+                    )
+
+        doc += f"""
 <details>
 <summary>Full Configuration (YAML)</summary>
 
@@ -211,11 +281,12 @@ _Results will be added after experiment completes..._
     def _format_results(self, results: Dict[str, Any]) -> str:
         """Format results dictionary as markdown."""
         md = ""
+        is_activation_compare = "num_runs" in results and "pair_count" in results
 
         # Basic metrics
         if "accuracy" in results:
             md += f"- **Accuracy:** {results['accuracy']:.1%}\n"
-        if "total_samples" in results:
+        if "total_samples" in results and not is_activation_compare:
             md += f"- **Samples Processed:** {results['total_samples']}\n"
         if "parse_failures" in results:
             md += f"- **Parse Failures:** {results['parse_failures']}\n"
