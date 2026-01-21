@@ -1,7 +1,12 @@
 """Tests for dataset loaders."""
 
+import json
+
 from cotlab.datasets import (
+    HistopathologyDataset,
+    MedQADataset,
     PatchingPairsDataset,
+    PubMedQADataset,
     Sample,
     SyntheticMedicalDataset,
 )
@@ -96,3 +101,67 @@ class TestPatchingPairsDataset:
         sample = dataset[0]
         assert "clean_answer" in sample.metadata
         assert "corrupted_answer" in sample.metadata
+
+
+class TestMedQADataset:
+    """Tests for MedQADataset with mocked download."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        sample = {
+            "question": "What is the diagnosis?",
+            "options": {"A": "A", "B": "B", "C": "C", "D": "D"},
+            "answer_idx": "A",
+            "meta_info": "step1",
+            "answer": "A",
+        }
+        path = tmp_path / "medqa.jsonl"
+        path.write_text(json.dumps(sample) + "\n", encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        dataset = MedQADataset(repo_id="dummy", filename="medqa/test.jsonl")
+
+        assert len(dataset) == 1
+        assert dataset[0].label == "A"
+        assert "A)" in dataset[0].text
+
+
+class TestPubMedQADataset:
+    """Tests for PubMedQADataset with mocked download."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        sample = {
+            "question": "Is this true?",
+            "context": "Some abstract text.",
+            "answer": "yes",
+            "pmid": "123",
+        }
+        path = tmp_path / "pubmedqa.jsonl"
+        path.write_text(json.dumps(sample) + "\n", encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        dataset = PubMedQADataset(repo_id="dummy", filename="pubmedqa/test.jsonl")
+
+        assert len(dataset) == 1
+        assert dataset[0].label == "yes"
+        assert "Question:" in dataset[0].text
+
+
+class TestHistopathologyDataset:
+    """Tests for HistopathologyDataset with a local TSV."""
+
+    def test_loads_samples(self, tmp_path):
+        tsv = tmp_path / "histopathology.tsv"
+        tsv.write_text(
+            "ground_truth\t0\tScoring 0\t1\tScoring 1\t2\tScoring 2\t3\tScoring 3\n"
+            "GT report\tReport A\t2\t\t\t\t\t\n",
+            encoding="utf-8",
+        )
+
+        dataset = HistopathologyDataset(path=str(tsv))
+        assert len(dataset) == 1
+        assert dataset[0].label == 2
+        assert dataset[0].metadata["ground_truth"] == "GT report"

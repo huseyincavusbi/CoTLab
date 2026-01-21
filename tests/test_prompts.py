@@ -6,6 +6,7 @@ from cotlab.prompts import (
     ArroganceStrategy,
     ChainOfThoughtStrategy,
     DirectAnswerStrategy,
+    MCQPromptStrategy,
     NoInstructionStrategy,
     SimplePromptStrategy,
     create_prompt_strategy,
@@ -197,6 +198,29 @@ class TestUncertaintyStrategy:
     def test_has_system_message(self):
         strategy = UncertaintyStrategy()
         assert strategy.get_system_message() is not None
+
+
+class TestMCQPromptStrategy:
+    """Tests for MCQPromptStrategy."""
+
+    def test_build_prompt_includes_examples(self):
+        strategy = MCQPromptStrategy(few_shot=True, output_format="plain")
+        prompt = strategy.build_prompt({"text": "Question?\n\nA) A\nB) B\nC) C\nD) D"})
+        assert "## Examples" in prompt
+
+    def test_answer_first_examples_order(self):
+        strategy = MCQPromptStrategy(few_shot=True, answer_first=True, output_format="plain")
+        prompt = strategy.build_prompt({"text": "Question?\n\nA) A\nB) B\nC) C\nD) D"})
+        answer_idx = prompt.find("**Answer:**")
+        reasoning_idx = prompt.find("**Reasoning:**")
+        assert answer_idx != -1 and reasoning_idx != -1
+        assert answer_idx < reasoning_idx
+
+    def test_contrarian_system_prompt(self):
+        strategy = MCQPromptStrategy(contrarian=True)
+        system_prompt = strategy.get_system_prompt()
+        assert system_prompt is not None
+        assert "skeptical" in system_prompt.lower()
 
 
 class TestSocraticStrategy:

@@ -96,6 +96,7 @@ jobs:
               ClassificationExperiment,
               CoTAblationExperiment,
               ActivationPatchingExperiment,
+              ActivationCompareExperiment,
               SycophancyHeadsExperiment,
               MultiHeadPatchingExperiment,
               FullLayerPatchingExperiment,
@@ -109,7 +110,7 @@ jobs:
           from cotlab.analysis import CoTParser, FaithfulnessMetrics
           from cotlab.patching import ActivationPatcher
 
-          print(f'CoTLab v{__version__} - All 12 experiments available!')
+          print(f'CoTLab v{__version__} - All 13 experiments available!')
           "
 
       - name: Test prompt strategies

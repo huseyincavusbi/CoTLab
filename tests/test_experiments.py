@@ -1,6 +1,7 @@
 """Tests for new experiment classes."""
 
 from cotlab.experiments import (
+    ActivationCompareExperiment,
     FullLayerPatchingExperiment,
     MultiHeadPatchingExperiment,
     SteeringVectorsExperiment,
@@ -27,6 +28,22 @@ class TestSycophancyHeadsExperiment:
         """Test name property."""
         exp = SycophancyHeadsExperiment(name="custom_name")
         assert exp.name == "custom_name"
+
+
+class TestActivationCompareExperiment:
+    """Tests for ActivationCompareExperiment."""
+
+    def test_init_defaults(self):
+        """Test default initialization."""
+        exp = ActivationCompareExperiment()
+        assert exp.name == "activation_compare"
+        assert exp.num_samples == 20
+        assert exp.pooling == "last_token"
+
+    def test_name_property(self):
+        """Test name property."""
+        exp = ActivationCompareExperiment(name="custom_compare")
+        assert exp.name == "custom_compare"
 
 
 class TestMultiHeadPatchingExperiment:
