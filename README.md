@@ -23,6 +23,9 @@ uv pip install -e ".[dev]"
 # GPU Setup:
 # NVIDIA: uv pip install vllm
 # AMD ROCm: ./scripts/cotlab-rocm.sh (uses Docker)
+
+# AMD ROCm (Transformers backend): install ROCm PyTorch wheels
+# uv pip install --reinstall --index-url https://download.pytorch.org/whl/rocm6.4 torch torchvision torchaudio
 ```
 
 See [Installation Docs](docs/getting-started/installation.md) for detailed GPU setup.
