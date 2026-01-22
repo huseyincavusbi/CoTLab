@@ -1,6 +1,11 @@
 """Main entry point for the CoT research framework."""
 
+from __future__ import annotations
+
+import os
 import random
+import re
+import sys
 from pathlib import Path
 
 import hydra
@@ -11,6 +16,70 @@ from omegaconf import DictConfig, OmegaConf
 from .core import create_component
 from .experiment import ExperimentDocumenter
 from .logging import ExperimentLogger
+
+
+def _safe_model_name(model_value: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9]+", "_", model_value).strip("_").lower()
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _ensure_model_config_file(model_value: str, safe_name: str) -> None:
+    """Create a minimal model config for a HF model id if it doesn't exist."""
+    if not safe_name:
+        return
+    config_dir = _repo_root() / "conf" / "model"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    config_path = config_dir / f"{safe_name}.yaml"
+    if config_path.exists():
+        return
+
+    content = "\n".join(
+        [
+            "# Auto-generated model config",
+            f"name: {model_value}",
+            "max_new_tokens: 512",
+            "temperature: 0.7",
+            "top_p: 0.9",
+            f"safe_name: {safe_name}",
+            "",
+        ]
+    )
+    config_path.write_text(content)
+
+
+def _rewrite_hf_model_override(argv: list[str]) -> list[str]:
+    """Allow `model=<hf-id>` by rewriting to `model.name=<hf-id>` overrides."""
+    rewritten: list[str] = []
+    changed = False
+
+    for arg in argv:
+        if arg.startswith("model="):
+            model_value = arg.split("=", 1)[1]
+            # Treat any value with a "/" or absolute/relative path as HF/local model id.
+            if "/" in model_value or model_value.startswith(".") or model_value.startswith("/"):
+                changed = True
+                safe_name = _safe_model_name(model_value)
+                _ensure_model_config_file(model_value, safe_name)
+                rewritten.append(f"model.name={model_value}")
+                # Provide a safe_name override for output paths.
+                if safe_name:
+                    rewritten.append(f"model.safe_name={safe_name}")
+                continue
+        rewritten.append(arg)
+
+    if not changed:
+        return argv
+    return rewritten
+
+
+def _maybe_rewrite_argv() -> None:
+    """Rewrite argv in-place to support `model=<hf-id>` overrides."""
+    if os.environ.get("COTLAB_DISABLE_HF_MODEL_REWRITE") == "1":
+        return
+    sys.argv[:] = _rewrite_hf_model_override(sys.argv)
 
 
 def set_seed(seed: int) -> None:
@@ -132,4 +201,5 @@ def main(cfg: DictConfig) -> None:
 
 
 if __name__ == "__main__":
+    _maybe_rewrite_argv()
     main()
