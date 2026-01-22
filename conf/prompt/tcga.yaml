@@ -3,3 +3,5 @@ _target_: cotlab.prompts.tcga.TCGAPromptStrategy
 name: tcga
 
 few_shot: true
+answer_first: false
+contrarian: false

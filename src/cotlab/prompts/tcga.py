@@ -48,6 +48,40 @@ Pathology report:
 Response:
 """
 
+PROMPT_TEMPLATE_ANSWER_FIRST = """Review the pathology report and provide an immediate TCGA code.
+
+**Step 1 - Initial Code**: Based on your first read, state the single best TCGA code.
+**Step 2 - Evidence**: Justify the code with site and histology evidence.
+
+Valid Codes:
+ACC, BLCA, BRCA, CESC, CHOL, COAD, DLBC, ESCA, GBM, HNSC, KICH, KIRC, KIRP, LGG, LIHC, LUAD, LUSC, MESO, OV, PAAD, PCPG, PRAD, READ, SARC, SKCM, STAD, TGCT, THCA, THYM, UCEC, UCS, UVM
+
+Provide your response in JSON format. Follow the format of these two examples and give the output strictly in the json format.
+
+Example 1: Initial BRCA, then justification
+```json
+{
+    "cancer_type": "BRCA",
+    "reasoning": "Initial code: BRCA. Site: Breast. Histology: Invasive ductal carcinoma. This maps to TCGA BRCA."
+}
+```
+
+Example 2: Initial LUAD, then justification
+```json
+{
+    "cancer_type": "LUAD",
+    "reasoning": "Initial code: LUAD. Site: Lung. Histology: Adenocarcinoma with glandular features. This maps to TCGA LUAD."
+}
+```
+
+Pathology report:
+\"\"\"
+{report}
+\"\"\"
+
+Response:
+"""
+
 
 @Registry.register_prompt("tcga")
 class TCGAPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
@@ -61,11 +95,13 @@ class TCGAPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         system_role: Optional[str] = None,
         few_shot: bool = True,
         contrarian: bool = False,
+        answer_first: bool = False,
         **kwargs,
     ):
         self._name = name
         self.few_shot = few_shot
         self.contrarian = contrarian
+        self.answer_first = answer_first
         if system_role:
             self.system_role = system_role
         else:
@@ -79,7 +115,7 @@ class TCGAPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         """Build prompt with pathology report."""
         report = input_data.get("text", input_data.get("report", ""))
 
-        template = PROMPT_TEMPLATE
+        template = PROMPT_TEMPLATE_ANSWER_FIRST if self.answer_first else PROMPT_TEMPLATE
 
         if not self.few_shot:
             template = self._remove_few_shot_examples(template)
