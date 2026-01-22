@@ -163,8 +163,8 @@ Where X is the letter (e.g., A, B, C, D, ...) of the correct answer."""
 
         # Fallback: Look for answer pattern
         answer_patterns = [
-            r"(?:answer|selection|choice)[:\s]*([A-Z])",
-            r"\b([A-Z])\s*(?:is|would be)\s+(?:the\s+)?(?:correct|best|right)",
+            r"(?:final\s+answer|answer|selection|choice)\s*[:\-]\s*([A-Z])",
+            r"(?:final\s+answer|answer)\s*(?:is|would be)\s*([A-Z])",
             r"(?:^|\n)\s*([A-Z])\s*(?:\)|\.|\:)",
             r"\*\*([A-Z])\*\*",
         ]
