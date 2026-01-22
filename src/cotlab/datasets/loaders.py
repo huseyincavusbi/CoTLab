@@ -536,12 +536,68 @@ class HistopathologyDataset(BaseDataset):
         self,
         name: str = "histopathology",
         path: str = "data/histopathology.tsv",
+        repo_id: Optional[str] = None,
         **kwargs,
     ):
         self._name = name
-        self.path = Path(path)
+        self.repo_id = repo_id
+        self.path = self._resolve_path_from_registry(name, path)
         self._samples: List[Sample] = []
         self._load()
+
+    def _resolve_path_from_registry(self, name: str, default_path: str) -> Path:
+        """Resolve path from data/datasets.yaml registry or fallback to default."""
+        import yaml
+        from huggingface_hub import hf_hub_download
+
+        repo_id = self.repo_id
+
+        # Locate registry relative to this file (src/cotlab/datasets/loaders.py -> root/data/datasets.yaml)
+        # root is 3 levels up from this file's directory: src/cotlab/datasets -> src/cotlab -> src -> root
+        root_dir = Path(__file__).parent.parent.parent.parent
+        registry_path = root_dir / "data/datasets.yaml"
+
+        if not registry_path.exists():
+            # Fallback: try CWD
+            registry_path = Path("data/datasets.yaml")
+            if not registry_path.exists():
+                return Path(default_path)
+
+        try:
+            with open(registry_path, "r") as f:
+                config = yaml.safe_load(f)
+
+            ds_config = config.get("datasets", {}).get(name, {})
+            if not repo_id:
+                repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
+
+            if not repo_id:
+                return Path(default_path)
+
+            filename = ds_config.get("path")
+            if not filename:
+                p = Path(default_path)
+                if "data" in p.parts:
+                    try:
+                        filename = str(p.relative_to("data"))
+                    except ValueError:
+                        filename = p.name
+                else:
+                    filename = p.name
+
+            try:
+                cached_path = hf_hub_download(
+                    repo_id=repo_id, filename=filename, repo_type="dataset"
+                )
+                return Path(cached_path)
+            except Exception as e:
+                print(
+                    f"Warning: Failed to download {name} ({filename}) from HF repo {repo_id}: {e}"
+                )
+        except Exception as e:
+            print(f"Warning: Failed to load registry: {e}")
+
+        return Path(default_path)
 
     def _load(self):
         """Load TSV and expand to 4 samples per row."""
