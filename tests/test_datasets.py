@@ -153,7 +153,7 @@ class TestPubMedQADataset:
 class TestHistopathologyDataset:
     """Tests for HistopathologyDataset with a local TSV."""
 
-    def test_loads_samples(self, tmp_path):
+    def test_loads_samples(self, tmp_path, monkeypatch):
         tsv = tmp_path / "histopathology.tsv"
         tsv.write_text(
             "ground_truth\t0\tScoring 0\t1\tScoring 1\t2\tScoring 2\t3\tScoring 3\n"
@@ -161,7 +161,19 @@ class TestHistopathologyDataset:
             encoding="utf-8",
         )
 
-        dataset = HistopathologyDataset(path=str(tsv))
+        import huggingface_hub
+
+        calls = {}
+
+        def _fake_hf_hub_download(**kwargs):
+            calls.update(kwargs)
+            return str(tsv)
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", _fake_hf_hub_download)
+
+        dataset = HistopathologyDataset(repo_id="dummy")
         assert len(dataset) == 1
         assert dataset[0].label == 2
         assert dataset[0].metadata["ground_truth"] == "GT report"
+        assert calls.get("repo_id") == "dummy"
+        assert calls.get("repo_type") == "dataset"
