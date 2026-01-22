@@ -13,7 +13,7 @@ dry_run: false
 
 # Global prompt format override (plain, json, toon, toml, xml, yaml, markdown)
 prompt:
-  output_format: plain
+  output_format: json
 
 # Output configuration
 hydra:
