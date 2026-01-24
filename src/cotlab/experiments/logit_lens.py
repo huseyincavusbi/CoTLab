@@ -74,7 +74,14 @@ class LogitLensExperiment(BaseExperiment):
         print(f"Top-k tokens: {self.top_k}")
 
         # 1. Build prompt
-        prompt = prompt_strategy.build_prompt({"question": self.question})
+        # Provide common fields so dataset-specific strategies can use text/report
+        prompt_input = {
+            "question": self.question,
+            "text": self.question,
+            "report": self.question,
+            "metadata": {},
+        }
+        prompt = prompt_strategy.build_prompt(prompt_input)
         tokens = tokenizer(prompt, return_tensors="pt").to(backend.device)
         print(f"\nPrompt: {prompt[:100]}...")
         print(f"Token count: {tokens['input_ids'].shape[1]}")
