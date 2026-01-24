@@ -60,18 +60,18 @@ Provide your response in JSON format. Follow the format of these two examples an
 
 Example 1: Initial BRCA, then justification
 ```json
-{
+{{
     "cancer_type": "BRCA",
     "reasoning": "Initial code: BRCA. Site: Breast. Histology: Invasive ductal carcinoma. This maps to TCGA BRCA."
-}
+}}
 ```
 
 Example 2: Initial LUAD, then justification
 ```json
-{
+{{
     "cancer_type": "LUAD",
     "reasoning": "Initial code: LUAD. Site: Lung. Histology: Adenocarcinoma with glandular features. This maps to TCGA LUAD."
-}
+}}
 ```
 
 Pathology report:
