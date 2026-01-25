@@ -4,16 +4,15 @@ A research toolkit for investigating Chain of Thought (CoT) reasoning, faithfuln
 
 ## Features
 
-- **12 Experiments**: CoT ablation, head patching, layer patching, logit lens, steering vectors
-- **13 Prompt Strategies**: CoT, Direct, Sycophantic, Adversarial, Uncertainty, and more
-- **20 Model Configs**: Gemma 3, MedGemma, DeepSeek-R1, Olmo-Think, Ministral, Nemotron
-- **4 Medical Datasets**: 100 samples each (pediatrics, synthetic, patching pairs, radiology)
-- **Auto-Detection**: Layers and heads detected at runtime, not hardcoded
-- **Hydra Config**: Compose any experiment + model + dataset + prompt
-
-Project overview (DeepWiki): https://deepwiki.com/huseyincavusbi/CoTLab/1-overview
-Official docs: https://huseyincavusbi.github.io/CoTLab/
-
+- Experiments for CoT faithfulness, patching, logit‑lens, steering, and probing
+- Diverse prompt strategies (CoT, direct, adversarial, contrarian, few‑shot, etc.)
+- Configurable models, datasets, and backends (vLLM + Transformers)
+- Auto‑detect layers/heads at runtime
+- Hydra config for easy composition and multiruns
+----
+- Project overview (DeepWiki): https://deepwiki.com/huseyincavusbi/CoTLab/1-overview
+- Official docs: https://huseyincavusbi.github.io/CoTLab/
+---
 ## Installation
 
 ```bash
