@@ -94,39 +94,6 @@ python -m cotlab.main model=medgemma_4b
 python -m cotlab.main model.name=google/gemma-3-270m
 ```
 
-## Datasets
-
-| Dataset | Samples | Domain |
-|---------|---------|--------|
-| `pediatrics` | 100 | General pediatrics scenarios |
-| `synthetic` | 100 | General medical QA |
-| `patching_pairs` | 100 | Clean/corrupted pairs for activation patching |
-| `radiology` | 9 | Radiology reports for testing |
-
-## Experiments
-
-| Experiment | Technique | Purpose |
-|------------|-----------|---------|
-| `cot_ablation` | Token ablation | Zero CoT tokens, measure effect |
-| `cot_heads` | Head patching | Find heads encoding CoT |
-| `logit_lens` | Early decoding | See layer-by-layer predictions |
-| `sycophancy_heads` | Head patching | Find sycophancy heads |
-| `steering_vectors` | Activation steering | Control behavior at inference |
-| `full_layer_cot` | Layer patching | Patch full layers for CoT |
-| `activation_patching` | Residual patching | Causal interventions |
-
-## Prompt Strategies
-
-| Strategy | Description |
-|----------|-------------|
-| `chain_of_thought` | Step-by-step reasoning |
-| `direct_answer` | Answer only, no explanation |
-| `sycophantic` | Suggest wrong answer |
-| `adversarial` | Challenge the model |
-| `uncertainty` | Express confidence levels |
-| `expert_persona` | Specialist personas |
-| `few_shot` | Include examples |
-
 ## Configuration
 
 All configs auto-detect layers/heads at runtime. Override via CLI:
