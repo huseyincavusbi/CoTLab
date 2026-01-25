@@ -11,6 +11,8 @@ A research toolkit for investigating Chain of Thought (CoT) reasoning, faithfuln
 - **Auto-Detection**: Layers and heads detected at runtime, not hardcoded
 - **Hydra Config**: Compose any experiment + model + dataset + prompt
 
+Project overview (DeepWiki): https://deepwiki.com/huseyincavusbi/CoTLab/1-overview
+
 ## Installation
 
 ```bash
