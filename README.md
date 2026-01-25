@@ -12,6 +12,7 @@ A research toolkit for investigating Chain of Thought (CoT) reasoning, faithfuln
 - **Hydra Config**: Compose any experiment + model + dataset + prompt
 
 Project overview (DeepWiki): https://deepwiki.com/huseyincavusbi/CoTLab/1-overview
+Official docs: https://huseyincavusbi.github.io/CoTLab/
 
 ## Installation
 
