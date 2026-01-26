@@ -1,10 +1,12 @@
 """Activation Patching experiment implementation."""
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
+from omegaconf import DictConfig, ListConfig, OmegaConf
 from tqdm import tqdm
 
 from ..backends.base import InferenceBackend
+from ..core import create_component
 from ..core.base import BaseExperiment, BasePromptStrategy, ExperimentResult
 from ..core.registry import Registry
 from ..datasets.loaders import BaseDataset
@@ -32,14 +34,18 @@ class ActivationPatchingExperiment(BaseExperiment):
         self,
         name: str = "activation_patching",
         description: str = "",
+        variants: Optional[List[Dict[str, Any]]] = None,
         patching: Dict[str, Any] = None,
         num_samples: int = 50,
+        seed: int = 42,
         **kwargs,
     ):
         self._name = name
         self.description = description
+        self.variants = variants or []
         self.patching_config = patching or {}
         self.num_samples = num_samples
+        self.seed = seed
 
         self.sweep_all_layers = self.patching_config.get("sweep_all_layers", True)
         self.target_layers = self.patching_config.get("target_layers", None)
@@ -69,7 +75,26 @@ class ActivationPatchingExperiment(BaseExperiment):
         self.validate_backend(backend)
 
         n_samples = num_samples or self.num_samples
-        samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
+        variants = self._normalize_variants(
+            variants=self.variants,
+            base_dataset=dataset,
+            base_prompt=prompt_strategy,
+            base_num_samples=n_samples,
+            base_seed=self.seed,
+        )
+
+        # If no variants provided, use dataset sample with optional corrupted prompt
+        if len(variants) == 1:
+            samples = (
+                dataset.sample(n_samples, seed=self.seed)
+                if n_samples < len(dataset)
+                else list(dataset)
+            )
+            clean_variant = variants[0]
+            corrupt_variant = None
+        else:
+            clean_variant = variants[0]
+            corrupt_variant = variants[1]
 
         # Create patcher
         patcher = ActivationPatcher(backend)
@@ -83,55 +108,145 @@ class ActivationPatchingExperiment(BaseExperiment):
         results = []
         layer_effects = {layer: [] for layer in layers}
 
-        print(f"Running Activation Patching on {len(samples)} samples, {len(layers)} layers...")
-
-        for sample in tqdm(samples, desc="Processing samples"):
-            # Get clean and corrupted prompts
-            clean_prompt = sample.text
-            corrupted_prompt = sample.metadata.get("corrupted_prompt")
-
-            if corrupted_prompt is None:
-                # If no corrupted prompt, create a simple one
-                corrupted_prompt = "What is the answer?"
-
-            input_data = {"question": clean_prompt}
-            clean_formatted = prompt_strategy.build_prompt(input_data)
-
-            corrupted_input = {"question": corrupted_prompt}
-            corrupted_formatted = prompt_strategy.build_prompt(corrupted_input)
-
-            # Sweep layers using forward-only patching (no generation)
-            sweep_results = patcher.sweep_layers(
-                clean_prompt=clean_formatted,
-                corrupted_prompt=corrupted_formatted,
-                layers=layers,
+        if corrupt_variant is None:
+            print(f"Running Activation Patching on {len(samples)} samples, {len(layers)} layers...")
+        else:
+            clean_dataset = clean_variant["dataset"]
+            corrupt_dataset = corrupt_variant["dataset"]
+            clean_prompt_strategy = clean_variant["prompt"]
+            corrupt_prompt_strategy = corrupt_variant["prompt"]
+            clean_samples = (
+                clean_dataset.sample(clean_variant["num_samples"], seed=clean_variant["seed"])
+                if clean_variant["num_samples"] < len(clean_dataset)
+                else list(clean_dataset)
+            )
+            corrupt_samples = (
+                corrupt_dataset.sample(corrupt_variant["num_samples"], seed=corrupt_variant["seed"])
+                if corrupt_variant["num_samples"] < len(corrupt_dataset)
+                else list(corrupt_dataset)
+            )
+            pair_count = min(len(clean_samples), len(corrupt_samples))
+            print(
+                "Running Activation Patching across variants: "
+                f"{clean_dataset.name}/{clean_prompt_strategy.name} -> "
+                f"{corrupt_dataset.name}/{corrupt_prompt_strategy.name} "
+                f"({pair_count} paired samples), {len(layers)} layers..."
             )
 
-            sample_result = {
-                "sample_idx": sample.idx,
-                "clean_prompt": clean_prompt,
-                "corrupted_prompt": corrupted_prompt,
-                "layer_results": {},
-            }
+        if corrupt_variant is None:
+            for sample in tqdm(samples, desc="Processing samples"):
+                # Get clean and corrupted prompts
+                clean_prompt = sample.text
+                corrupted_prompt = sample.metadata.get("corrupted_prompt")
 
-            for layer_idx, patch_result in sweep_results.items():
-                # Use the effect_score computed from logit comparison
-                effect = patch_result.effect_score
+                if corrupted_prompt is None:
+                    # If no corrupted prompt, create a simple one
+                    corrupted_prompt = "What is the answer?"
 
-                layer_effects[layer_idx].append(effect)
-                sample_result["layer_results"][layer_idx] = {
-                    "effect": effect,
+                clean_formatted = self._build_prompt(
+                    prompt_strategy=prompt_strategy,
+                    sample_text=clean_prompt,
+                    metadata=sample.metadata,
+                )
+                corrupted_formatted = self._build_prompt(
+                    prompt_strategy=prompt_strategy,
+                    sample_text=corrupted_prompt,
+                    metadata={},
+                )
+
+                # Sweep layers using forward-only patching (no generation)
+                sweep_results = patcher.sweep_layers(
+                    clean_prompt=clean_formatted,
+                    corrupted_prompt=corrupted_formatted,
+                    layers=layers,
+                )
+
+                sample_result = {
+                    "sample_idx": sample.idx,
+                    "clean_prompt": clean_prompt,
+                    "corrupted_prompt": corrupted_prompt,
+                    "layer_results": {},
                 }
 
-            results.append(sample_result)
+                for layer_idx, patch_result in sweep_results.items():
+                    # Use the effect_score computed from logit comparison
+                    effect = patch_result.effect_score
 
-            if logger:
-                logger.log_sample(sample.idx, sample_result)
+                    layer_effects[layer_idx].append(effect)
+                    sample_result["layer_results"][layer_idx] = {
+                        "effect": effect,
+                    }
+
+                results.append(sample_result)
+
+                if logger:
+                    logger.log_sample(sample.idx, sample_result)
+        else:
+            clean_dataset = clean_variant["dataset"]
+            corrupt_dataset = corrupt_variant["dataset"]
+            clean_prompt_strategy = clean_variant["prompt"]
+            corrupt_prompt_strategy = corrupt_variant["prompt"]
+            clean_samples = (
+                clean_dataset.sample(clean_variant["num_samples"], seed=clean_variant["seed"])
+                if clean_variant["num_samples"] < len(clean_dataset)
+                else list(clean_dataset)
+            )
+            corrupt_samples = (
+                corrupt_dataset.sample(corrupt_variant["num_samples"], seed=corrupt_variant["seed"])
+                if corrupt_variant["num_samples"] < len(corrupt_dataset)
+                else list(corrupt_dataset)
+            )
+            pair_count = min(len(clean_samples), len(corrupt_samples))
+            for idx in tqdm(range(pair_count), desc="Processing paired samples"):
+                clean_sample = clean_samples[idx]
+                corrupt_sample = corrupt_samples[idx]
+
+                clean_formatted = self._build_prompt(
+                    prompt_strategy=clean_prompt_strategy,
+                    sample_text=clean_sample.text,
+                    metadata=clean_sample.metadata,
+                )
+                corrupted_formatted = self._build_prompt(
+                    prompt_strategy=corrupt_prompt_strategy,
+                    sample_text=corrupt_sample.text,
+                    metadata=corrupt_sample.metadata,
+                )
+
+                # Sweep layers using forward-only patching (no generation)
+                sweep_results = patcher.sweep_layers(
+                    clean_prompt=clean_formatted,
+                    corrupted_prompt=corrupted_formatted,
+                    layers=layers,
+                )
+
+                sample_result = {
+                    "clean_sample_idx": clean_sample.idx,
+                    "corrupt_sample_idx": corrupt_sample.idx,
+                    "clean_dataset": clean_dataset.name,
+                    "corrupt_dataset": corrupt_dataset.name,
+                    "clean_prompt": clean_sample.text,
+                    "corrupted_prompt": corrupt_sample.text,
+                    "layer_results": {},
+                }
+
+                for layer_idx, patch_result in sweep_results.items():
+                    # Use the effect_score computed from logit comparison
+                    effect = patch_result.effect_score
+
+                    layer_effects[layer_idx].append(effect)
+                    sample_result["layer_results"][layer_idx] = {
+                        "effect": effect,
+                    }
+
+                results.append(sample_result)
+
+                if logger:
+                    logger.log_sample(idx, sample_result)
 
         # Compute aggregate metrics
         metrics = {
             "num_layers": len(layers),
-            "num_samples": len(samples),
+            "num_samples": len(results),
         }
 
         # Average effect per layer
@@ -148,14 +263,118 @@ class ActivationPatchingExperiment(BaseExperiment):
         )
         metrics["top_5_layers"] = [layer for layer, _ in sorted_layers[:5]]
 
+        metadata = {
+            "layers_swept": layers,
+            "description": self.description,
+        }
+        if corrupt_variant is None:
+            metadata["variants"] = [variants[0]["name"]]
+        else:
+            metadata["variants"] = [clean_variant["name"], corrupt_variant["name"]]
+
         return ExperimentResult(
             experiment_name=self.name,
             model_name=backend.model_name or "unknown",
             prompt_strategy=prompt_strategy.name,
             metrics=metrics,
             raw_outputs=results,
-            metadata={"layers_swept": layers, "description": self.description},
+            metadata=metadata,
         )
+
+    def _normalize_variants(
+        self,
+        *,
+        variants: List[Dict[str, Any]],
+        base_dataset: BaseDataset,
+        base_prompt: BasePromptStrategy,
+        base_num_samples: int,
+        base_seed: int,
+    ) -> List[Dict[str, Any]]:
+        if not variants:
+            return [
+                {
+                    "name": "base",
+                    "dataset": base_dataset,
+                    "prompt": base_prompt,
+                    "num_samples": base_num_samples,
+                    "seed": base_seed,
+                }
+            ]
+
+        normalized = []
+        variant_list = list(variants) if isinstance(variants, ListConfig) else variants
+        for idx, variant in enumerate(variant_list):
+            cfg = variant
+            if isinstance(variant, DictConfig):
+                cfg = OmegaConf.to_container(variant, resolve=True)
+
+            name = cfg.get("name", f"variant_{idx}")
+            dataset_cfg = cfg.get("dataset", None)
+            prompt_cfg = cfg.get("prompt", None)
+            num_samples = cfg.get("num_samples", base_num_samples)
+            seed = cfg.get("seed", base_seed)
+
+            resolved_dataset = self._resolve_component(dataset_cfg, base_dataset)
+            resolved_prompt = self._resolve_component(prompt_cfg, base_prompt)
+
+            normalized.append(
+                {
+                    "name": name,
+                    "dataset": resolved_dataset,
+                    "prompt": resolved_prompt,
+                    "num_samples": num_samples,
+                    "seed": seed,
+                }
+            )
+
+        return normalized
+
+    def _resolve_component(self, cfg: Any, base: Any) -> Any:
+        if cfg is None:
+            return base
+        if isinstance(cfg, str) and cfg.lower() in ("base", "default"):
+            return base
+        if isinstance(cfg, (BaseDataset, BasePromptStrategy)):
+            return cfg
+        if isinstance(cfg, DictConfig):
+            return create_component(cfg)
+        if isinstance(cfg, dict):
+            return create_component(OmegaConf.create(cfg))
+        raise ValueError(f"Unsupported component config type: {type(cfg)}")
+
+    def _build_prompt(
+        self, *, prompt_strategy: BasePromptStrategy, sample_text: str, metadata: Dict[str, Any]
+    ) -> str:
+        prompt_input = {
+            "question": sample_text,
+            "text": sample_text,
+            "report": sample_text,
+            "metadata": metadata or {},
+        }
+        prompt = prompt_strategy.build_prompt(prompt_input)
+        system_prompt = self._get_system_prompt(prompt_strategy)
+        return self._apply_system_prompt(prompt, system_prompt)
+
+    @staticmethod
+    def _get_system_prompt(prompt_strategy: BasePromptStrategy) -> Optional[str]:
+        system_prompt = None
+        get_system_message = getattr(prompt_strategy, "get_system_message", None)
+        if callable(get_system_message):
+            system_prompt = get_system_message()
+        if system_prompt is None:
+            get_system_prompt = getattr(prompt_strategy, "get_system_prompt", None)
+            if callable(get_system_prompt):
+                system_prompt = get_system_prompt()
+        if not system_prompt:
+            return None
+        stripped = system_prompt.strip()
+        return stripped if stripped else None
+
+    @staticmethod
+    def _apply_system_prompt(prompt: str, system_prompt: Optional[str]) -> str:
+        if not system_prompt:
+            return prompt
+        return f"{system_prompt}\n\n{prompt}"
 
     def _compute_effect(
         self, clean_output: str, corrupted_output: str, patched_output: str
