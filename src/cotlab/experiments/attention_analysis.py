@@ -36,6 +36,8 @@ class AttentionAnalysisExperiment(BaseExperiment):
         name: str = "attention_analysis",
         description: str = "Analyze attention patterns at critical layers",
         target_layers: Optional[List[int]] = None,
+        all_layers: bool = False,
+        force_eager_reload: bool = True,
         num_samples: int = 20,
         question: str = "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?",
         **kwargs,
@@ -44,6 +46,8 @@ class AttentionAnalysisExperiment(BaseExperiment):
         self.description = description
         # Default to layers 55-60 (critical reasoning layers found earlier)
         self._target_layers_config = target_layers or [55, 56, 57, 58, 59, 60]
+        self.all_layers = all_layers
+        self.force_eager_reload = force_eager_reload
         self.target_layers = self._target_layers_config
         self.num_samples = num_samples
         self.question = question  # Fallback if no dataset
@@ -53,7 +57,10 @@ class AttentionAnalysisExperiment(BaseExperiment):
         return self._name
 
     def _compute_entropy(self, attn_dist: torch.Tensor) -> float:
-        """Compute entropy of attention distribution."""
+        """Compute entropy of attention distribution.
+        
+        Note: Use bfloat16 (not float16) for the model to avoid NaN attention weights.
+        """
         eps = 1e-10
         return -torch.sum(attn_dist * torch.log(attn_dist + eps)).item()
 
@@ -133,9 +140,18 @@ class AttentionAnalysisExperiment(BaseExperiment):
             config = config.text_config
         num_heads = config.num_attention_heads
 
+        if self.all_layers:
+            num_layers = getattr(config, "num_hidden_layers", None) or getattr(
+                config, "num_layers", None
+            )
+            if num_layers is None:
+                num_layers = backend.num_layers()
+            self.target_layers = list(range(int(num_layers)))
+
         print(f"Model: {backend.model_name}")
         print(f"Attention heads: {num_heads}")
-        print(f"Target layers: {self.target_layers}")
+        print(f"All layers enabled: {self.all_layers}")
+        print(f"Resolved layers: {self.target_layers}")
 
         # Set eager attention to enable output_attentions by reloading if necessary
         # We need to check if the model is already using eager attention
@@ -144,17 +160,23 @@ class AttentionAnalysisExperiment(BaseExperiment):
         )
 
         if current_attn != "eager":
-            print(f"Current attention implementation: {current_attn}")
-            print(
-                "Reloading model with attn_implementation='eager' to support output_attentions=True..."
-            )
-            # We need to preserve the model name before unloading
-            model_name = backend.model_name
-            backend.unload()
-            # Reload with eager attention
-            backend.load_model(model_name, attn_implementation="eager")
-            model = backend._model
-            tokenizer = backend._tokenizer
+            if hasattr(model, "set_attn_implementation") and not self.force_eager_reload:
+                print(f"Current attention implementation: {current_attn}")
+                print("Switching attention implementation to 'eager' in-place...")
+                model.set_attn_implementation("eager")
+                current_attn = getattr(model.config, "_attn_implementation", None)
+            elif self.force_eager_reload:
+                print(f"Current attention implementation: {current_attn}")
+                print(
+                    "Reloading model with attn_implementation='eager' to support output_attentions=True..."
+                )
+                # We need to preserve the model name before unloading
+                model_name = backend.model_name
+                backend.unload()
+                # Reload with eager attention
+                backend.load_model(model_name, attn_implementation="eager")
+                model = backend._model
+                tokenizer = backend._tokenizer
 
         # Get samples from dataset
         n_samples = num_samples or self.num_samples
@@ -217,8 +239,8 @@ class AttentionAnalysisExperiment(BaseExperiment):
 
         for layer_idx in sorted(layer_entropy_stats.keys()):
             entropies = layer_entropy_stats[layer_idx]
-            mean_entropy = np.mean(entropies)
-            std_entropy = np.std(entropies)
+            mean_entropy = float(np.nanmean(entropies))
+            std_entropy = float(np.nanstd(entropies))
 
             # Count most common top tokens
             tokens = all_top_tokens[layer_idx]
@@ -232,14 +254,14 @@ class AttentionAnalysisExperiment(BaseExperiment):
             head_entropies_all = np.array(
                 layer_head_entropy_stats[layer_idx]
             )  # (n_samples, n_heads)
-            mean_per_head = np.mean(head_entropies_all, axis=0).tolist()
-            std_per_head = np.std(head_entropies_all, axis=0).tolist()
+            mean_per_head = np.nanmean(head_entropies_all, axis=0).tolist()
+            std_per_head = np.nanstd(head_entropies_all, axis=0).tolist()
 
             aggregated_results.append(
                 {
                     "layer": layer_idx,
-                    "mean_entropy": float(mean_entropy),
-                    "std_entropy": float(std_entropy),
+                    "mean_entropy": mean_entropy,
+                    "std_entropy": std_entropy,
                     "mean_per_head": mean_per_head,
                     "std_per_head": std_per_head,
                     "top_tokens": [{"token": t, "count": c} for t, c in top_3_tokens],
@@ -254,16 +276,15 @@ class AttentionAnalysisExperiment(BaseExperiment):
 
         # Overall metrics
         all_mean_entropies = [r["mean_entropy"] for r in aggregated_results]
-        overall_mean = np.mean(all_mean_entropies) if all_mean_entropies else 0
+        overall_mean = float(np.nanmean(all_mean_entropies)) if all_mean_entropies else 0.0
 
         # Find most focused layer
+        valid_layers = [r for r in aggregated_results if not np.isnan(r["mean_entropy"])]
         most_focused_layer = (
-            min(aggregated_results, key=lambda x: x["mean_entropy"])["layer"]
-            if aggregated_results
-            else None
+            min(valid_layers, key=lambda x: x["mean_entropy"])["layer"] if valid_layers else None
         )
         most_focused_entropy = (
-            min(r["mean_entropy"] for r in aggregated_results) if aggregated_results else 0
+            min(r["mean_entropy"] for r in valid_layers) if valid_layers else 0.0
         )
 
         metrics = {

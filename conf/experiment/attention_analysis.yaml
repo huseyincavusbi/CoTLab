@@ -3,5 +3,15 @@ _target_: cotlab.experiments.AttentionAnalysisExperiment
 
 name: attention_analysis
 description: "Analyze attention patterns at critical layers"
-target_layers: [55, 56, 57, 58, 59, 60, 61]
+
+# Layer selection (choose ONE approach):
+# - Use all_layers: true to analyze all model layers (0 to N-1)
+# - Use all_layers: false and specify target_layers list for specific layers
+all_layers: true  # Analyze all layers
+# target_layers: [55, 56, 57, 58, 59, 60, 61]  # Uncomment when all_layers=false
+
+# NOTE: For attention analysis, use bfloat16 (not float16) to avoid NaN in deeper layers!
+# Run with: backend.dtype=bfloat16
+
+force_eager_reload: false  # Set to false to avoid OOM; uses in-place attention switch
 num_samples: 20
