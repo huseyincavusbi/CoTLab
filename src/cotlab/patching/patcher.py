@@ -292,6 +292,9 @@ class ActivationPatcher:
     def _get_head_info(self) -> Tuple[int, int]:
         """Return (num_heads, head_dim) from the model config."""
         cfg = getattr(self.backend, "model", None).config
+        # Handle multimodal models with nested text_config
+        if hasattr(cfg, "text_config"):
+            cfg = cfg.text_config
         num_heads = (
             getattr(cfg, "num_attention_heads", None)
             or getattr(cfg, "n_head", None)
