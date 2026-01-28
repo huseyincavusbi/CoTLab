@@ -209,6 +209,54 @@ class TestHookManager:
 
         return MockGemma()
 
+    @pytest.fixture
+    def mock_gemma_attn_model(self):
+        """Create a mock Gemma-like model with attention output projection."""
+        import torch.nn as nn
+
+        class MockSelfAttn(nn.Module):
+            def __init__(self, hidden_size: int = 8):
+                super().__init__()
+                self.o_proj = nn.Linear(hidden_size, hidden_size)
+
+            def forward(self, x):
+                return self.o_proj(x)
+
+        class MockRMSNorm(nn.Module):
+            def forward(self, x):
+                return x
+
+        class MockDecoderLayer(nn.Module):
+            def __init__(self, hidden_size: int = 8):
+                super().__init__()
+                self.self_attn = MockSelfAttn(hidden_size)
+                self.post_attention_layernorm = MockRMSNorm()
+                self.post_feedforward_layernorm = MockRMSNorm()
+
+            def forward(self, x):
+                return self.self_attn(x)
+
+        class MockModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = nn.ModuleList([MockDecoderLayer() for _ in range(2)])
+
+            def forward(self, x):
+                for layer in self.layers:
+                    x = layer(x)
+                return x
+
+        class MockGemma(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = MockModel()
+                self.config = type("Config", (), {"model_type": "gemma3_text"})()
+
+            def forward(self, x):
+                return self.model(x)
+
+        return MockGemma()
+
     def test_gpt2_layer_detection(self, mock_gpt2_model):
         """Test that HookManager correctly detects GPT-2 layers."""
         from cotlab.patching import HookManager
@@ -246,6 +294,48 @@ class TestHookManager:
         residual = hook_manager.get_residual_module(0)
         # Should return post_feedforward_layernorm for Gemma
         assert residual == mock_gemma_model.model.layers[0].post_feedforward_layernorm
+
+    def test_gemma_attention_output_module(self, mock_gemma_attn_model):
+        """Test that Gemma attention output module returns o_proj."""
+        from cotlab.patching import HookManager
+
+        hook_manager = HookManager(mock_gemma_attn_model)
+        attn_out = hook_manager.get_attention_output_module(0)
+        assert attn_out == mock_gemma_attn_model.model.layers[0].self_attn.o_proj
+
+    def test_register_attention_cache_hooks(self, mock_gemma_attn_model):
+        """Test caching attention output projections via hooks."""
+        from cotlab.patching import ActivationCache, HookManager
+
+        hook_manager = HookManager(mock_gemma_attn_model)
+        cache = ActivationCache()
+        hook_manager.register_attention_cache_hooks(cache, layers=[0])
+
+        dummy = torch.randn(1, 2, 8)
+        _ = mock_gemma_attn_model(dummy)
+        hook_manager.remove_all_hooks()
+
+        cached = cache.get(0)
+        assert cached is not None
+        assert cached.shape == dummy.shape
+
+    def test_multi_head_patch_hook(self, mock_gemma_attn_model):
+        """Test that multi-head patching overrides specified head outputs."""
+        from cotlab.patching import HookManager
+
+        hook_manager = HookManager(mock_gemma_attn_model)
+        head_dim = 2  # hidden=8, heads=4
+
+        source = torch.zeros(1, 3, 8)
+        # Patch head 1 (positions 2:4) at last token
+        source[:, -1, 2:4] = 5.0
+
+        hook_manager.register_multi_head_patch_hook(1, [1], source, head_dim)
+        dummy = torch.randn(1, 3, 8)
+        out = mock_gemma_attn_model(dummy)
+        hook_manager.remove_all_hooks()
+
+        assert torch.allclose(out[:, -1, 2:4], source[:, -1, 2:4])
 
     def test_get_layer_module(self, mock_gpt2_model):
         """Test getting layer module by index."""
@@ -303,3 +393,31 @@ class TestHookManager:
 
         assert HookManager.RESIDUAL_HOOK_POINTS["gpt2"] == "ln_2"
         assert HookManager.RESIDUAL_HOOK_POINTS["gemma3"] == "post_feedforward_layernorm"
+
+
+class TestActivationPatcherHeadInfo:
+    """Tests for head metadata parsing in ActivationPatcher."""
+
+    def test_get_head_info_from_config(self):
+        """Ensure head count and head dim are derived from model config."""
+        from cotlab.patching.patcher import ActivationPatcher
+
+        class DummyModel:
+            def __init__(self):
+                self.config = type(
+                    "Config",
+                    (),
+                    {"num_attention_heads": 4, "hidden_size": 16, "model_type": "gpt2"},
+                )()
+
+        class DummyBackend:
+            supports_activations = True
+
+            def __init__(self):
+                self.model = DummyModel()
+                self.hook_manager = None
+
+        patcher = ActivationPatcher(DummyBackend())
+        num_heads, head_dim = patcher._get_head_info()
+        assert num_heads == 4
+        assert head_dim == 4

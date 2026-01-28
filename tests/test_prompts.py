@@ -8,6 +8,7 @@ from cotlab.prompts import (
     DirectAnswerStrategy,
     MCQPromptStrategy,
     NoInstructionStrategy,
+    RadiologyPromptStrategy,
     SimplePromptStrategy,
     create_prompt_strategy,
 )
@@ -20,6 +21,7 @@ from cotlab.prompts.strategies import (
     SycophantStrategy,
     UncertaintyStrategy,
 )
+from cotlab.prompts.tcga import TCGAPromptStrategy
 
 
 class TestSimplePromptStrategy:
@@ -221,6 +223,46 @@ class TestMCQPromptStrategy:
         system_prompt = strategy.get_system_prompt()
         assert system_prompt is not None
         assert "skeptical" in system_prompt.lower()
+
+
+class TestRadiologyPromptStrategy:
+    """Tests for RadiologyPromptStrategy."""
+
+    def test_answer_first_template(self):
+        strategy = RadiologyPromptStrategy(answer_first=True, few_shot=False)
+        prompt = strategy.build_prompt({"report": "Short report"})
+        assert "Initial Assessment" in prompt
+
+    def test_contrarian_system_message(self):
+        strategy = RadiologyPromptStrategy(contrarian=True)
+        system = strategy.get_system_message()
+        assert system is not None
+        assert "skeptical" in system.lower()
+
+    def test_zero_shot_removes_examples(self):
+        strategy = RadiologyPromptStrategy(few_shot=False)
+        prompt = strategy.build_prompt({"report": "Short report"})
+        assert "Example 1" not in prompt
+
+
+class TestTCGAPromptStrategy:
+    """Tests for TCGAPromptStrategy."""
+
+    def test_answer_first_template(self):
+        strategy = TCGAPromptStrategy(answer_first=True, few_shot=False)
+        prompt = strategy.build_prompt({"report": "Pathology report"})
+        assert "Initial Code" in prompt
+
+    def test_contrarian_system_message(self):
+        strategy = TCGAPromptStrategy(contrarian=True)
+        system = strategy.get_system_message()
+        assert system is not None
+        assert "skeptical" in system.lower()
+
+    def test_zero_shot_removes_examples(self):
+        strategy = TCGAPromptStrategy(few_shot=False)
+        prompt = strategy.build_prompt({"report": "Pathology report"})
+        assert "Example 1" not in prompt
 
 
 class TestSocraticStrategy:

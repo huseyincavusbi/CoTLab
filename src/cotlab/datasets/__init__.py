@@ -5,6 +5,7 @@ from .loaders import (
     CardiologyDataset,
     HistopathologyDataset,
     MedQADataset,
+    MMLUMedicalDataset,
     NeurologyDataset,
     OncologyDataset,
     PatchingPairsDataset,
@@ -14,6 +15,7 @@ from .loaders import (
     RadiologyDataset,
     Sample,
     SyntheticMedicalDataset,
+    TCGADataset,
 )
 
 __all__ = [
@@ -22,6 +24,7 @@ __all__ = [
     "CardiologyDataset",
     "HistopathologyDataset",
     "MedQADataset",
+    "MMLUMedicalDataset",
     "NeurologyDataset",
     "OncologyDataset",
     "RadiologyDataset",
@@ -30,4 +33,5 @@ __all__ = [
     "SyntheticMedicalDataset",
     "PatchingPairsDataset",
     "ProbingDiagnosisDataset",
+    "TCGADataset",
 ]

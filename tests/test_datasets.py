@@ -5,10 +5,14 @@ import json
 from cotlab.datasets import (
     HistopathologyDataset,
     MedQADataset,
+    MMLUMedicalDataset,
+    OncologyDataset,
     PatchingPairsDataset,
     PubMedQADataset,
+    RadiologyDataset,
     Sample,
     SyntheticMedicalDataset,
+    TCGADataset,
 )
 
 
@@ -177,3 +181,109 @@ class TestHistopathologyDataset:
         assert dataset[0].metadata["ground_truth"] == "GT report"
         assert calls.get("repo_id") == "dummy"
         assert calls.get("repo_type") == "dataset"
+
+
+class TestMMLUMedicalDataset:
+    """Tests for MMLUMedicalDataset with mocked download."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        sample = {
+            "question": "Which organ filters blood?",
+            "choices": ["Heart", "Liver", "Kidney", "Lung"],
+            "answer": 2,
+            "subject": "anatomy",
+        }
+        path = tmp_path / "mmlu.jsonl"
+        path.write_text(json.dumps(sample) + "\n", encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        dataset = MMLUMedicalDataset(repo_id="dummy", filename="mmlu/medical_test.jsonl")
+
+        assert len(dataset) == 1
+        assert dataset[0].label == "C"
+        assert "A)" in dataset[0].text
+        assert dataset[0].metadata["subject"] == "anatomy"
+
+
+class TestTCGADataset:
+    """Tests for TCGADataset with mocked CSV files."""
+
+    def test_loads_samples_all_split(self, monkeypatch, tmp_path):
+        reports_path = tmp_path / "TCGA_Reports.csv"
+        labels_path = tmp_path / "tcga_patient_to_cancer_type.csv"
+
+        reports_path.write_text(
+            "patient_filename,text\n"
+            "TCGA-AB-1234_report.txt,Report text A\n"
+            "TCGA-CD-5678_report.txt,Report text B\n",
+            encoding="utf-8",
+        )
+        labels_path.write_text(
+            "patient_id,cancer_type\nTCGA-AB-1234,BRCA\nTCGA-CD-5678,LUAD\n",
+            encoding="utf-8",
+        )
+
+        import huggingface_hub
+
+        def _fake_download(**kwargs):
+            filename = kwargs.get("filename", "")
+            if "Reports" in filename:
+                return str(reports_path)
+            return str(labels_path)
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", _fake_download)
+
+        dataset = TCGADataset(repo_id="dummy", split="all")
+        assert len(dataset) == 2
+        assert dataset[0].metadata["patient_id"].startswith("TCGA-")
+        assert dataset[0].metadata["cancer_type"] in {"BRCA", "LUAD"}
+
+
+class TestRadiologyDataset:
+    """Tests for RadiologyDataset JSON parsing."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        sample = [
+            {
+                "input": {"report": "Radiology report text"},
+                "output": {"pathological_fracture": True},
+                "metadata": {"case_id": "R1"},
+            }
+        ]
+        path = tmp_path / "radiology.json"
+        path.write_text(json.dumps(sample), encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        dataset = RadiologyDataset(path="data/radiology.json")
+
+        assert len(dataset) == 1
+        assert dataset[0].label is True
+        assert dataset[0].metadata["case_id"] == "R1"
+
+
+class TestOncologyDataset:
+    """Tests for OncologyDataset JSON parsing."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        sample = [
+            {
+                "input": {"report": "Oncology report text"},
+                "output": {"malignancy": False},
+                "metadata": {"case_id": "O1"},
+            }
+        ]
+        path = tmp_path / "oncology.json"
+        path.write_text(json.dumps(sample), encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        dataset = OncologyDataset(path="data/oncology.json")
+
+        assert len(dataset) == 1
+        assert dataset[0].label is False
+        assert dataset[0].metadata["case_id"] == "O1"

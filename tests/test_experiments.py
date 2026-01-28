@@ -2,6 +2,8 @@
 
 from cotlab.experiments import (
     ActivationCompareExperiment,
+    ActivationPatchingExperiment,
+    AttentionAnalysisExperiment,
     FullLayerPatchingExperiment,
     MultiHeadPatchingExperiment,
     SteeringVectorsExperiment,
@@ -44,6 +46,61 @@ class TestActivationCompareExperiment:
         """Test name property."""
         exp = ActivationCompareExperiment(name="custom_compare")
         assert exp.name == "custom_compare"
+
+
+class TestActivationPatchingExperiment:
+    """Tests for ActivationPatchingExperiment head config parsing."""
+
+    def test_head_indices_apply_to_layers(self):
+        """Head indices should expand to all layers."""
+        from omegaconf import OmegaConf
+
+        exp = ActivationPatchingExperiment(patching={"head_indices": OmegaConf.create([0, 1])})
+        targets = exp._resolve_head_targets([1, 2])
+        assert targets == {1: [0, 1], 2: [0, 1]}
+
+    def test_target_heads_mapping(self):
+        """Target heads dict should map to specific layers only."""
+        from omegaconf import OmegaConf
+
+        exp = ActivationPatchingExperiment(
+            patching={"target_heads": OmegaConf.create({"1": [0, 2], "3": [1]})}
+        )
+        targets = exp._resolve_head_targets([1, 2, 3])
+        assert targets == {1: [0, 2], 3: [1]}
+
+    def test_head_config_conflict(self):
+        """Using head_indices and target_heads together should raise."""
+        exp = ActivationPatchingExperiment(patching={"head_indices": [0], "target_heads": {1: [0]}})
+        try:
+            exp._resolve_head_targets([1])
+        except ValueError as exc:
+            assert "either target_heads or head_indices" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError for conflicting head config")
+
+
+class TestAttentionAnalysisExperiment:
+    """Tests for AttentionAnalysisExperiment defaults and helpers."""
+
+    def test_init_defaults(self):
+        """Default config should match experiment defaults."""
+        exp = AttentionAnalysisExperiment()
+        assert exp.name == "attention_analysis"
+        assert exp.target_layers == [55, 56, 57, 58, 59, 60]
+        assert exp.all_layers is False
+        assert exp.force_eager_reload is True
+        assert exp.num_samples == 20
+
+    def test_entropy_computation(self):
+        """Entropy helper should return a finite float."""
+        import torch
+
+        exp = AttentionAnalysisExperiment()
+        attn = torch.tensor([0.5, 0.5])
+        entropy = exp._compute_entropy(attn)
+        assert isinstance(entropy, float)
+        assert entropy > 0.0
 
 
 class TestMultiHeadPatchingExperiment:
