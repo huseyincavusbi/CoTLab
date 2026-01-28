@@ -1,7 +1,7 @@
 """Activation patcher for causal intervention experiments."""
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import torch
 
@@ -180,6 +180,70 @@ class ActivationPatcher:
 
         return results
 
+    def sweep_heads(
+        self,
+        clean_prompt: str,
+        corrupted_prompt: str,
+        layers: Optional[List[int]] = None,
+        head_indices: Optional[Iterable[int]] = None,
+        target_heads: Optional[Dict[int, Iterable[int]]] = None,
+    ) -> Dict[Tuple[int, int], ForwardPatchResult]:
+        """
+        Sweep patching across attention heads to find causal importance.
+
+        Args:
+            clean_prompt: Prompt that elicits desired behavior
+            corrupted_prompt: Prompt that elicits different behavior
+            layers: Which layers to sweep (None = all)
+            head_indices: Heads to patch for all layers (e.g., [0,1,2])
+            target_heads: Dict mapping layer -> list of head indices
+
+        Returns:
+            Dict mapping (layer_idx, head_idx) -> ForwardPatchResult
+        """
+        if head_indices is None and not target_heads:
+            raise ValueError("Provide head_indices or target_heads for head patching.")
+        if head_indices is not None and target_heads:
+            raise ValueError("Use either head_indices or target_heads, not both.")
+
+        layers_to_sweep = layers
+        if target_heads:
+            layers_to_sweep = list(target_heads.keys())
+
+        # Get clean logits and attention outputs
+        clean_logits, clean_cache = self.backend.forward_with_attention_cache(
+            clean_prompt, layers=layers_to_sweep
+        )
+
+        # Get corrupted logits (no patching)
+        corrupted_logits, _ = self.backend.forward_with_cache(corrupted_prompt, layers=[])
+
+        num_heads, head_dim = self._get_head_info()
+
+        results: Dict[Tuple[int, int], ForwardPatchResult] = {}
+        layers_to_sweep = layers_to_sweep if layers_to_sweep is not None else clean_cache.layers
+
+        for layer_idx in layers_to_sweep:
+            heads = list(target_heads.get(layer_idx, [])) if target_heads else list(head_indices)
+            for head_idx in heads:
+                if head_idx < 0 or head_idx >= num_heads:
+                    raise ValueError(f"Head index {head_idx} out of range (0..{num_heads - 1})")
+
+                patched_logits = self._forward_with_head_patch(
+                    corrupted_prompt, clean_cache, layer_idx, [head_idx], head_dim
+                )
+                effect = self._compute_logit_effect(clean_logits, corrupted_logits, patched_logits)
+
+                results[(layer_idx, head_idx)] = ForwardPatchResult(
+                    layer_idx=layer_idx,
+                    clean_logits=clean_logits.cpu(),
+                    corrupted_logits=corrupted_logits.cpu(),
+                    patched_logits=patched_logits.cpu(),
+                    effect_score=effect,
+                )
+
+        return results
+
     def _forward_with_patch(
         self,
         prompt: str,
@@ -200,6 +264,56 @@ class ActivationPatcher:
             self.hook_manager.remove_all_hooks()
 
         return logits
+
+    def _forward_with_head_patch(
+        self,
+        prompt: str,
+        source_cache: ActivationCache,
+        layer_idx: int,
+        head_indices: List[int],
+        head_dim: int,
+    ) -> torch.Tensor:
+        """Run forward pass with attention head patching at a specific layer."""
+        source_activation = source_cache.get(layer_idx)
+        if source_activation is None:
+            raise ValueError(f"Layer {layer_idx} not in source cache")
+
+        self.hook_manager.register_multi_head_patch_hook(
+            layer_idx, head_indices, source_activation, head_dim
+        )
+
+        try:
+            logits, _ = self.backend.forward_with_cache(prompt, layers=[])
+        finally:
+            self.hook_manager.remove_all_hooks()
+
+        return logits
+
+    def _get_head_info(self) -> Tuple[int, int]:
+        """Return (num_heads, head_dim) from the model config."""
+        cfg = getattr(self.backend, "model", None).config
+        num_heads = (
+            getattr(cfg, "num_attention_heads", None)
+            or getattr(cfg, "n_head", None)
+            or getattr(cfg, "num_heads", None)
+        )
+        head_dim = getattr(cfg, "head_dim", None)
+        hidden_size = (
+            getattr(cfg, "hidden_size", None)
+            or getattr(cfg, "hidden_dim", None)
+            or getattr(cfg, "d_model", None)
+        )
+
+        if head_dim is None and num_heads and hidden_size:
+            head_dim = hidden_size // num_heads
+
+        if not num_heads or not head_dim:
+            raise ValueError(
+                "Could not determine head information from model config "
+                f"(num_heads={num_heads}, head_dim={head_dim})."
+            )
+
+        return int(num_heads), int(head_dim)
 
     def _compute_logit_effect(
         self,

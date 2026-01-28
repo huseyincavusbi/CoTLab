@@ -58,7 +58,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
 
     def _compute_entropy(self, attn_dist: torch.Tensor) -> float:
         """Compute entropy of attention distribution.
-        
+
         Note: Use bfloat16 (not float16) for the model to avoid NaN attention weights.
         """
         eps = 1e-10
@@ -283,9 +283,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
         most_focused_layer = (
             min(valid_layers, key=lambda x: x["mean_entropy"])["layer"] if valid_layers else None
         )
-        most_focused_entropy = (
-            min(r["mean_entropy"] for r in valid_layers) if valid_layers else 0.0
-        )
+        most_focused_entropy = min(r["mean_entropy"] for r in valid_layers) if valid_layers else 0.0
 
         metrics = {
             "num_samples_analyzed": len(sample_results),

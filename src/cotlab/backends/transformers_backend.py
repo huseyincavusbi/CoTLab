@@ -264,6 +264,35 @@ class TransformersBackend(InferenceBackend):
 
         return outputs.logits, cache
 
+    def forward_with_attention_cache(
+        self, prompt: str, layers: Optional[List[int]] = None
+    ) -> Tuple[torch.Tensor, ActivationCache]:
+        """
+        Run forward pass and cache attention output projections for head patching.
+
+        Args:
+            prompt: Input prompt
+            layers: Which layers to cache (None = all)
+
+        Returns:
+            Tuple of (logits, ActivationCache)
+        """
+        if self._hook_manager is None:
+            raise RuntimeError("Hooks not enabled. Set enable_hooks=True.")
+
+        cache = ActivationCache()
+        self._hook_manager.register_attention_cache_hooks(cache, layers=layers)
+
+        inputs = self._tokenizer(prompt, return_tensors="pt").to(self.device)
+
+        try:
+            with torch.no_grad():
+                outputs = self._model(**inputs)
+        finally:
+            self._hook_manager.remove_all_hooks()
+
+        return outputs.logits, cache
+
     @property
     def supports_activations(self) -> bool:
         return True

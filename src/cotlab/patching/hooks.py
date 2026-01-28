@@ -439,6 +439,33 @@ class HookManager:
         self.handles.append(handle)
         return handle
 
+    def register_attention_cache_hooks(
+        self, cache: "ActivationCache", layers: Optional[List[int]] = None, detach: bool = True
+    ) -> None:
+        """
+        Register hooks to cache attention output projections for specific layers.
+
+        This captures the output of the attention projection (o_proj/c_proj),
+        which is suitable for head-level patching.
+        """
+        target_layers = layers if layers is not None else self.available_layers
+
+        for layer_idx in target_layers:
+            attn_module = self.get_attention_output_module(layer_idx)
+
+            def make_hook(idx: int):
+                def hook(module, input, output):
+                    activation = output[0] if isinstance(output, tuple) else output
+                    if detach:
+                        activation = activation.detach().clone()
+                    cache.store(idx, activation)
+                    return output
+
+                return hook
+
+            handle = attn_module.register_forward_hook(make_hook(layer_idx))
+            self.handles.append(handle)
+
     def register_multi_head_patch_hook(
         self,
         layer_idx: int,

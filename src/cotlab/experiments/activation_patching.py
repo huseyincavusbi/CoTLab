@@ -49,6 +49,8 @@ class ActivationPatchingExperiment(BaseExperiment):
 
         self.sweep_all_layers = self.patching_config.get("sweep_all_layers", True)
         self.target_layers = self.patching_config.get("target_layers", None)
+        self.target_heads = self.patching_config.get("target_heads", None)
+        self.head_indices = self.patching_config.get("head_indices", None)
 
     @property
     def name(self) -> str:
@@ -105,8 +107,16 @@ class ActivationPatchingExperiment(BaseExperiment):
         else:
             layers = list(range(backend.num_layers))
 
+        head_targets = self._resolve_head_targets(layers)
+        use_head_patching = head_targets is not None
+
         results = []
         layer_effects = {layer: [] for layer in layers}
+        head_effects = (
+            {(layer, head): [] for layer, heads in head_targets.items() for head in heads}
+            if use_head_patching
+            else {}
+        )
 
         if corrupt_variant is None:
             print(f"Running Activation Patching on {len(samples)} samples, {len(layers)} layers...")
@@ -154,28 +164,45 @@ class ActivationPatchingExperiment(BaseExperiment):
                     metadata={},
                 )
 
-                # Sweep layers using forward-only patching (no generation)
-                sweep_results = patcher.sweep_layers(
-                    clean_prompt=clean_formatted,
-                    corrupted_prompt=corrupted_formatted,
-                    layers=layers,
-                )
+                # Sweep layers or heads using forward-only patching (no generation)
+                if use_head_patching:
+                    sweep_results = patcher.sweep_heads(
+                        clean_prompt=clean_formatted,
+                        corrupted_prompt=corrupted_formatted,
+                        layers=layers,
+                        target_heads=head_targets,
+                    )
+                else:
+                    sweep_results = patcher.sweep_layers(
+                        clean_prompt=clean_formatted,
+                        corrupted_prompt=corrupted_formatted,
+                        layers=layers,
+                    )
 
                 sample_result = {
                     "sample_idx": sample.idx,
                     "clean_prompt": clean_prompt,
                     "corrupted_prompt": corrupted_prompt,
                     "layer_results": {},
+                    "head_results": {},
                 }
 
-                for layer_idx, patch_result in sweep_results.items():
+                for key, patch_result in sweep_results.items():
                     # Use the effect_score computed from logit comparison
                     effect = patch_result.effect_score
 
-                    layer_effects[layer_idx].append(effect)
-                    sample_result["layer_results"][layer_idx] = {
-                        "effect": effect,
-                    }
+                    if use_head_patching:
+                        layer_idx, head_idx = key
+                        head_effects[(layer_idx, head_idx)].append(effect)
+                        sample_result["head_results"].setdefault(layer_idx, {})[head_idx] = {
+                            "effect": effect
+                        }
+                    else:
+                        layer_idx = key
+                        layer_effects[layer_idx].append(effect)
+                        sample_result["layer_results"][layer_idx] = {
+                            "effect": effect,
+                        }
 
                 results.append(sample_result)
 
@@ -212,12 +239,20 @@ class ActivationPatchingExperiment(BaseExperiment):
                     metadata=corrupt_sample.metadata,
                 )
 
-                # Sweep layers using forward-only patching (no generation)
-                sweep_results = patcher.sweep_layers(
-                    clean_prompt=clean_formatted,
-                    corrupted_prompt=corrupted_formatted,
-                    layers=layers,
-                )
+                # Sweep layers or heads using forward-only patching (no generation)
+                if use_head_patching:
+                    sweep_results = patcher.sweep_heads(
+                        clean_prompt=clean_formatted,
+                        corrupted_prompt=corrupted_formatted,
+                        layers=layers,
+                        target_heads=head_targets,
+                    )
+                else:
+                    sweep_results = patcher.sweep_layers(
+                        clean_prompt=clean_formatted,
+                        corrupted_prompt=corrupted_formatted,
+                        layers=layers,
+                    )
 
                 sample_result = {
                     "clean_sample_idx": clean_sample.idx,
@@ -227,16 +262,25 @@ class ActivationPatchingExperiment(BaseExperiment):
                     "clean_prompt": clean_sample.text,
                     "corrupted_prompt": corrupt_sample.text,
                     "layer_results": {},
+                    "head_results": {},
                 }
 
-                for layer_idx, patch_result in sweep_results.items():
+                for key, patch_result in sweep_results.items():
                     # Use the effect_score computed from logit comparison
                     effect = patch_result.effect_score
 
-                    layer_effects[layer_idx].append(effect)
-                    sample_result["layer_results"][layer_idx] = {
-                        "effect": effect,
-                    }
+                    if use_head_patching:
+                        layer_idx, head_idx = key
+                        head_effects[(layer_idx, head_idx)].append(effect)
+                        sample_result["head_results"].setdefault(layer_idx, {})[head_idx] = {
+                            "effect": effect
+                        }
+                    else:
+                        layer_idx = key
+                        layer_effects[layer_idx].append(effect)
+                        sample_result["layer_results"][layer_idx] = {
+                            "effect": effect,
+                        }
 
                 results.append(sample_result)
 
@@ -249,24 +293,44 @@ class ActivationPatchingExperiment(BaseExperiment):
             "num_samples": len(results),
         }
 
-        # Average effect per layer
+        # Average effect per layer/head
         avg_effects = {}
-        for layer_idx, effects in layer_effects.items():
-            avg_effect = sum(effects) / len(effects) if effects else 0
-            avg_effects[f"layer_{layer_idx}_avg_effect"] = avg_effect
+        if use_head_patching:
+            for (layer_idx, head_idx), effects in head_effects.items():
+                avg_effect = sum(effects) / len(effects) if effects else 0
+                avg_effects[f"layer_{layer_idx}_head_{head_idx}_avg_effect"] = avg_effect
 
-        metrics.update(avg_effects)
+            metrics.update(avg_effects)
 
-        # Find most important layers
-        sorted_layers = sorted(
-            layer_effects.items(), key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 0, reverse=True
-        )
-        metrics["top_5_layers"] = [layer for layer, _ in sorted_layers[:5]]
+            sorted_heads = sorted(
+                head_effects.items(),
+                key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 0,
+                reverse=True,
+            )
+            metrics["top_10_heads"] = [f"{layer}:{head}" for (layer, head), _ in sorted_heads[:10]]
+        else:
+            for layer_idx, effects in layer_effects.items():
+                avg_effect = sum(effects) / len(effects) if effects else 0
+                avg_effects[f"layer_{layer_idx}_avg_effect"] = avg_effect
+
+            metrics.update(avg_effects)
+
+            # Find most important layers
+            sorted_layers = sorted(
+                layer_effects.items(),
+                key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 0,
+                reverse=True,
+            )
+            metrics["top_5_layers"] = [layer for layer, _ in sorted_layers[:5]]
 
         metadata = {
             "layers_swept": layers,
             "description": self.description,
         }
+        if use_head_patching:
+            metadata["heads_swept"] = sorted(
+                [f"{layer}:{head}" for layer, heads in head_targets.items() for head in heads]
+            )
         if corrupt_variant is None:
             metadata["variants"] = [variants[0]["name"]]
         else:
@@ -280,6 +344,37 @@ class ActivationPatchingExperiment(BaseExperiment):
             raw_outputs=results,
             metadata=metadata,
         )
+
+    def _resolve_head_targets(self, layers: List[int]) -> Optional[Dict[int, List[int]]]:
+        if not self.target_heads and not self.head_indices:
+            return None
+
+        if self.target_heads and self.head_indices:
+            raise ValueError("Use either target_heads or head_indices, not both.")
+
+        if self.target_heads:
+            targets = (
+                OmegaConf.to_container(self.target_heads, resolve=True)
+                if isinstance(self.target_heads, (DictConfig, ListConfig))
+                else self.target_heads
+            )
+            resolved: Dict[int, List[int]] = {}
+            for layer_key, heads in targets.items():
+                layer_idx = int(layer_key)
+                head_list = self._coerce_head_list(heads)
+                resolved[layer_idx] = [int(h) for h in head_list]
+            return resolved
+
+        head_list = self._coerce_head_list(self.head_indices)
+        return {layer: [int(h) for h in head_list] for layer in layers}
+
+    @staticmethod
+    def _coerce_head_list(heads: Any) -> List[int]:
+        if isinstance(heads, (DictConfig, ListConfig)):
+            heads = OmegaConf.to_container(heads, resolve=True)
+        if isinstance(heads, (list, tuple)):
+            return [int(h) for h in heads]
+        return [int(heads)]
 
     def _normalize_variants(
         self,
