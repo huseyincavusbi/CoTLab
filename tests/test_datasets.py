@@ -2,12 +2,15 @@
 
 import json
 
+import pytest
+
 from cotlab.datasets import (
     HistopathologyDataset,
     MedQADataset,
     MMLUMedicalDataset,
     OncologyDataset,
     PatchingPairsDataset,
+    PubHealthBenchDataset,
     PubMedQADataset,
     RadiologyDataset,
     Sample,
@@ -40,38 +43,65 @@ class TestSample:
 class TestSyntheticMedicalDataset:
     """Tests for SyntheticMedicalDataset."""
 
-    def test_creation(self):
-        dataset = SyntheticMedicalDataset()
+    @pytest.fixture
+    def synthetic_dataset(self, tmp_path, monkeypatch):
+        samples = [
+            {
+                "input": {"scenario": "Scenario A"},
+                "output": {"diagnosis": "Dx A"},
+                "metadata": {"reasoning_keywords": "fever"},
+            },
+            {
+                "input": {"scenario": "Scenario B"},
+                "output": {"diagnosis": "Dx B"},
+                "metadata": {"reasoning_keywords": "cough"},
+            },
+            {
+                "input": {"scenario": "Scenario C"},
+                "output": {"diagnosis": "Dx C"},
+                "metadata": {"reasoning_keywords": "pain"},
+            },
+        ]
+        path = tmp_path / "synthetic.json"
+        path.write_text(json.dumps(samples), encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        return SyntheticMedicalDataset(), len(samples)
+
+    def test_creation(self, synthetic_dataset):
+        dataset, _ = synthetic_dataset
         assert dataset.name == "synthetic"
         assert len(dataset) > 0
 
-    def test_has_expected_samples(self):
-        dataset = SyntheticMedicalDataset()
-        # Should have 100 scenarios from CSV
-        assert len(dataset) == 100
+    def test_has_expected_samples(self, synthetic_dataset):
+        dataset, base_len = synthetic_dataset
+        assert len(dataset) == base_len
 
-    def test_repeat_multiplies_samples(self):
+    def test_repeat_multiplies_samples(self, synthetic_dataset):
+        _, base_len = synthetic_dataset
         dataset = SyntheticMedicalDataset(repeat=3)
-        assert len(dataset) == 300
+        assert len(dataset) == base_len * 3
 
-    def test_getitem(self):
-        dataset = SyntheticMedicalDataset()
+    def test_getitem(self, synthetic_dataset):
+        dataset, _ = synthetic_dataset
         sample = dataset[0]
         assert isinstance(sample, Sample)
         assert len(sample.text) > 0
 
-    def test_samples_have_metadata(self):
-        dataset = SyntheticMedicalDataset()
+    def test_samples_have_metadata(self, synthetic_dataset):
+        dataset, _ = synthetic_dataset
         sample = dataset[0]
         assert "reasoning_keywords" in sample.metadata
 
-    def test_iteration(self):
-        dataset = SyntheticMedicalDataset()
+    def test_iteration(self, synthetic_dataset):
+        dataset, _ = synthetic_dataset
         samples = list(dataset)
         assert len(samples) == len(dataset)
 
-    def test_sample_method(self):
-        dataset = SyntheticMedicalDataset(repeat=2)
+    def test_sample_method(self, synthetic_dataset):
+        dataset, _ = synthetic_dataset
         sampled = dataset.sample(n=3, seed=42)
         assert len(sampled) == 3
 
@@ -79,29 +109,56 @@ class TestSyntheticMedicalDataset:
 class TestPatchingPairsDataset:
     """Tests for PatchingPairsDataset."""
 
-    def test_creation(self):
-        dataset = PatchingPairsDataset()
+    @pytest.fixture
+    def patching_pairs_dataset(self, tmp_path, monkeypatch):
+        samples = [
+            {
+                "clean": {"input": "Clean prompt A", "output": "A"},
+                "corrupted": {"input": "Corrupted prompt A", "output": "B"},
+                "metadata": {"category": "test"},
+            },
+            {
+                "clean": {"input": "Clean prompt B", "output": "C"},
+                "corrupted": {"input": "Corrupted prompt B", "output": "D"},
+                "metadata": {"category": "test"},
+            },
+            {
+                "clean": {"input": "Clean prompt C", "output": "E"},
+                "corrupted": {"input": "Corrupted prompt C", "output": "F"},
+                "metadata": {"category": "test"},
+            },
+        ]
+        path = tmp_path / "patching_pairs.json"
+        path.write_text(json.dumps(samples), encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        return PatchingPairsDataset()
+
+    def test_creation(self, patching_pairs_dataset):
+        dataset = patching_pairs_dataset
         assert dataset.name == "patching_pairs"
 
-    def test_has_pairs(self):
-        dataset = PatchingPairsDataset()
+    def test_has_pairs(self, patching_pairs_dataset):
+        dataset = patching_pairs_dataset
         assert len(dataset) >= 3
 
-    def test_samples_have_corrupted_prompt(self):
-        dataset = PatchingPairsDataset()
+    def test_samples_have_corrupted_prompt(self, patching_pairs_dataset):
+        dataset = patching_pairs_dataset
         sample = dataset[0]
         assert "corrupted_prompt" in sample.metadata
         assert len(sample.metadata["corrupted_prompt"]) > 0
 
-    def test_clean_and_corrupted_different(self):
-        dataset = PatchingPairsDataset()
+    def test_clean_and_corrupted_different(self, patching_pairs_dataset):
+        dataset = patching_pairs_dataset
         sample = dataset[0]
         clean = sample.text
         corrupted = sample.metadata["corrupted_prompt"]
         assert clean != corrupted
 
-    def test_expected_answers_present(self):
-        dataset = PatchingPairsDataset()
+    def test_expected_answers_present(self, patching_pairs_dataset):
+        dataset = patching_pairs_dataset
         sample = dataset[0]
         assert "clean_answer" in sample.metadata
         assert "corrupted_answer" in sample.metadata
@@ -287,3 +344,140 @@ class TestOncologyDataset:
         assert len(dataset) == 1
         assert dataset[0].label is False
         assert dataset[0].metadata["case_id"] == "O1"
+
+
+class TestCardiologyDataset:
+    """Tests for CardiologyDataset JSON parsing."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        sample = [
+            {
+                "input": {"report": "Cardiology report text"},
+                "output": {"congenital_heart_defect": True},
+                "metadata": {"case_id": "C1"},
+            }
+        ]
+        path = tmp_path / "cardiology.json"
+        path.write_text(json.dumps(sample), encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        from cotlab.datasets import CardiologyDataset
+
+        dataset = CardiologyDataset(path="data/cardiology.json")
+
+        assert len(dataset) == 1
+        assert dataset[0].label is True
+        assert dataset[0].metadata["case_id"] == "C1"
+
+
+class TestNeurologyDataset:
+    """Tests for NeurologyDataset JSON parsing."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        sample = [
+            {
+                "input": {"report": "Neurology report text"},
+                "output": {"neurological_abnormality": False},
+                "metadata": {"case_id": "N1"},
+            }
+        ]
+        path = tmp_path / "neurology.json"
+        path.write_text(json.dumps(sample), encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        from cotlab.datasets import NeurologyDataset
+
+        dataset = NeurologyDataset(path="data/neurology.json")
+
+        assert len(dataset) == 1
+        assert dataset[0].label is False
+        assert dataset[0].metadata["case_id"] == "N1"
+
+
+class TestPediatricsDataset:
+    """Tests for PediatricsDataset JSON parsing."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        sample = [
+            {
+                "input": {"scenario": "Peds scenario"},
+                "output": {"diagnosis": "Dx"},
+                "metadata": {"case_id": "P1"},
+            }
+        ]
+        path = tmp_path / "pediatrics.json"
+        path.write_text(json.dumps(sample), encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        from cotlab.datasets import PediatricsDataset
+
+        dataset = PediatricsDataset(path="data/pediatrics.json")
+
+        assert len(dataset) == 1
+        assert dataset[0].label == "Dx"
+        assert dataset[0].metadata["case_id"] == "P1"
+
+
+class TestProbingDiagnosisDataset:
+    """Tests for ProbingDiagnosisDataset JSON parsing."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        sample = [
+            {
+                "input": {"question": "Case question"},
+                "output": {"diagnosis": "Dx"},
+                "metadata": {"category": "cardio", "difficulty": "easy"},
+            }
+        ]
+        path = tmp_path / "probing_diagnosis.json"
+        path.write_text(json.dumps(sample), encoding="utf-8")
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        from cotlab.datasets import ProbingDiagnosisDataset
+
+        dataset = ProbingDiagnosisDataset(path="data/probing_diagnosis.json")
+
+        assert len(dataset) == 1
+        assert dataset[0].label == "Dx"
+        assert dataset[0].metadata["category"] == "cardio"
+
+
+class TestPubHealthBenchDataset:
+    """Tests for PubHealthBenchDataset with mocked parquet."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        pyarrow = pytest.importorskip("pyarrow")
+        import pyarrow.parquet as pq
+
+        data = {
+            "question": ["What is the guidance?"],
+            "options": [["Opt A", "Opt B"]],
+            "options_formatted": ["A. Opt A\nB. Opt B"],
+            "answer_index": [0],
+            "answer": ["A"],
+            "category": ["general"],
+        }
+        table = pyarrow.table(data)
+        path = tmp_path / "pubhealthbench.parquet"
+        pq.write_table(table, path)
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        dataset = PubHealthBenchDataset(
+            repo_id="dummy",
+            filename="pubhealthbench/test-00000-of-00001.parquet",
+            split="test",
+        )
+
+        assert len(dataset) == 1
+        assert dataset[0].label == "A"
+        assert "A. Opt A" in dataset[0].text
