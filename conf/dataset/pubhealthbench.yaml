@@ -1,0 +1,6 @@
+# PubHealthBench multiple-choice public health QA dataset
+_target_: cotlab.datasets.loaders.PubHealthBenchDataset
+
+# Default to reviewed split for higher‑quality, human‑annotated items.
+name: pubhealthbench
+split: reviewed

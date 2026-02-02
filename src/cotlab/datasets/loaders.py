@@ -1028,6 +1028,159 @@ class MMLUMedicalDataset(BaseDataset):
         ]
 
 
+@Registry.register_dataset("pubhealthbench")
+class PubHealthBenchDataset(BaseDataset):
+    """PubHealthBench multiple-choice public health QA dataset.
+
+    Format: Parquet with fields:
+    - question: Question text
+    - options: List of answer choices
+    - options_formatted: Pre-formatted options string (A. ..., B. ...)
+    - answer_index: Integer index (0-based)
+    - answer: Correct answer letter (A/B/C/...)
+    - category, intended_audience, source_document_title, source_chunk_text
+    - review_annotation, retrieved_context_for_judge, question_id
+    """
+
+    def __init__(
+        self,
+        name: str = "pubhealthbench",
+        repo_id: Optional[str] = None,
+        filename: Optional[str] = None,
+        split: str = "test",
+        **kwargs,
+    ):
+        self._name = name
+        self.repo_id = repo_id
+        self.filename = filename
+        self.split = split
+        self._samples: List[Sample] = []
+        self._load()
+
+    def _default_filename(self) -> str:
+        if self.split == "reviewed":
+            return "pubhealthbench/reviewed-00000-of-00001.parquet"
+        return f"pubhealthbench/{self.split}-00000-of-00001.parquet"
+
+    def _resolve_repo_id(self) -> str:
+        import yaml
+
+        repo_id = self.repo_id
+        if repo_id:
+            return repo_id
+
+        # Try registry override
+        root_dir = Path(__file__).parent.parent.parent.parent
+        registry_path = root_dir / "data/datasets.yaml"
+        if registry_path.exists():
+            try:
+                with open(registry_path, "r") as f:
+                    config = yaml.safe_load(f)
+                ds_config = config.get("datasets", {}).get("pubhealthbench", {})
+                repo_id = ds_config.get("repo_id")
+            except Exception as e:
+                print(f"Warning: Failed to load registry for PubHealthBench: {e}")
+
+        return repo_id or "Joshua-Harris/PubHealthBench"
+
+    def _format_options(self, options: Optional[List[str]]) -> str:
+        if not options:
+            return ""
+        letters = [chr(65 + i) for i in range(len(options))]
+        return "\n".join(f"{letter}. {opt}" for letter, opt in zip(letters, options))
+
+    def _load(self):
+        import math
+
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as e:
+            raise ImportError(
+                "PubHealthBench requires pyarrow. Install with: uv pip install pyarrow"
+            ) from e
+
+        from huggingface_hub import hf_hub_download
+
+        filename = self.filename or self._default_filename()
+        repo_id = self._resolve_repo_id()
+        try:
+            path = Path(
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    repo_type="dataset",
+                )
+            )
+        except Exception as e:
+            raise FileNotFoundError(
+                f"Failed to download PubHealthBench from {repo_id} (file: {filename}): {e}"
+            )
+
+        table = pq.read_table(path)
+        df = table.to_pandas()
+
+        index_to_letter = {i: chr(65 + i) for i in range(26)}
+
+        for i, row in df.iterrows():
+
+            def clean_value(value: Any) -> Any:
+                if value is None:
+                    return None
+                if isinstance(value, float) and math.isnan(value):
+                    return None
+                return value
+
+            question = row.get("question", "")
+            options_formatted = clean_value(row.get("options_formatted"))
+            if not options_formatted:
+                options_formatted = self._format_options(row.get("options"))
+
+            text = f"{question}\n\n{options_formatted}".strip()
+
+            answer = clean_value(row.get("answer"))
+            if not answer and row.get("answer_index") is not None:
+                answer = index_to_letter.get(int(row["answer_index"]), "A")
+
+            metadata = {
+                "question_id": clean_value(row.get("question_id")),
+                "category": clean_value(row.get("category")),
+                "intended_audience": clean_value(row.get("intended_audience")),
+                "source_document_title": clean_value(row.get("source_document_title")),
+                "source_chunk_text": clean_value(row.get("source_chunk_text")),
+                "review_annotation": clean_value(row.get("review_annotation")),
+                "retrieved_context_for_judge": clean_value(row.get("retrieved_context_for_judge")),
+            }
+
+            self._samples.append(
+                Sample(
+                    idx=i,
+                    text=text,
+                    label=answer,
+                    metadata=metadata,
+                )
+            )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        return [
+            "mcq",
+            "direct_answer",
+            "chain_of_thought",
+            "uncertainty",
+            "contrarian",
+            "few_shot",
+        ]
+
+
 @Registry.register_dataset("pubmedqa")
 class PubMedQADataset(BaseDataset):
     """PubMedQA research question answering dataset.
