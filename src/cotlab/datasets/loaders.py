@@ -92,7 +92,7 @@ class JSONDataset(BaseDataset):
         self._load()
 
     def _resolve_path_from_registry(self, name: str, default_path: str) -> Path:
-        """Resolve path from data/datasets.yaml registry or fallback to default."""
+        """Resolve path from data/datasets.yaml registry."""
         import yaml
         from huggingface_hub import hf_hub_download
 
@@ -105,7 +105,9 @@ class JSONDataset(BaseDataset):
             # Fallback: try CWD
             registry_path = Path("data/datasets.yaml")
             if not registry_path.exists():
-                return Path(default_path)
+                raise FileNotFoundError(
+                    "datasets.yaml not found. Configure data/datasets.yaml with a Hugging Face repo_id."
+                )
 
         try:
             with open(registry_path, "r") as f:
@@ -116,7 +118,9 @@ class JSONDataset(BaseDataset):
             repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
 
             if not repo_id:
-                return Path(default_path)
+                raise ValueError(
+                    f"No repo_id found for dataset '{name}'. Set it in data/datasets.yaml."
+                )
 
             # 2. Determine Filename
             # If explicit path in registry, use it.
@@ -141,28 +145,16 @@ class JSONDataset(BaseDataset):
                 )
                 return Path(cached_path)
             except Exception as e:
-                print(
-                    f"Warning: Failed to download {name} ({filename}) from HF repo {repo_id}: {e}"
+                raise FileNotFoundError(
+                    f"Failed to download {name} ({filename}) from HF repo {repo_id}: {e}"
                 )
-                pass
         except Exception as e:
-            print(f"Warning: Failed to load registry: {e}")
-
-        return Path(default_path)
+            raise FileNotFoundError(f"Failed to load datasets registry: {e}")
 
     def _load(self):
         """Load samples from JSON or CSV file based on extension."""
         if not self.path.exists():
-            # If resolved path doesn't exist, try resolving as relative to cwd
-            if Path(self.path.name).exists():
-                self.path = Path(self.path.name)
-            else:
-                # One last attempt: maybe it's in data/
-                p = Path("data") / self.path.name
-                if p.exists():
-                    self.path = p
-                else:
-                    raise FileNotFoundError(f"Dataset not found: {self.path}")
+            raise FileNotFoundError(f"Dataset not found: {self.path}")
 
         if self.path.suffix.lower() == ".csv":
             self._load_csv()
@@ -703,24 +695,20 @@ class TCGADataset(BaseDataset):
                 except Exception as e:
                     print(f"Warning: Failed to load registry for TCGA: {e}")
 
-        # Download or get cached files
-        if repo_id:
-            try:
-                reports_path = hf_hub_download(
-                    repo_id=repo_id, filename=self.reports_filename, repo_type="dataset"
-                )
-                labels_path = hf_hub_download(
-                    repo_id=repo_id, filename=self.labels_filename, repo_type="dataset"
-                )
-                self.path = Path(reports_path)
-                self.labels_path = Path(labels_path)
-            except Exception as e:
-                raise FileNotFoundError(f"Failed to download from HF repo {repo_id}: {e}")
-        else:
-            # Fallback for legacy initialization (if used without config)
-            # This path logic needs to be robust if arguments provided differently
-            self.path = Path(self.reports_filename)
-            self.labels_path = Path(self.labels_filename)
+        if not repo_id:
+            raise ValueError("No repo_id found for TCGA dataset. Set it in data/datasets.yaml.")
+
+        try:
+            reports_path = hf_hub_download(
+                repo_id=repo_id, filename=self.reports_filename, repo_type="dataset"
+            )
+            labels_path = hf_hub_download(
+                repo_id=repo_id, filename=self.labels_filename, repo_type="dataset"
+            )
+            self.path = Path(reports_path)
+            self.labels_path = Path(labels_path)
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to download from HF repo {repo_id}: {e}")
 
         if not self.path.exists():
             raise FileNotFoundError(f"Reports not found: {self.path}")
