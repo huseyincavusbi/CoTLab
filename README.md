@@ -1,5 +1,7 @@
 # CoTLab
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/huseyincavusbi/CoTLab)
+
 A research toolkit for investigating Chain of Thought (CoT) reasoning, faithfulness, and mechanistic interpretability in Large Language Models.
 
 ## Features
