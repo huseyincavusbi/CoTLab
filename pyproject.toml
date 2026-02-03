@@ -27,6 +27,7 @@ dependencies = [
     "xmltodict>=0.13.0",
     "bitsandbytes>=0.46.1",
     "pyarrow>=14.0.0",
+    "pandas>=2.0.0",
 ]
 
 [project.optional-dependencies]
