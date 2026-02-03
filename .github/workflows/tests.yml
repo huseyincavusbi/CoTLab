@@ -102,6 +102,20 @@ jobs:
         run: |
           pip install vllm-metal
 
+      - name: Re-pin transformers (final)
+        shell: bash -el {0}
+        run: |
+          pip install "transformers>=4.56.0,<5"
+
+      - name: Show versions
+        shell: bash -el {0}
+        run: |
+          python - <<'PY'
+          import transformers, vllm
+          print("transformers:", transformers.__version__)
+          print("vllm:", vllm.__version__)
+          PY
+
       - name: Test vllm-metal installation
         shell: bash -el {0}
         run: |
