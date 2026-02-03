@@ -92,6 +92,11 @@ jobs:
           pip install -r requirements/cpu.txt
           pip install .
 
+      - name: Pin transformers for vLLM
+        shell: bash -el {0}
+        run: |
+          pip install "transformers>=4.56.0,<5"
+
       - name: Install vllm-metal plugin
         shell: bash -el {0}
         run: |
