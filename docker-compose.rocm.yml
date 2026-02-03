@@ -3,7 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.rocm
-    user: "1000:1000"
+    # Run container as the host user to keep outputs writable
+    user: "${UID}:${GID}"
     privileged: true
     devices:
       - /dev/kfd:/dev/kfd

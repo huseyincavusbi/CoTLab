@@ -12,6 +12,16 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
+# Ensure UID/GID are set for docker-compose user mapping
+if [ -z "${UID:-}" ]; then
+  UID="$(id -u)"
+  export UID
+fi
+if [ -z "${GID:-}" ]; then
+  GID="$(id -g)"
+  export GID
+fi
+
 # Always build (fast with Docker cache)
 echo "Building CoTLab ROCm Docker image..."
 docker compose -f docker-compose.rocm.yml build
