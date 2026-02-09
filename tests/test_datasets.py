@@ -7,6 +7,7 @@ import pytest
 from cotlab.datasets import (
     HistopathologyDataset,
     MARCDataset,
+    MedBulletsDataset,
     MedQADataset,
     MMLUMedicalDataset,
     OncologyDataset,
@@ -525,3 +526,41 @@ class TestMARCDataset:
         assert dataset[0].label == "E"
         assert "A) Option A" in dataset[0].text
         assert "E) Option E" in dataset[0].text
+
+
+class TestMedBulletsDataset:
+    """Tests for MedBulletsDataset with mocked parquet."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        pyarrow = pytest.importorskip("pyarrow")
+        import pyarrow.parquet as pq
+
+        data = {
+            "idx": ["001"],
+            "question": ["Which diagnosis is most likely?"],
+            "options": [
+                {
+                    "A": "Option A",
+                    "B": "Option B",
+                    "C": "Option C",
+                    "D": "Option D",
+                    "E": "",
+                }
+            ],
+            "answer": ["B"],
+            "explanation": ["Because ..."],
+            "link": ["https://example.com"],
+        }
+        table = pyarrow.table(data)
+        path = tmp_path / "medbullets.parquet"
+        pq.write_table(table, path)
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        dataset = MedBulletsDataset(repo_id="dummy", split="op4_test")
+
+        assert len(dataset) == 1
+        assert dataset[0].label == "B"
+        assert "A) Option A" in dataset[0].text
+        assert "E)" not in dataset[0].text  # empty option should be skipped

@@ -1,0 +1,6 @@
+_target_: cotlab.datasets.loaders.MedBulletsDataset
+name: medbullets
+# Choose which split to evaluate:
+# - op4_test: effectively 4-option MCQs (may include an empty option field)
+# - op5_test: same stems with an additional distractor; answer letters may differ
+split: op5_test

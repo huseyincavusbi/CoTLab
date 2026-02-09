@@ -1185,6 +1185,167 @@ class MARCDataset(BaseDataset):
             )
 
 
+@Registry.register_dataset("medbullets")
+class MedBulletsDataset(BaseDataset):
+    """MedBullets MCQ benchmark dataset.
+
+    Upstream dataset: mkieffer/Medbullets (Parquet, splits: op4_test, op5_test).
+
+    Splits:
+    - op4_test: effectively 4 options (may include an empty option field)
+    - op5_test: same stems, with an additional answer choice (letters may differ)
+
+    Expected columns:
+    - idx: string id
+    - question: string
+    - options: struct/dict with keys A..E (some values may be empty strings)
+    - answer: string label (A..E)
+    - explanation: string (rationale)
+    - link: string (source)
+    """
+
+    def __init__(
+        self,
+        name: str = "medbullets",
+        repo_id: Optional[str] = None,
+        split: str = "op5_test",
+        filename: Optional[str] = None,
+        **kwargs,
+    ):
+        self._name = name
+        self.repo_id = repo_id
+        self.split = split
+        self.filename = filename
+        self._samples: List[Sample] = []
+        self._load()
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        return [
+            "mcq",
+            "direct_answer",
+            "chain_of_thought",
+            "uncertainty",
+            "contrarian",
+            "few_shot",
+        ]
+
+    def _default_filename(self) -> str:
+        return f"data/{self.split}-00000-of-00001.parquet"
+
+    def _resolve_repo_id(self) -> str:
+        import yaml
+
+        if self.repo_id:
+            return self.repo_id
+
+        root_dir = Path(__file__).parent.parent.parent.parent
+        registry_path = root_dir / "data/datasets.yaml"
+        if registry_path.exists():
+            try:
+                with open(registry_path, "r") as f:
+                    config = yaml.safe_load(f)
+                ds_config = config.get("datasets", {}).get("medbullets", {})
+                repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
+                if repo_id:
+                    return repo_id
+            except Exception as e:
+                print(f"Warning: Failed to load registry for MedBullets: {e}")
+
+        # Default to upstream HF dataset repo.
+        return "mkieffer/Medbullets"
+
+    @staticmethod
+    def _coerce_options(raw: Any) -> Dict[str, Any]:
+        if raw is None:
+            return {}
+        if isinstance(raw, dict):
+            return raw
+        as_py = getattr(raw, "as_py", None)
+        if callable(as_py):
+            val = as_py()
+            if isinstance(val, dict):
+                return val
+        return {}
+
+    @staticmethod
+    def _format_options(options: Dict[str, Any]) -> str:
+        if not options:
+            return ""
+        lines: list[str] = []
+        for key in sorted(options.keys()):
+            val = options.get(key)
+            if val is None:
+                continue
+            if isinstance(val, str) and not val.strip():
+                continue
+            lines.append(f"{key}) {str(val).strip()}")
+        return "\n".join(lines)
+
+    def _load(self) -> None:
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as e:
+            raise ImportError(
+                "MedBullets requires pyarrow. Install with: uv pip install pyarrow"
+            ) from e
+
+        from huggingface_hub import hf_hub_download
+
+        repo_id = self._resolve_repo_id()
+        filename = self.filename or self._default_filename()
+
+        try:
+            local_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=filename,
+                repo_type="dataset",
+            )
+        except Exception as e:
+            raise FileNotFoundError(
+                f"Failed to download MedBullets from {repo_id} (file: {filename}): {e}"
+            )
+
+        table = pq.read_table(Path(local_path))
+        df = table.to_pandas()
+
+        for i, row in df.iterrows():
+            qid = row.get("idx")
+            question = row.get("question", "") or ""
+            options = self._coerce_options(row.get("options"))
+            options_formatted = self._format_options(options)
+            text = f"{question}\n\n{options_formatted}".strip()
+            label = (row.get("answer") or "").strip().upper()
+
+            self._samples.append(
+                Sample(
+                    idx=int(i),
+                    text=text,
+                    label=label,
+                    metadata={
+                        "idx": qid,
+                        "split": self.split,
+                        "question": question,
+                        "options": options,
+                        "options_formatted": options_formatted,
+                        "explanation": row.get("explanation"),
+                        "link": row.get("link"),
+                        "repo_id": repo_id,
+                        "filename": filename,
+                    },
+                )
+            )
+
+
 @Registry.register_dataset("pubhealthbench")
 class PubHealthBenchDataset(BaseDataset):
     """PubHealthBench multiple-choice public health QA dataset.
