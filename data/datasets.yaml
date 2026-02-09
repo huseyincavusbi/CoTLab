@@ -1,8 +1,2 @@
 default:
   repo_id: "huseyincavus/CoTLab_data"
-
-datasets:
-  pubhealthbench:
-    repo_id: "huseyincavus/CoTLab_data"
-  m_arc:
-    repo_id: "huseyincavus/CoTLab_data"
