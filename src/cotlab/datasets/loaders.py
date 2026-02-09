@@ -1226,7 +1226,7 @@ class MedBulletsDataset(BaseDataset):
         ]
 
     def _default_filename(self) -> str:
-        return f"data/{self.split}-00000-of-00001.parquet"
+        return f"medbullets/{self.split}-00000-of-00001.parquet"
 
     def _resolve_repo_id(self) -> str:
         import yaml
