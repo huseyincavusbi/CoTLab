@@ -1121,40 +1121,26 @@ class MARCDataset(BaseDataset):
 
         from huggingface_hub import hf_hub_download
 
-        # If repo_id is explicitly provided, treat it as strict.
-        explicit_repo_id = self.repo_id is not None
-
-        primary_repo_id = self.repo_id or self._resolve_repo_id()
-        candidates: list[tuple[str, str]] = []
-        if primary_repo_id:
-            candidates.append((primary_repo_id, self.filename))
-        # Fallback to upstream dataset if our snapshot repo doesn't have it yet.
-        if not explicit_repo_id:
-            candidates.append(("mkieffer/M-ARC", "data/test-00000-of-00001.parquet"))
-
-        last_err: Optional[Exception] = None
-        local_path: Optional[str] = None
-        used_repo_id: Optional[str] = None
-        used_filename: Optional[str] = None
-
-        for repo_id, filename in candidates:
-            try:
-                local_path = hf_hub_download(
-                    repo_id=repo_id,
-                    filename=filename,
-                    repo_type="dataset",
-                )
-                used_repo_id = repo_id
-                used_filename = filename
-                break
-            except Exception as e:
-                last_err = e
-
-        if not local_path:
-            repo_hint = primary_repo_id or "mkieffer/M-ARC"
-            raise FileNotFoundError(
-                f"Failed to download M-ARC dataset (tried {repo_hint}). Last error: {last_err}"
+        repo_id = self.repo_id or self._resolve_repo_id()
+        if not repo_id:
+            raise ValueError(
+                "No repo_id found for M-ARC. Set default.repo_id in data/datasets.yaml "
+                "or pass repo_id= explicitly."
             )
+
+        try:
+            local_path = hf_hub_download(
+                repo_id=repo_id,
+                filename=self.filename,
+                repo_type="dataset",
+            )
+        except Exception as e:
+            raise FileNotFoundError(
+                f"Failed to download M-ARC from {repo_id} (file: {self.filename}): {e}"
+            )
+
+        used_repo_id = repo_id
+        used_filename = self.filename
 
         table = pq.read_table(Path(local_path))
         df = table.to_pandas()
@@ -1261,8 +1247,10 @@ class MedBulletsDataset(BaseDataset):
             except Exception as e:
                 print(f"Warning: Failed to load registry for MedBullets: {e}")
 
-        # Default to upstream HF dataset repo.
-        return "mkieffer/Medbullets"
+        raise ValueError(
+            "No repo_id found for MedBullets. Set default.repo_id in data/datasets.yaml "
+            "or pass repo_id= explicitly."
+        )
 
     @staticmethod
     def _coerce_options(raw: Any) -> Dict[str, Any]:
@@ -1395,11 +1383,17 @@ class PubHealthBenchDataset(BaseDataset):
                 with open(registry_path, "r") as f:
                     config = yaml.safe_load(f)
                 ds_config = config.get("datasets", {}).get("pubhealthbench", {})
-                repo_id = ds_config.get("repo_id")
+                # Prefer explicit override, otherwise fall back to default repo_id.
+                repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
             except Exception as e:
                 print(f"Warning: Failed to load registry for PubHealthBench: {e}")
 
-        return repo_id or "Joshua-Harris/PubHealthBench"
+        if not repo_id:
+            raise ValueError(
+                "No repo_id found for PubHealthBench. Set default.repo_id in data/datasets.yaml "
+                "or pass repo_id= explicitly."
+            )
+        return repo_id
 
     def _format_options(self, options: Optional[List[str]]) -> str:
         if not options:
