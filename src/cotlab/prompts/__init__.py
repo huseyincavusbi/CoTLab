@@ -10,6 +10,7 @@ from .length_matched_strategies import (
 from .mcq import MCQPromptStrategy
 from .neurology import NeurologyPromptStrategy
 from .oncology import OncologyPromptStrategy
+from .pubhealthbench import PubHealthBenchMCQPromptStrategy
 from .radiology import RadiologyPromptStrategy
 from .strategies import (
     ArroganceStrategy,
@@ -31,6 +32,7 @@ __all__ = [
     "MCQPromptStrategy",
     "NeurologyPromptStrategy",
     "OncologyPromptStrategy",
+    "PubHealthBenchMCQPromptStrategy",
     "RadiologyPromptStrategy",
     "create_prompt_strategy",
     "ContrarianMatchedStrategy",

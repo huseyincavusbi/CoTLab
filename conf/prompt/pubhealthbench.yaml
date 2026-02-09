@@ -1,0 +1,6 @@
+# PubHealthBench official-style MCQ prompt
+_target_: cotlab.prompts.pubhealthbench.PubHealthBenchMCQPromptStrategy
+
+name: pubhealthbench
+# This prompt expects a short, plain response like: "The answer is (B)".
+output_format: plain

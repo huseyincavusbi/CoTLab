@@ -1131,6 +1131,8 @@ class PubHealthBenchDataset(BaseDataset):
 
             metadata = {
                 "question_id": clean_value(row.get("question_id")),
+                "question": question,
+                "options_formatted": options_formatted,
                 "category": clean_value(row.get("category")),
                 "intended_audience": clean_value(row.get("intended_audience")),
                 "source_document_title": clean_value(row.get("source_document_title")),
@@ -1161,6 +1163,7 @@ class PubHealthBenchDataset(BaseDataset):
     def get_compatible_prompts(self) -> list[str]:
         return [
             "mcq",
+            "pubhealthbench",
             "direct_answer",
             "chain_of_thought",
             "uncertainty",
