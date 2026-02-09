@@ -1,0 +1,6 @@
+_target_: cotlab.datasets.loaders.MARCDataset
+name: m_arc
+# Prefer our snapshot repo (huseyincavus/CoTLab_data) via data/datasets.yaml.
+# If not present there yet, loader falls back to mkieffer/M-ARC automatically.
+filename: m_arc/test-00000-of-00001.parquet
+split: test

@@ -1016,6 +1016,175 @@ class MMLUMedicalDataset(BaseDataset):
         ]
 
 
+@Registry.register_dataset("m_arc")
+class MARCDataset(BaseDataset):
+    """M-ARC benchmark.
+
+    Upstream dataset: mkieffer/M-ARC (Parquet, split=test, 100 items).
+
+    Expected columns:
+    - question_id: string
+    - question: string
+    - options: struct with keys A..G
+    - answer: string label (A..G)
+    - src: string (source/category)
+    """
+
+    def __init__(
+        self,
+        name: str = "m_arc",
+        repo_id: Optional[str] = None,
+        filename: str = "m_arc/test-00000-of-00001.parquet",
+        split: str = "test",
+        **kwargs,
+    ):
+        self._name = name
+        self.repo_id = repo_id
+        self.filename = filename
+        self.split = split
+        self._samples: List[Sample] = []
+        self._load()
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        return [
+            "mcq",
+            "direct_answer",
+            "chain_of_thought",
+            "uncertainty",
+            "contrarian",
+            "few_shot",
+        ]
+
+    def _resolve_repo_id(self) -> Optional[str]:
+        """Resolve default repo_id from data/datasets.yaml, if present."""
+        import yaml
+
+        root_dir = Path(__file__).parent.parent.parent.parent
+        registry_path = root_dir / "data/datasets.yaml"
+        if not registry_path.exists():
+            return None
+
+        try:
+            with open(registry_path, "r") as f:
+                config = yaml.safe_load(f)
+            ds_config = config.get("datasets", {}).get("m_arc", {})
+            return ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
+        except Exception as e:
+            print(f"Warning: Failed to load registry for M-ARC: {e}")
+            return None
+
+    @staticmethod
+    def _format_options(options: Dict[str, Any]) -> str:
+        """Format A..G options as lines, skipping empty values."""
+        if not options:
+            return ""
+        lines: list[str] = []
+        for key in sorted(options.keys()):
+            val = options.get(key)
+            if val is None:
+                continue
+            if isinstance(val, str) and not val.strip():
+                continue
+            lines.append(f"{key}) {str(val).strip()}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _coerce_options(raw: Any) -> Dict[str, Any]:
+        """Convert pyarrow struct / dict-like values into a plain dict."""
+        if raw is None:
+            return {}
+        if isinstance(raw, dict):
+            return raw
+        # pyarrow StructScalar has as_py()
+        as_py = getattr(raw, "as_py", None)
+        if callable(as_py):
+            val = as_py()
+            if isinstance(val, dict):
+                return val
+        return {}
+
+    def _load(self) -> None:
+        try:
+            import pyarrow.parquet as pq
+        except ImportError as e:
+            raise ImportError("M-ARC requires pyarrow. Install with: uv pip install pyarrow") from e
+
+        from huggingface_hub import hf_hub_download
+
+        # If repo_id is explicitly provided, treat it as strict.
+        explicit_repo_id = self.repo_id is not None
+
+        primary_repo_id = self.repo_id or self._resolve_repo_id()
+        candidates: list[tuple[str, str]] = []
+        if primary_repo_id:
+            candidates.append((primary_repo_id, self.filename))
+        # Fallback to upstream dataset if our snapshot repo doesn't have it yet.
+        if not explicit_repo_id:
+            candidates.append(("mkieffer/M-ARC", "data/test-00000-of-00001.parquet"))
+
+        last_err: Optional[Exception] = None
+        local_path: Optional[str] = None
+        used_repo_id: Optional[str] = None
+        used_filename: Optional[str] = None
+
+        for repo_id, filename in candidates:
+            try:
+                local_path = hf_hub_download(
+                    repo_id=repo_id,
+                    filename=filename,
+                    repo_type="dataset",
+                )
+                used_repo_id = repo_id
+                used_filename = filename
+                break
+            except Exception as e:
+                last_err = e
+
+        if not local_path:
+            repo_hint = primary_repo_id or "mkieffer/M-ARC"
+            raise FileNotFoundError(
+                f"Failed to download M-ARC dataset (tried {repo_hint}). Last error: {last_err}"
+            )
+
+        table = pq.read_table(Path(local_path))
+        df = table.to_pandas()
+
+        for i, row in df.iterrows():
+            question_id = row.get("question_id")
+            question = row.get("question", "") or ""
+            options = self._coerce_options(row.get("options"))
+            options_formatted = self._format_options(options)
+            text = f"{question}\n\n{options_formatted}".strip()
+            label = (row.get("answer") or "").strip().upper()
+
+            self._samples.append(
+                Sample(
+                    idx=int(i),
+                    text=text,
+                    label=label,
+                    metadata={
+                        "question_id": question_id,
+                        "src": row.get("src"),
+                        "question": question,
+                        "options": options,
+                        "options_formatted": options_formatted,
+                        "repo_id": used_repo_id,
+                        "filename": used_filename,
+                    },
+                )
+            )
+
+
 @Registry.register_dataset("pubhealthbench")
 class PubHealthBenchDataset(BaseDataset):
     """PubHealthBench multiple-choice public health QA dataset.

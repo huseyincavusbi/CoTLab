@@ -6,6 +6,7 @@ import pytest
 
 from cotlab.datasets import (
     HistopathologyDataset,
+    MARCDataset,
     MedQADataset,
     MMLUMedicalDataset,
     OncologyDataset,
@@ -481,3 +482,46 @@ class TestPubHealthBenchDataset:
         assert len(dataset) == 1
         assert dataset[0].label == "A"
         assert "A. Opt A" in dataset[0].text
+
+
+class TestMARCDataset:
+    """Tests for MARCDataset with mocked parquet."""
+
+    def test_loads_sample(self, monkeypatch, tmp_path):
+        pyarrow = pytest.importorskip("pyarrow")
+        import pyarrow.parquet as pq
+
+        data = {
+            "question_id": ["ID001"],
+            "question": ["What is the best next step?"],
+            "options": [
+                {
+                    "A": "Option A",
+                    "B": "Option B",
+                    "C": "",
+                    "D": "",
+                    "E": "Option E",
+                    "F": "",
+                    "G": "",
+                }
+            ],
+            "answer": ["E"],
+            "src": ["emergency"],
+        }
+        table = pyarrow.table(data)
+        path = tmp_path / "m_arc.parquet"
+        pq.write_table(table, path)
+
+        import huggingface_hub
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", lambda **kwargs: str(path))
+        dataset = MARCDataset(
+            repo_id="dummy",
+            filename="m_arc/test-00000-of-00001.parquet",
+            split="test",
+        )
+
+        assert len(dataset) == 1
+        assert dataset[0].label == "E"
+        assert "A) Option A" in dataset[0].text
+        assert "E) Option E" in dataset[0].text
