@@ -4,7 +4,7 @@ Mirrors the official zero-shot prompt used in UKHSA PubHealthBench.
 """
 
 import re
-from typing import Dict
+from typing import Any, Dict
 
 from ..core.base import BasePromptStrategy
 from ..core.registry import Registry
