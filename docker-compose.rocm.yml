@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile.rocm
     # Run container as the host user to keep outputs writable
-    user: "${UID}:${GID}"
+    user: "${HOST_UID}:${HOST_GID}"
     privileged: true
     devices:
       - /dev/kfd:/dev/kfd

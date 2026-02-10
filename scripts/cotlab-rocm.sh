@@ -12,14 +12,15 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_DIR"
 
-# Ensure UID/GID are set for docker-compose user mapping
-if [ -z "${UID:-}" ]; then
-  UID="$(id -u)"
-  export UID
+# Ensure HOST_UID/HOST_GID are set for docker-compose user mapping.
+# Note: bash sets UID as a readonly variable, so we must not assign to it.
+if [ -z "${HOST_UID:-}" ]; then
+  HOST_UID="$(id -u)"
+  export HOST_UID
 fi
-if [ -z "${GID:-}" ]; then
-  GID="$(id -g)"
-  export GID
+if [ -z "${HOST_GID:-}" ]; then
+  HOST_GID="$(id -g)"
+  export HOST_GID
 fi
 
 # Always build (fast with Docker cache)
