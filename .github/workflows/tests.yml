@@ -354,6 +354,9 @@ jobs:
 
   notebook-test:
     runs-on: ${{ matrix.os }}
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HUGGING_FACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -382,6 +385,25 @@ jobs:
         run: |
           pip install -e ".[dev]"
           python -m ipykernel install --user --name cotlab --display-name "CoTLab"
+
+      - name: Check Hugging Face token
+        shell: bash -el {0}
+        run: |
+          if [ -z "${HF_TOKEN}" ]; then
+            echo "HF_TOKEN secret is required for private dataset access."
+            exit 1
+          fi
+
+      - name: Authenticate Hugging Face
+        shell: bash -el {0}
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import login
+
+          login(token=os.environ["HF_TOKEN"], add_to_git_credential=False)
+          print("Authenticated to Hugging Face Hub.")
+          PY
 
       - name: Execute tutorial notebook
         shell: bash -el {0}
