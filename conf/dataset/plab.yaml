@@ -1,0 +1,5 @@
+_target_: cotlab.datasets.loaders.PLABDataset
+name: plab
+split: main
+filename: plab/data.json
+topics_filename: plab/topics.json

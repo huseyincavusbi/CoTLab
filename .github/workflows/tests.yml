@@ -218,13 +218,13 @@ jobs:
         shell: bash -el {0}
         run: |
           python -c "
-          from cotlab.datasets import SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset, PubHealthBenchDataset, MARCDataset, MedBulletsDataset
+          from cotlab.datasets import SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset, PubHealthBenchDataset, MARCDataset, MedBulletsDataset, PLABDataset
 
-          for Dataset in [SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset, PubHealthBenchDataset, MARCDataset, MedBulletsDataset]:
+          for Dataset in [SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset, PubHealthBenchDataset, MARCDataset, MedBulletsDataset, PLABDataset]:
               dataset = Dataset()
               print(f'{Dataset.__name__}: {len(dataset)} samples')
 
-          print('All 8 datasets load correctly!')
+          print('All 9 datasets load correctly!')
           "
 
       - name: Test CoT parser

@@ -16,6 +16,7 @@ restricting which prompt strategies can be used.
 
 import csv
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -1332,6 +1333,219 @@ class MedBulletsDataset(BaseDataset):
                     },
                 )
             )
+
+
+@Registry.register_dataset("plab")
+class PLABDataset(BaseDataset):
+    """PLAB-style MCQ dataset loader from raw JSON files."""
+
+    def __init__(
+        self,
+        name: str = "plab",
+        repo_id: Optional[str] = None,
+        filename: str = "plab/data.json",
+        topics_filename: str = "plab/topics.json",
+        split: str = "main",
+        **kwargs,
+    ):
+        self._name = name
+        self.repo_id = repo_id
+        self.filename = filename
+        self.topics_filename = topics_filename
+        self.split = split
+        self._samples: List[Sample] = []
+        self._load()
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        return [
+            "mcq",
+            "direct_answer",
+            "chain_of_thought",
+            "uncertainty",
+            "contrarian",
+            "few_shot",
+        ]
+
+    def _resolve_repo_id(self) -> str:
+        import yaml
+
+        if self.repo_id:
+            return self.repo_id
+
+        root_dir = Path(__file__).parent.parent.parent.parent
+        registry_path = root_dir / "data/datasets.yaml"
+        if registry_path.exists():
+            try:
+                with open(registry_path, "r") as f:
+                    config = yaml.safe_load(f)
+                ds_config = config.get("datasets", {}).get("plab", {})
+                repo_id = ds_config.get("repo_id", config.get("default", {}).get("repo_id"))
+                if repo_id:
+                    return repo_id
+            except Exception as e:
+                print(f"Warning: Failed to load registry for PLAB: {e}")
+
+        raise ValueError(
+            "No repo_id found for PLAB. Set default.repo_id in data/datasets.yaml "
+            "or pass repo_id= explicitly."
+        )
+
+    @staticmethod
+    def _as_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, list):
+            return "".join(str(x) for x in value)
+        return str(value)
+
+    @staticmethod
+    def _extract_question_id(question_text: str) -> Optional[int]:
+        m = re.match(r"\s*(\d+)\.", question_text)
+        if not m:
+            return None
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _extract_label(answer_text: str) -> Optional[str]:
+        patterns = [
+            r"\bkey\s+is\s*([A-G])\b",
+            r"\bAns\.?\s*([A-G])\b",
+            r"\bAnswer\s*[:\-]?\s*([A-G])\b",
+        ]
+        for pat in patterns:
+            m = re.search(pat, answer_text, flags=re.IGNORECASE)
+            if m:
+                return m.group(1).upper()
+        return None
+
+    @staticmethod
+    def _format_options(raw_options: List[Any]) -> tuple[str, Dict[str, str]]:
+        lines: List[str] = []
+        options_map: Dict[str, str] = {}
+        next_letter_ord = ord("A")
+
+        for raw in raw_options:
+            option = str(raw).strip()
+            if not option:
+                continue
+
+            m = re.match(r"^\s*([A-Ga-g])[\)\.\:\-]\s*(.*)$", option)
+            if m:
+                letter = m.group(1).upper()
+                text = m.group(2).strip()
+            else:
+                letter = chr(next_letter_ord)
+                text = option
+                next_letter_ord += 1
+
+            if not text:
+                continue
+
+            options_map[letter] = text
+            lines.append(f"{letter}) {text}")
+
+        return "\n".join(lines), options_map
+
+    def _load(self) -> None:
+        from huggingface_hub import hf_hub_download
+
+        repo_id = self._resolve_repo_id()
+
+        try:
+            data_path = Path(
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename=self.filename,
+                    repo_type="dataset",
+                )
+            )
+        except Exception as e:
+            raise FileNotFoundError(
+                f"Failed to download PLAB data from {repo_id} (file: {self.filename}): {e}"
+            )
+
+        topics_by_qid: Dict[int, str] = {}
+        try:
+            topics_path = Path(
+                hf_hub_download(
+                    repo_id=repo_id,
+                    filename=self.topics_filename,
+                    repo_type="dataset",
+                )
+            )
+            with open(topics_path, "r", encoding="utf-8") as f:
+                topics_data = json.load(f)
+            for row in topics_data:
+                qid = row.get("question")
+                try:
+                    qid_int = int(qid)
+                except (TypeError, ValueError):
+                    continue
+                topic = self._as_text(row.get("topic")).strip()
+                if topic:
+                    topics_by_qid[qid_int] = topic
+        except Exception:
+            topics_by_qid = {}
+
+        with open(data_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        sample_idx = 0
+        for row in data:
+            question_text = self._as_text(row.get("question")).strip()
+            if not question_text:
+                continue
+
+            raw_options = row.get("options")
+            if not isinstance(raw_options, list):
+                continue
+
+            options_formatted, options_map = self._format_options(raw_options)
+            if not options_formatted:
+                continue
+
+            answer_explanation = self._as_text(row.get("answer")).strip()
+            label = self._extract_label(answer_explanation)
+            if label is None or label not in options_map:
+                continue
+
+            qid = self._extract_question_id(question_text)
+            topic = topics_by_qid.get(qid) if qid is not None else None
+            text = f"{question_text}\n\n{options_formatted}".strip()
+
+            self._samples.append(
+                Sample(
+                    idx=sample_idx,
+                    text=text,
+                    label=label,
+                    metadata={
+                        "question_id": qid,
+                        "topic": topic,
+                        "question": question_text,
+                        "options": options_map,
+                        "options_formatted": options_formatted,
+                        "answer_explanation": answer_explanation,
+                        "split": self.split,
+                        "repo_id": repo_id,
+                        "filename": self.filename,
+                        "topics_filename": self.topics_filename,
+                    },
+                )
+            )
+            sample_idx += 1
 
 
 @Registry.register_dataset("pubhealthbench")

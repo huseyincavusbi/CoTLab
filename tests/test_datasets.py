@@ -12,6 +12,7 @@ from cotlab.datasets import (
     MMLUMedicalDataset,
     OncologyDataset,
     PatchingPairsDataset,
+    PLABDataset,
     PubHealthBenchDataset,
     PubMedQADataset,
     RadiologyDataset,
@@ -564,3 +565,44 @@ class TestMedBulletsDataset:
         assert dataset[0].label == "B"
         assert "A) Option A" in dataset[0].text
         assert "E)" not in dataset[0].text  # empty option should be skipped
+
+
+class TestPLABDataset:
+    """Tests for PLABDataset with mocked JSON downloads."""
+
+    def test_loads_sample_with_topic(self, monkeypatch, tmp_path):
+        data = [
+            {
+                "question": ["1. What is the next best step?\n"],
+                "options": ["a. Option A\n", "b. Option B\n", "c. Option C\n"],
+                "answer": ["Ans. The key is B.\n"],
+            }
+        ]
+        topics = [{"question": 1, "topic": "Emergency Medicine\n"}]
+
+        data_path = tmp_path / "data_12Jun_edited.json"
+        topics_path = tmp_path / "topics.json"
+        data_path.write_text(json.dumps(data), encoding="utf-8")
+        topics_path.write_text(json.dumps(topics), encoding="utf-8")
+
+        import huggingface_hub
+
+        def _fake_download(**kwargs):
+            filename = kwargs.get("filename", "")
+            if filename.endswith("topics.json"):
+                return str(topics_path)
+            return str(data_path)
+
+        monkeypatch.setattr(huggingface_hub, "hf_hub_download", _fake_download)
+
+        dataset = PLABDataset(
+            repo_id="dummy",
+            filename="plab/data.json",
+            topics_filename="plab/topics.json",
+        )
+
+        assert len(dataset) == 1
+        assert dataset[0].label == "B"
+        assert "A) Option A" in dataset[0].text
+        assert dataset[0].metadata["topic"] == "Emergency Medicine"
+        assert dataset[0].metadata["question_id"] == 1
