@@ -8,6 +8,7 @@ from cotlab.prompts import (
     DirectAnswerStrategy,
     MCQPromptStrategy,
     NoInstructionStrategy,
+    PLABPromptStrategy,
     RadiologyPromptStrategy,
     SimplePromptStrategy,
     create_prompt_strategy,
@@ -220,6 +221,39 @@ class TestMCQPromptStrategy:
 
     def test_contrarian_system_prompt(self):
         strategy = MCQPromptStrategy(contrarian=True)
+        system_prompt = strategy.get_system_prompt()
+        assert system_prompt is not None
+        assert "skeptical" in system_prompt.lower()
+
+
+class TestPLABPromptStrategy:
+    """Tests for PLABPromptStrategy."""
+
+    def test_name(self):
+        strategy = PLABPromptStrategy()
+        assert strategy.name == "plab"
+
+    def test_build_prompt_includes_plab_context(self):
+        strategy = PLABPromptStrategy(few_shot=False, output_format="plain")
+        prompt = strategy.build_prompt({"text": "Stem\n\nA) one\nB) two\nC) three"})
+        assert "PLAB" in prompt
+        assert "single best answer" in prompt.lower()
+
+    def test_answer_first_examples_order(self):
+        strategy = PLABPromptStrategy(few_shot=True, answer_first=True, output_format="plain")
+        prompt = strategy.build_prompt({"text": "Question?\n\nA) A\nB) B\nC) C"})
+        answer_idx = prompt.find("**Answer:**")
+        reasoning_idx = prompt.find("**Reasoning:**")
+        assert answer_idx != -1 and reasoning_idx != -1
+        assert answer_idx < reasoning_idx
+
+    def test_parse_response_bracketed_answer(self):
+        strategy = PLABPromptStrategy()
+        parsed = strategy.parse_response("The answer is (C)")
+        assert parsed["answer"] == "C"
+
+    def test_contrarian_system_prompt(self):
+        strategy = PLABPromptStrategy(contrarian=True)
         system_prompt = strategy.get_system_prompt()
         assert system_prompt is not None
         assert "skeptical" in system_prompt.lower()
