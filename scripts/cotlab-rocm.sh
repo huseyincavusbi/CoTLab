@@ -23,9 +23,33 @@ if [ -z "${HOST_GID:-}" ]; then
   export HOST_GID
 fi
 
-# Always build (fast with Docker cache)
+# Ensure outputs directory exists on host before docker bind-mounts it.
+# If this path is missing, docker may create it as root, causing permission issues.
+OUTPUTS_DIR="$PROJECT_DIR/outputs"
+mkdir -p "$OUTPUTS_DIR"
+
+# Always build
 echo "Building CoTLab ROCm Docker image..."
 docker compose -f docker-compose.rocm.yml build
+
+# Try to self-heal outputs permissions if they drifted
+if [ ! -w "$OUTPUTS_DIR" ]; then
+  echo "Warning: '$OUTPUTS_DIR' is not writable. Attempting automatic ownership repair..."
+  docker compose -f docker-compose.rocm.yml run --rm \
+    --user root \
+    --entrypoint bash \
+    cotlab \
+    -lc "mkdir -p /app/outputs && chown -R ${HOST_UID}:${HOST_GID} /app/outputs" || true
+fi
+
+# Fail fast with a clear manual fix if auto-repair did not resolve permissions.
+if [ ! -w "$OUTPUTS_DIR" ]; then
+  echo "Error: '$OUTPUTS_DIR' is still not writable by $(id -un) (${HOST_UID}:${HOST_GID})."
+  echo "Run once to fix ownership:"
+  echo "  sudo chown -R ${HOST_UID}:${HOST_GID} \"$OUTPUTS_DIR\""
+  echo "  chmod -R u+rwX \"$OUTPUTS_DIR\""
+  exit 1
+fi
 
 # Run with all arguments passed through
 docker compose -f docker-compose.rocm.yml run --rm cotlab "$@"
