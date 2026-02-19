@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import os
 import random
 import re
@@ -179,14 +180,31 @@ def main(cfg: DictConfig) -> None:
 
         # num_samples is optional for some experiments
         num_samples = OmegaConf.select(cfg, "experiment.num_samples", default=None)
-        result = experiment.run(
-            backend=backend,
-            dataset=dataset,
-            prompt_strategy=prompt_strategy,
-            logger=logger,
-            **gen_kwargs,
-            **(dict(num_samples=num_samples) if num_samples is not None else {}),
+
+        # Only pass kwargs that the experiment.run signature can accept.
+        # Some analysis experiments do not accept generation args.
+        run_sig = inspect.signature(experiment.run)
+        run_params = run_sig.parameters
+        accepts_var_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in run_params.values()
         )
+
+        run_kwargs = {
+            "backend": backend,
+            "dataset": dataset,
+            "prompt_strategy": prompt_strategy,
+            "logger": logger,
+        }
+        extra_kwargs = dict(gen_kwargs)
+        if num_samples is not None:
+            extra_kwargs["num_samples"] = num_samples
+
+        if accepts_var_kwargs:
+            run_kwargs.update(extra_kwargs)
+        else:
+            run_kwargs.update({k: v for k, v in extra_kwargs.items() if k in run_params})
+
+        result = experiment.run(**run_kwargs)
 
         # Calculate duration
         duration = time.time() - start_time
