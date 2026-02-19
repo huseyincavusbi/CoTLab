@@ -180,6 +180,16 @@ def main(cfg: DictConfig) -> None:
 
         # num_samples is optional for some experiments
         num_samples = OmegaConf.select(cfg, "experiment.num_samples", default=None)
+        if num_samples is not None and isinstance(num_samples, int) and num_samples > 0:
+            dataset_size = len(dataset)
+            if num_samples > dataset_size:
+                dataset_name = getattr(dataset, "name", type(dataset).__name__)
+                print(
+                    "Warning: experiment.num_samples="
+                    f"{num_samples} exceeds dataset size ({dataset_size}) "
+                    f"for '{dataset_name}'. Using {dataset_size} samples."
+                )
+                num_samples = dataset_size
 
         # Only pass kwargs that the experiment.run signature can accept.
         # Some analysis experiments do not accept generation args.
