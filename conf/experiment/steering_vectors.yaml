@@ -3,7 +3,7 @@ _target_: cotlab.experiments.SteeringVectorsExperiment
 
 name: steering_vectors
 description: "Inference-time steering via activation differences"
-# target_layer: auto-detected at runtime (layer with strongest effect)
-# steering_strengths: defaults to full range if not specified
+target_layers: null  # null = auto-detected strongest layer(s)
+steering_strengths: null  # null = default strength range
 suggested_diagnosis: anxiety
 question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"

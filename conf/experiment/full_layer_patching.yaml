@@ -3,6 +3,6 @@ _target_: cotlab.experiments.FullLayerPatchingExperiment
 
 name: full_layer_patching
 description: "Patch full layer (attention + MLP) for behavior reversal"
-# target_layers: omit to use all layers automatically
+target_layers: null  # null = use all layers
 suggested_diagnosis: anxiety
 question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"

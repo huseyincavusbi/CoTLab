@@ -4,11 +4,14 @@ _target_: cotlab.experiments.ActivationPatchingExperiment
 name: activation_patching
 description: Layer-wise causal interventions to study CoT importance
 
+# Optional cross-run setup
+variants: []
+num_samples: 50
+seed: 42
+
 patching:
   sweep_all_layers: true
   target_positions: null  # null = all positions
   intervention_types:
     - patch
     - zero
-
-# num_samples: uses full dataset if not specified

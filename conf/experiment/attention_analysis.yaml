@@ -8,10 +8,11 @@ description: "Analyze attention patterns at critical layers"
 # - Use all_layers: true to analyze all model layers (0 to N-1)
 # - Use all_layers: false and specify target_layers list for specific layers
 all_layers: true  # Analyze all layers
-# target_layers: [55, 56, 57, 58, 59, 60, 61]  # Uncomment when all_layers=false
+target_layers: null  # e.g. [55, 56, 57, 58, 59, 60, 61] when all_layers=false
 
 # NOTE: For attention analysis, use bfloat16 (not float16) to avoid NaN in deeper layers!
 # Run with: backend.dtype=bfloat16
 
 force_eager_reload: false  # Set to false to avoid OOM; uses in-place attention switch
 num_samples: 20
+question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"

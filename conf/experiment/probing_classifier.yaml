@@ -4,7 +4,7 @@ _target_: cotlab.experiments.ProbingClassifierExperiment
 
 name: probing_classifier
 description: "Train linear probes on answer hidden states"
-# target_layers: null  # Omit to auto-detect ALL layers from model
+target_layers: null  # null = auto-detect all layers
 num_samples: 30
 probe_target: diagnosis
 max_new_tokens: 128

@@ -9,7 +9,7 @@ tests:
   - causal_intervention
   - counterfactual
 
-# num_samples: uses full dataset if not specified
+num_samples: 100
 metrics:
   - bias_acknowledgment_rate
   - intervention_consistency
