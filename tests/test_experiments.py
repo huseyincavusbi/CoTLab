@@ -91,6 +91,11 @@ class TestAttentionAnalysisExperiment:
         assert exp.all_layers is False
         assert exp.force_eager_reload is True
         assert exp.num_samples == 20
+        assert exp.last_k_tokens == 16
+        assert exp.max_input_tokens == 1024
+        assert exp.analyze_generated_tokens is False
+        assert exp.generated_max_new_tokens == 16
+        assert exp.generated_do_sample is False
 
     def test_entropy_computation(self):
         """Entropy helper should return a finite float."""

@@ -15,4 +15,11 @@ target_layers: null  # e.g. [55, 56, 57, 58, 59, 60, 61] when all_layers=false
 
 force_eager_reload: false  # Set to false to avoid OOM; uses in-place attention switch
 num_samples: 20
+last_k_tokens: 16  # Secondary span metric for mean entropy over trailing prompt tokens
+max_input_tokens: 1024  # Safety cap to prevent OMMs
+analyze_generated_tokens: false  # If true, also analyze attentions while generating answers
+generated_max_new_tokens: 16  # Keep small to control memory usage
+generated_do_sample: false  # Use deterministic generation for stable comparisons
+generated_temperature: 0.7  # Used only when generated_do_sample=true
+generated_top_p: 0.9  # Used only when generated_do_sample=true
 question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"
