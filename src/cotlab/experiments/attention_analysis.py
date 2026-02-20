@@ -26,9 +26,12 @@ class AttentionAnalysisExperiment(BaseExperiment):
     Analyze attention patterns at critical layers.
 
     Computes:
-    1. Attention entropy per head (higher = more distributed attention)
-    2. Top-attended tokens per head
-    3. Aggregated statistics across multiple samples
+    1. Last-token attention entropy per head (legacy metric)
+    2. All-tokens mean attention entropy per head (primary metric)
+    3. Optional last-k-tokens mean attention entropy per head
+    4. Optional generated-answer-token span entropy
+    5. Top-attended tokens for focused heads
+    6. Aggregated statistics across multiple samples
     """
 
     def __init__(
@@ -39,6 +42,13 @@ class AttentionAnalysisExperiment(BaseExperiment):
         all_layers: bool = False,
         force_eager_reload: bool = True,
         num_samples: int = 20,
+        last_k_tokens: int = 16,
+        max_input_tokens: Optional[int] = 1024,
+        analyze_generated_tokens: bool = False,
+        generated_max_new_tokens: int = 16,
+        generated_do_sample: bool = False,
+        generated_temperature: float = 0.7,
+        generated_top_p: float = 0.9,
         question: str = "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?",
         **kwargs,
     ):
@@ -50,7 +60,17 @@ class AttentionAnalysisExperiment(BaseExperiment):
         self.force_eager_reload = force_eager_reload
         self.target_layers = self._target_layers_config
         self.num_samples = num_samples
+        self.last_k_tokens = max(1, int(last_k_tokens))
+        self.max_input_tokens = (
+            max(1, int(max_input_tokens)) if max_input_tokens is not None else None
+        )
+        self.analyze_generated_tokens = bool(analyze_generated_tokens)
+        self.generated_max_new_tokens = max(1, int(generated_max_new_tokens))
+        self.generated_do_sample = bool(generated_do_sample)
+        self.generated_temperature = float(generated_temperature)
+        self.generated_top_p = float(generated_top_p)
         self.question = question  # Fallback if no dataset
+        self._generated_analysis_disabled = False
 
     @property
     def name(self) -> str:
@@ -62,7 +82,105 @@ class AttentionAnalysisExperiment(BaseExperiment):
         Note: Use bfloat16 (not float16) for the model to avoid NaN attention weights.
         """
         eps = 1e-10
-        return -torch.sum(attn_dist * torch.log(attn_dist + eps)).item()
+        # Compute entropy in float32 for numerical stability.
+        probs = attn_dist.float()
+        return -torch.sum(probs * torch.log(probs + eps)).item()
+
+    def _compute_mean_entropy_over_queries(self, attn_qk: torch.Tensor) -> float:
+        """Compute mean entropy over query positions for one head.
+
+        Args:
+            attn_qk: Attention tensor of shape (num_queries, seq_len).
+        """
+        eps = 1e-10
+        probs = attn_qk.float()
+        entropies = -torch.sum(probs * torch.log(probs + eps), dim=-1)
+        return float(entropies.mean().item())
+
+    def _analyze_generated_token_span(
+        self,
+        model,
+        tokenizer,
+        inputs: Dict[str, torch.Tensor],
+        num_heads: int,
+    ) -> tuple[Dict[int, Dict[str, Any]], int]:
+        """Analyze attention entropy over generated answer-token steps.
+
+        Returns:
+            per_layer_stats, num_generated_steps
+        """
+        pad_token_id = tokenizer.eos_token_id
+        if pad_token_id is None:
+            pad_token_id = getattr(model.config, "eos_token_id", None)
+
+        generate_kwargs: Dict[str, Any] = {
+            "max_new_tokens": self.generated_max_new_tokens,
+            "output_attentions": True,
+            "return_dict_in_generate": True,
+            "pad_token_id": pad_token_id,
+            "do_sample": self.generated_do_sample,
+        }
+        if self.generated_do_sample:
+            generate_kwargs["temperature"] = self.generated_temperature
+            generate_kwargs["top_p"] = self.generated_top_p
+
+        with torch.no_grad():
+            gen_outputs = model.generate(**inputs, **generate_kwargs)
+
+        gen_attentions = getattr(gen_outputs, "attentions", None)
+        if not gen_attentions:
+            return {}, 0
+
+        num_generated_steps = len(gen_attentions)
+        per_layer_stats: Dict[int, Dict[str, Any]] = {}
+
+        for layer_idx in self.target_layers:
+            per_head_step_entropies: List[List[float]] = [[] for _ in range(num_heads)]
+
+            for step_attn in gen_attentions:
+                layer_attn = None
+                if isinstance(step_attn, (tuple, list)):
+                    if layer_idx < len(step_attn):
+                        layer_attn = step_attn[layer_idx]
+                elif torch.is_tensor(step_attn):
+                    layer_attn = step_attn
+
+                if layer_attn is None:
+                    continue
+
+                # Typical shape: (batch, heads, q_len, k_len)
+                # Some impls may provide (batch, heads, k_len)
+                if layer_attn.dim() == 4:
+                    attn_qk = layer_attn[0]  # (heads, q_len, k_len)
+                elif layer_attn.dim() == 3:
+                    attn_qk = layer_attn[0].unsqueeze(1)  # (heads, 1, k_len)
+                else:
+                    continue
+
+                n_heads_eff = min(num_heads, attn_qk.shape[0])
+                for h in range(n_heads_eff):
+                    per_head_step_entropies[h].append(
+                        self._compute_mean_entropy_over_queries(attn_qk[h])
+                    )
+
+            head_entropies_generated_tokens: List[float] = []
+            for vals in per_head_step_entropies:
+                if vals:
+                    head_entropies_generated_tokens.append(float(np.nanmean(vals)))
+                else:
+                    head_entropies_generated_tokens.append(float("nan"))
+
+            if np.all(np.isnan(head_entropies_generated_tokens)):
+                continue
+
+            per_layer_stats[layer_idx] = {
+                "avg_entropy_generated_tokens": float(np.nanmean(head_entropies_generated_tokens)),
+                "std_entropy_generated_tokens": float(np.nanstd(head_entropies_generated_tokens)),
+                "head_entropies_generated_tokens": head_entropies_generated_tokens,
+                "generated_tokens_analyzed": num_generated_steps,
+            }
+
+        return per_layer_stats, num_generated_steps
 
     def _analyze_single_sample(
         self,
@@ -73,7 +191,15 @@ class AttentionAnalysisExperiment(BaseExperiment):
         num_heads: int,
     ) -> Dict[str, Any]:
         """Analyze attention for a single sample."""
-        tokens = tokenizer(prompt, return_tensors="pt").to(device)
+        tokenizer_kwargs: Dict[str, Any] = {"return_tensors": "pt"}
+        if self.max_input_tokens is not None:
+            tokenizer_kwargs.update(
+                {
+                    "truncation": True,
+                    "max_length": self.max_input_tokens,
+                }
+            )
+        tokens = tokenizer(prompt, **tokenizer_kwargs).to(device)
         input_ids = tokens["input_ids"]
 
         with torch.no_grad():
@@ -86,20 +212,51 @@ class AttentionAnalysisExperiment(BaseExperiment):
 
         sample_results = {}
 
+        generated_layer_stats: Dict[int, Dict[str, Any]] = {}
+        generated_steps = 0
+        if self.analyze_generated_tokens and not self._generated_analysis_disabled:
+            try:
+                generated_layer_stats, generated_steps = self._analyze_generated_token_span(
+                    model=model,
+                    tokenizer=tokenizer,
+                    inputs=tokens,
+                    num_heads=num_heads,
+                )
+            except Exception as e:
+                print(
+                    "Warning: generated-token attention analysis failed once and will be disabled "
+                    f"for this run: {type(e).__name__}: {e}"
+                )
+                self._generated_analysis_disabled = True
+
         for layer_idx in self.target_layers:
             if layer_idx >= len(attentions):
                 continue
 
             attn = attentions[layer_idx]  # (batch, heads, seq, seq)
+            seq_len = attn.shape[-1]
             last_token_attn = attn[0, :, -1, :]  # (heads, seq)
+            all_tokens_attn = attn[0, :, :, :]  # (heads, seq, seq)
 
-            head_entropies = []
+            last_k = min(self.last_k_tokens, seq_len)
+            last_k_tokens_attn = attn[0, :, seq_len - last_k :, :]  # (heads, k, seq)
+
+            head_entropies_last_token = []
+            head_entropies_all_tokens = []
+            head_entropies_last_k_tokens = []
             for h in range(num_heads):
-                entropy = self._compute_entropy(last_token_attn[h])
-                head_entropies.append(entropy)
+                head_entropies_last_token.append(self._compute_entropy(last_token_attn[h]))
+                head_entropies_all_tokens.append(
+                    self._compute_mean_entropy_over_queries(all_tokens_attn[h])
+                )
+                head_entropies_last_k_tokens.append(
+                    self._compute_mean_entropy_over_queries(last_k_tokens_attn[h])
+                )
 
-            avg_entropy = np.mean(head_entropies)
-            min_head = int(np.argmin(head_entropies))
+            avg_entropy_last_token = np.mean(head_entropies_last_token)
+            avg_entropy_all_tokens = np.mean(head_entropies_all_tokens)
+            avg_entropy_last_k_tokens = np.mean(head_entropies_last_k_tokens)
+            min_head = int(np.argmin(head_entropies_last_token))
 
             # Get top-attended tokens for the most focused head
             focused_head_attn = last_token_attn[min_head]
@@ -111,10 +268,31 @@ class AttentionAnalysisExperiment(BaseExperiment):
                 top_tokens.append({"token": token_str, "weight": weight})
 
             sample_results[layer_idx] = {
-                "avg_entropy": avg_entropy,
-                "head_entropies": head_entropies,
-                "min_entropy": min(head_entropies),
-                "max_entropy": max(head_entropies),
+                # Legacy fields preserved (last-token)
+                "avg_entropy": avg_entropy_last_token,
+                "head_entropies": head_entropies_last_token,
+                "min_entropy": min(head_entropies_last_token),
+                "max_entropy": max(head_entropies_last_token),
+                # Explicit metrics
+                "avg_entropy_last_token": avg_entropy_last_token,
+                "avg_entropy_all_tokens": avg_entropy_all_tokens,
+                "avg_entropy_last_k_tokens": avg_entropy_last_k_tokens,
+                "head_entropies_last_token": head_entropies_last_token,
+                "head_entropies_all_tokens": head_entropies_all_tokens,
+                "head_entropies_last_k_tokens": head_entropies_last_k_tokens,
+                "last_k_tokens_used": last_k,
+                "avg_entropy_generated_tokens": generated_layer_stats.get(layer_idx, {}).get(
+                    "avg_entropy_generated_tokens"
+                ),
+                "std_entropy_generated_tokens": generated_layer_stats.get(layer_idx, {}).get(
+                    "std_entropy_generated_tokens"
+                ),
+                "head_entropies_generated_tokens": generated_layer_stats.get(layer_idx, {}).get(
+                    "head_entropies_generated_tokens"
+                ),
+                "generated_tokens_analyzed": generated_layer_stats.get(layer_idx, {}).get(
+                    "generated_tokens_analyzed", generated_steps
+                ),
                 "focused_head": min_head,
                 "top_tokens": top_tokens,
             }
@@ -152,6 +330,12 @@ class AttentionAnalysisExperiment(BaseExperiment):
         print(f"Attention heads: {num_heads}")
         print(f"All layers enabled: {self.all_layers}")
         print(f"Resolved layers: {self.target_layers}")
+        print(
+            f"Max input tokens: {self.max_input_tokens if self.max_input_tokens is not None else 'None'}"
+        )
+        print(f"Analyze generated tokens: {self.analyze_generated_tokens}")
+        if self.analyze_generated_tokens:
+            print(f"Generated max_new_tokens: {self.generated_max_new_tokens}")
 
         # Set eager attention to enable output_attentions by reloading if necessary
         # We need to check if the model is already using eager attention
@@ -184,15 +368,23 @@ class AttentionAnalysisExperiment(BaseExperiment):
         print(f"\nAnalyzing attention on {len(samples)} samples...")
 
         # Aggregate statistics across samples
-        layer_entropy_stats: Dict[int, List[float]] = defaultdict(list)
-        layer_head_entropy_stats: Dict[int, List[List[float]]] = defaultdict(list)
+        layer_entropy_stats_last_token: Dict[int, List[float]] = defaultdict(list)
+        layer_entropy_stats_all_tokens: Dict[int, List[float]] = defaultdict(list)
+        layer_entropy_stats_last_k_tokens: Dict[int, List[float]] = defaultdict(list)
+        layer_entropy_stats_generated_tokens: Dict[int, List[float]] = defaultdict(list)
+        layer_head_entropy_stats_last_token: Dict[int, List[List[float]]] = defaultdict(list)
+        layer_head_entropy_stats_all_tokens: Dict[int, List[List[float]]] = defaultdict(list)
+        layer_head_entropy_stats_last_k_tokens: Dict[int, List[List[float]]] = defaultdict(list)
+        layer_head_entropy_stats_generated_tokens: Dict[int, List[List[float]]] = defaultdict(list)
         all_top_tokens: Dict[int, List[str]] = defaultdict(list)
 
         sample_results = []
 
         for sample in tqdm(samples, desc="Processing samples"):
             question = sample.text
-            prompt = prompt_strategy.build_prompt({"question": question, "text": question})
+            prompt = prompt_strategy.build_prompt(
+                {"question": question, "text": question, "metadata": sample.metadata or {}}
+            )
 
             result = self._analyze_single_sample(
                 model, tokenizer, prompt, backend.device, num_heads
@@ -211,8 +403,30 @@ class AttentionAnalysisExperiment(BaseExperiment):
 
             # Aggregate stats
             for layer_idx, layer_data in result.items():
-                layer_entropy_stats[layer_idx].append(layer_data["avg_entropy"])
-                layer_head_entropy_stats[layer_idx].append(layer_data["head_entropies"])
+                layer_entropy_stats_last_token[layer_idx].append(
+                    layer_data["avg_entropy_last_token"]
+                )
+                layer_entropy_stats_all_tokens[layer_idx].append(
+                    layer_data["avg_entropy_all_tokens"]
+                )
+                layer_entropy_stats_last_k_tokens[layer_idx].append(
+                    layer_data["avg_entropy_last_k_tokens"]
+                )
+                layer_head_entropy_stats_last_token[layer_idx].append(
+                    layer_data["head_entropies_last_token"]
+                )
+                layer_head_entropy_stats_all_tokens[layer_idx].append(
+                    layer_data["head_entropies_all_tokens"]
+                )
+                layer_head_entropy_stats_last_k_tokens[layer_idx].append(
+                    layer_data["head_entropies_last_k_tokens"]
+                )
+                gen_entropy = layer_data.get("avg_entropy_generated_tokens")
+                gen_head_entropies = layer_data.get("head_entropies_generated_tokens")
+                if gen_entropy is not None:
+                    layer_entropy_stats_generated_tokens[layer_idx].append(gen_entropy)
+                if gen_head_entropies:
+                    layer_head_entropy_stats_generated_tokens[layer_idx].append(gen_head_entropies)
                 for tok in layer_data["top_tokens"][:3]:  # Top 3 tokens
                     all_top_tokens[layer_idx].append(tok["token"])
 
@@ -232,15 +446,39 @@ class AttentionAnalysisExperiment(BaseExperiment):
         print("\n" + "=" * 70)
         print("ATTENTION ANALYSIS: Aggregated Statistics Across Samples")
         print("=" * 70)
-        print(f"{'Layer':<8} | {'Mean Entropy':<14} | {'Std Entropy':<14} | {'Top Tokens'}")
-        print("-" * 70)
+        header = (
+            f"{'Layer':<8} | {'LastTok μ':<10} | {'AllTok μ':<10} | "
+            f"{f'Last{self.last_k_tokens} μ':<10} | {'AllTok σ':<10}"
+        )
+        if self.analyze_generated_tokens:
+            header += f" | {'GenTok μ':<10}"
+        header += " | Top Tokens"
+        print(header)
+        print("-" * 106)
 
         aggregated_results = []
 
-        for layer_idx in sorted(layer_entropy_stats.keys()):
-            entropies = layer_entropy_stats[layer_idx]
-            mean_entropy = float(np.nanmean(entropies))
-            std_entropy = float(np.nanstd(entropies))
+        for layer_idx in sorted(layer_entropy_stats_last_token.keys()):
+            entropies_last_token = layer_entropy_stats_last_token[layer_idx]
+            entropies_all_tokens = layer_entropy_stats_all_tokens[layer_idx]
+            entropies_last_k_tokens = layer_entropy_stats_last_k_tokens[layer_idx]
+
+            mean_entropy_last_token = float(np.nanmean(entropies_last_token))
+            std_entropy_last_token = float(np.nanstd(entropies_last_token))
+            mean_entropy_all_tokens = float(np.nanmean(entropies_all_tokens))
+            std_entropy_all_tokens = float(np.nanstd(entropies_all_tokens))
+            mean_entropy_last_k_tokens = float(np.nanmean(entropies_last_k_tokens))
+            std_entropy_last_k_tokens = float(np.nanstd(entropies_last_k_tokens))
+            if layer_entropy_stats_generated_tokens[layer_idx]:
+                mean_entropy_generated_tokens = float(
+                    np.nanmean(layer_entropy_stats_generated_tokens[layer_idx])
+                )
+                std_entropy_generated_tokens = float(
+                    np.nanstd(layer_entropy_stats_generated_tokens[layer_idx])
+                )
+            else:
+                mean_entropy_generated_tokens = float("nan")
+                std_entropy_generated_tokens = float("nan")
 
             # Count most common top tokens
             tokens = all_top_tokens[layer_idx]
@@ -250,52 +488,178 @@ class AttentionAnalysisExperiment(BaseExperiment):
             top_3_tokens = token_counts.most_common(5)
             top_tokens_str = ", ".join([f"'{t}'" for t, _ in top_3_tokens[:3]])
 
-            # Aggregate head-level entropies
-            head_entropies_all = np.array(
-                layer_head_entropy_stats[layer_idx]
-            )  # (n_samples, n_heads)
-            mean_per_head = np.nanmean(head_entropies_all, axis=0).tolist()
-            std_per_head = np.nanstd(head_entropies_all, axis=0).tolist()
+            # Aggregate head-level entropies for each metric
+            head_entropies_last_token = np.array(layer_head_entropy_stats_last_token[layer_idx])
+            head_entropies_all_tokens = np.array(layer_head_entropy_stats_all_tokens[layer_idx])
+            head_entropies_last_k_tokens = np.array(
+                layer_head_entropy_stats_last_k_tokens[layer_idx]
+            )
+            mean_per_head_last_token = np.nanmean(head_entropies_last_token, axis=0).tolist()
+            std_per_head_last_token = np.nanstd(head_entropies_last_token, axis=0).tolist()
+            mean_per_head_all_tokens = np.nanmean(head_entropies_all_tokens, axis=0).tolist()
+            std_per_head_all_tokens = np.nanstd(head_entropies_all_tokens, axis=0).tolist()
+            mean_per_head_last_k_tokens = np.nanmean(head_entropies_last_k_tokens, axis=0).tolist()
+            std_per_head_last_k_tokens = np.nanstd(head_entropies_last_k_tokens, axis=0).tolist()
+            if layer_head_entropy_stats_generated_tokens[layer_idx]:
+                head_entropies_generated_tokens = np.array(
+                    layer_head_entropy_stats_generated_tokens[layer_idx]
+                )
+                mean_per_head_generated_tokens = np.nanmean(
+                    head_entropies_generated_tokens, axis=0
+                ).tolist()
+                std_per_head_generated_tokens = np.nanstd(
+                    head_entropies_generated_tokens, axis=0
+                ).tolist()
+            else:
+                mean_per_head_generated_tokens = []
+                std_per_head_generated_tokens = []
 
             aggregated_results.append(
                 {
                     "layer": layer_idx,
-                    "mean_entropy": mean_entropy,
-                    "std_entropy": std_entropy,
-                    "mean_per_head": mean_per_head,
-                    "std_per_head": std_per_head,
+                    # Legacy keys (last-token metric)
+                    "mean_entropy": mean_entropy_last_token,
+                    "std_entropy": std_entropy_last_token,
+                    "mean_per_head": mean_per_head_last_token,
+                    "std_per_head": std_per_head_last_token,
+                    # Explicit metrics
+                    "mean_entropy_last_token": mean_entropy_last_token,
+                    "std_entropy_last_token": std_entropy_last_token,
+                    "mean_entropy_all_tokens": mean_entropy_all_tokens,
+                    "std_entropy_all_tokens": std_entropy_all_tokens,
+                    "mean_entropy_last_k_tokens": mean_entropy_last_k_tokens,
+                    "std_entropy_last_k_tokens": std_entropy_last_k_tokens,
+                    "mean_entropy_generated_tokens": (
+                        None
+                        if np.isnan(mean_entropy_generated_tokens)
+                        else mean_entropy_generated_tokens
+                    ),
+                    "std_entropy_generated_tokens": (
+                        None
+                        if np.isnan(std_entropy_generated_tokens)
+                        else std_entropy_generated_tokens
+                    ),
+                    "last_k_tokens": self.last_k_tokens,
+                    "mean_per_head_last_token": mean_per_head_last_token,
+                    "std_per_head_last_token": std_per_head_last_token,
+                    "mean_per_head_all_tokens": mean_per_head_all_tokens,
+                    "std_per_head_all_tokens": std_per_head_all_tokens,
+                    "mean_per_head_last_k_tokens": mean_per_head_last_k_tokens,
+                    "std_per_head_last_k_tokens": std_per_head_last_k_tokens,
+                    "mean_per_head_generated_tokens": mean_per_head_generated_tokens,
+                    "std_per_head_generated_tokens": std_per_head_generated_tokens,
                     "top_tokens": [{"token": t, "count": c} for t, c in top_3_tokens],
                 }
             )
 
-            print(
-                f"L{layer_idx:<7} | {mean_entropy:<14.4f} | {std_entropy:<14.4f} | {top_tokens_str}"
+            row = (
+                f"L{layer_idx:<7} | {mean_entropy_last_token:<10.4f} | "
+                f"{mean_entropy_all_tokens:<10.4f} | {mean_entropy_last_k_tokens:<10.4f} | "
+                f"{std_entropy_all_tokens:<10.4f}"
             )
+            if self.analyze_generated_tokens:
+                if np.isnan(mean_entropy_generated_tokens):
+                    row += f" | {'NA':<10}"
+                else:
+                    row += f" | {mean_entropy_generated_tokens:<10.4f}"
+            row += f" | {top_tokens_str}"
+            print(row)
 
-        print("-" * 70)
+        print("-" * 106)
 
         # Overall metrics
-        all_mean_entropies = [r["mean_entropy"] for r in aggregated_results]
-        overall_mean = float(np.nanmean(all_mean_entropies)) if all_mean_entropies else 0.0
-
-        # Find most focused layer
-        valid_layers = [r for r in aggregated_results if not np.isnan(r["mean_entropy"])]
-        most_focused_layer = (
-            min(valid_layers, key=lambda x: x["mean_entropy"])["layer"] if valid_layers else None
+        all_mean_entropies_last_token = [r["mean_entropy_last_token"] for r in aggregated_results]
+        all_mean_entropies_all_tokens = [r["mean_entropy_all_tokens"] for r in aggregated_results]
+        all_mean_entropies_last_k_tokens = [
+            r["mean_entropy_last_k_tokens"] for r in aggregated_results
+        ]
+        all_mean_entropies_generated_tokens = [
+            r["mean_entropy_generated_tokens"]
+            for r in aggregated_results
+            if r["mean_entropy_generated_tokens"] is not None
+        ]
+        overall_mean_last_token = (
+            float(np.nanmean(all_mean_entropies_last_token))
+            if all_mean_entropies_last_token
+            else 0.0
         )
-        most_focused_entropy = min(r["mean_entropy"] for r in valid_layers) if valid_layers else 0.0
+        overall_mean_all_tokens = (
+            float(np.nanmean(all_mean_entropies_all_tokens))
+            if all_mean_entropies_all_tokens
+            else 0.0
+        )
+        overall_mean_last_k_tokens = (
+            float(np.nanmean(all_mean_entropies_last_k_tokens))
+            if all_mean_entropies_last_k_tokens
+            else 0.0
+        )
+        overall_mean_generated_tokens = (
+            float(np.nanmean(all_mean_entropies_generated_tokens))
+            if all_mean_entropies_generated_tokens
+            else None
+        )
+
+        # Most focused layer using all-tokens metric (primary)
+        valid_layers_all_tokens = [
+            r for r in aggregated_results if not np.isnan(r["mean_entropy_all_tokens"])
+        ]
+        most_focused_layer = (
+            min(valid_layers_all_tokens, key=lambda x: x["mean_entropy_all_tokens"])["layer"]
+            if valid_layers_all_tokens
+            else None
+        )
+        most_focused_entropy = (
+            min(r["mean_entropy_all_tokens"] for r in valid_layers_all_tokens)
+            if valid_layers_all_tokens
+            else 0.0
+        )
+
+        # Legacy most-focused values for last-token metric
+        valid_layers_last_token = [
+            r for r in aggregated_results if not np.isnan(r["mean_entropy_last_token"])
+        ]
+        most_focused_layer_last_token = (
+            min(valid_layers_last_token, key=lambda x: x["mean_entropy_last_token"])["layer"]
+            if valid_layers_last_token
+            else None
+        )
+        most_focused_entropy_last_token = (
+            min(r["mean_entropy_last_token"] for r in valid_layers_last_token)
+            if valid_layers_last_token
+            else 0.0
+        )
 
         metrics = {
             "num_samples_analyzed": len(sample_results),
             "num_layers_analyzed": len(aggregated_results),
             "num_heads": num_heads,
-            "overall_mean_entropy": float(overall_mean),
+            # Primary metrics (all-tokens)
+            "overall_mean_entropy": float(overall_mean_all_tokens),
+            "overall_mean_entropy_all_tokens": float(overall_mean_all_tokens),
+            "overall_mean_entropy_last_token": float(overall_mean_last_token),
+            "overall_mean_entropy_last_k_tokens": float(overall_mean_last_k_tokens),
+            "last_k_tokens": self.last_k_tokens,
             "most_focused_layer": most_focused_layer,
             "most_focused_entropy": float(most_focused_entropy),
+            "most_focused_layer_all_tokens": most_focused_layer,
+            "most_focused_entropy_all_tokens": float(most_focused_entropy),
+            "most_focused_layer_last_token": most_focused_layer_last_token,
+            "most_focused_entropy_last_token": float(most_focused_entropy_last_token),
+            "analyze_generated_tokens": self.analyze_generated_tokens,
         }
+        if overall_mean_generated_tokens is not None:
+            metrics["overall_mean_entropy_generated_tokens"] = float(overall_mean_generated_tokens)
 
-        print(f"\nOverall mean entropy: {overall_mean:.4f}")
-        print(f"Most focused layer: L{most_focused_layer} (entropy: {most_focused_entropy:.4f})")
+        print(f"\nOverall mean entropy (all tokens): {overall_mean_all_tokens:.4f}")
+        print(f"Overall mean entropy (last token): {overall_mean_last_token:.4f}")
+        print(
+            f"Overall mean entropy (last {self.last_k_tokens} tokens): {overall_mean_last_k_tokens:.4f}"
+        )
+        if overall_mean_generated_tokens is not None:
+            print(f"Overall mean entropy (generated tokens): {overall_mean_generated_tokens:.4f}")
+        print(
+            f"Most focused layer (all tokens): L{most_focused_layer} (entropy: {most_focused_entropy:.4f})"
+        )
 
         return ExperimentResult(
             experiment_name=self.name,
@@ -305,6 +669,9 @@ class AttentionAnalysisExperiment(BaseExperiment):
             raw_outputs=aggregated_results,
             metadata={
                 "target_layers": self.target_layers,
+                "last_k_tokens": self.last_k_tokens,
+                "analyze_generated_tokens": self.analyze_generated_tokens,
+                "generated_max_new_tokens": self.generated_max_new_tokens,
                 "num_samples": len(samples),
                 "sample_results": sample_results,  # Include per-sample data
             },
