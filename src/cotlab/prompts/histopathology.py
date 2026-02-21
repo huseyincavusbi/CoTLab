@@ -202,18 +202,11 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
 
     def _remove_few_shot_examples(self, template: str) -> str:
         """Remove few-shot examples from template."""
-        # Find and remove example sections
-        lines = template.split("\n")
-        filtered = []
-        skip = False
-        for line in lines:
-            if line.startswith("Example 1") or line.startswith("Example 2"):
-                skip = True
-            elif skip and line.startswith("Histopathology Report"):
-                skip = False
-            if not skip:
-                filtered.append(line)
-        return "\n".join(filtered)
+        # Remove only the example block between "Example 1" and the section divider.
+        block_pattern = re.compile(r"\nExample 1.*?\n---\n", re.DOTALL)
+        if not block_pattern.search(template):
+            return template
+        return block_pattern.sub("\n\n", template, count=1)
 
     def parse_response(self, response: str) -> Dict[str, Any]:
         """Parse response to extract quality score."""

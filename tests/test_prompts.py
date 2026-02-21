@@ -6,6 +6,7 @@ from cotlab.prompts import (
     ArroganceStrategy,
     ChainOfThoughtStrategy,
     DirectAnswerStrategy,
+    HistopathologyPromptStrategy,
     MCQPromptStrategy,
     NoInstructionStrategy,
     PLABPromptStrategy,
@@ -277,6 +278,43 @@ class TestRadiologyPromptStrategy:
         strategy = RadiologyPromptStrategy(few_shot=False)
         prompt = strategy.build_prompt({"report": "Short report"})
         assert "Example 1" not in prompt
+
+
+class TestHistopathologyPromptStrategy:
+    """Tests for HistopathologyPromptStrategy."""
+
+    def test_zero_shot_keeps_variable_sections(self):
+        strategy = HistopathologyPromptStrategy(few_shot=False)
+        prompt = strategy.build_prompt(
+            {
+                "text": "Generated report text",
+                "metadata": {"ground_truth": "Original case findings"},
+            }
+        )
+
+        assert "Example 1" not in prompt
+        assert "ORIGINAL CASE FINDINGS" in prompt
+        assert "GENERATED REPORT TO EVALUATE" in prompt
+        assert "Original case findings" in prompt
+        assert "Generated report text" in prompt
+
+    def test_zero_shot_prompt_varies_by_sample(self):
+        strategy = HistopathologyPromptStrategy(few_shot=False)
+
+        prompt_a = strategy.build_prompt(
+            {
+                "text": "Report A",
+                "metadata": {"ground_truth": "Case A"},
+            }
+        )
+        prompt_b = strategy.build_prompt(
+            {
+                "text": "Report B",
+                "metadata": {"ground_truth": "Case B"},
+            }
+        )
+
+        assert prompt_a != prompt_b
 
 
 class TestTCGAPromptStrategy:
