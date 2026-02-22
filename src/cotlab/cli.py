@@ -23,6 +23,9 @@ def cli():
 @click.option("--output", "-o", help="Output path (default: conf/model/<safe_name>.yaml)")
 def template(model_name: str, backend: str, output: str):
     """Generate model config from template.
+    Use this when you want to pre-create a model config file before the first run.
+    This is optional: CoTLab can also auto-generate a model config at runtime when
+    you run with `model=org/repo-id`.
 
     Examples:
 

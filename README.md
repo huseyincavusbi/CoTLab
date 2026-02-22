@@ -96,6 +96,10 @@ python -m cotlab.main model=medgemma_4b
 python -m cotlab.main model.name=google/gemma-3-270m
 ```
 
+If you prefer, you can pre-create model configs with `cotlab-template`, but
+this is optional because CoTLab can auto-generate model configs when running
+with `model=org/repo-id`.
+
 ## Configuration
 
 All configs auto-detect layers/heads at runtime. Override via CLI:

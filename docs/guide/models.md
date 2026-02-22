@@ -55,12 +55,16 @@ cp conf/model/_base/vllm_default.yaml conf/model/my_model.yaml
 python -m cotlab.main model=my_model
 ```
 
-### Option 3: CLI Helper (Coming Soon)
+### Option 3: CLI Helper (Optional)
 
 ```bash
 cotlab-template meta-llama/Llama-3.1-8B
 # Creates conf/model/meta_llama_llama_3_1_8b.yaml
 ```
+
+Use this when you want to pre-create a model config file before the first run.
+This is optional: CoTLab can also auto-generate a model config at runtime when
+you run with `model=org/repo-id`.
 
 ### vLLM Compatibility
 
