@@ -16,10 +16,22 @@ target_layers: null  # e.g. [55, 56, 57, 58, 59, 60, 61] when all_layers=false
 force_eager_reload: false  # Set to false to avoid OOM; uses in-place attention switch
 num_samples: null  # null = use all available samples from the dataset
 last_k_tokens: 16  # Secondary span metric for mean entropy over trailing prompt tokens
-max_input_tokens: 1024  # Safety cap to prevent OMMs
+max_input_tokens: 1024  # Safety cap to prevent OOMs
 analyze_generated_tokens: false  # If true, also analyze attentions while generating answers
 generated_max_new_tokens: 16  # Keep small to control memory usage
 generated_do_sample: false  # Use deterministic generation for stable comparisons
 generated_temperature: 0.7  # Used only when generated_do_sample=true
 generated_top_p: 0.9  # Used only when generated_do_sample=true
 question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"
+
+# Batch size for the prefill forward pass (output_attentions=True).
+# Samples are padded to the longest sequence in the batch; real-token slices
+# are extracted per-sample before computing entropy.
+# Each layer's (B, H, S, S) attention tensor is freed immediately after
+# processing so peak VRAM scales with one layer at a time, not all layers.
+# Memory budget (27B bfloat16, 46 layers, S=2048):
+#   model weights : ~54 GB
+#   1 layer attn  : B * 32 * 2048^2 * 2 bytes  (freed per layer)
+#   activations   : B * S * hidden * 2 bytes
+# A B200 (192 GB HBM3e) comfortably handles batch_size=8-16 at S=2048.
+batch_size: 1  # Override with experiment.batch_size=8 (or higher) on a B200
