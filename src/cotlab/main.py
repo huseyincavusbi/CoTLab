@@ -82,8 +82,21 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _normalize_hf_model_id(model_value: str) -> str:
+    """Normalize a HF model id: preserve org/, convert underscores to hyphens in the repo name.
+
+    google/medgemma_4b_it  ->  google/medgemma-4b-it
+    google/medgemma-4b-it  ->  google/medgemma-4b-it  (unchanged)
+    medgemma_4b_it         ->  medgemma_4b_it          (no slash, leave as-is)
+    """
+    if "/" in model_value:
+        org, repo = model_value.split("/", 1)
+        return f"{org}/{repo.replace('_', '-')}"
+    return model_value
+
+
 def _ensure_model_config_file(model_value: str, safe_name: str) -> None:
-    """Create a minimal model config for a HF model id if it doesn't exist."""
+    """Create a minimal model config using model_value as-is if it doesn't exist."""
     if not safe_name:
         return
     config_dir = _repo_root() / "conf" / "model"
@@ -92,38 +105,63 @@ def _ensure_model_config_file(model_value: str, safe_name: str) -> None:
     if config_path.exists():
         return
 
-    content = "\n".join(
-        [
-            "# Auto-generated model config",
-            f"name: {model_value}",
-            "max_new_tokens: 512",
-            "temperature: 0.7",
-            "top_p: 0.9",
-            f"safe_name: {safe_name}",
-            "",
-        ]
+    # Normalize HF model id: org/repo-name-with-hyphens
+    hf_name = _normalize_hf_model_id(model_value)
+
+    # When model_value contains no "/" it is a safe-name, not a HF model id.
+    # Write a stub but flag it clearly so the user knows to set the real id.
+    hf_comment = "" if "/" in model_value else (
+        "\n# WARNING: could not infer HuggingFace model id from safe-name.\n"
+        "# Set `name` to the correct HF repo id, e.g. google/medgemma-4b-it\n"
+        "# or re-run with model=org/repo-id to auto-generate a correct config.\n"
     )
+
+    content = "".join([
+        "# Auto-generated model config\n",
+        hf_comment,
+        f"name: {hf_name}\n",
+        "max_new_tokens: 512\n",
+        "temperature: 0.7\n",
+        "top_p: 0.9\n",
+        f"safe_name: {safe_name}\n",
+    ])
     config_path.write_text(content)
+    print(f"[cotlab] Auto-generated model config: conf/model/{safe_name}.yaml (name: {hf_name})")
+    if "/" not in model_value:
+        print(
+            f"[cotlab] WARNING: '{model_value}' is not a HuggingFace model id (no '/' found).\n"
+            f"[cotlab]   Edit conf/model/{safe_name}.yaml and set `name` to the correct HF repo id,\n"
+            f"[cotlab]   e.g.  name: google/medgemma-4b-it\n"
+            f"[cotlab]   or re-run with: model=google/medgemma-4b-it"
+        )
 
 
 def _rewrite_hf_model_override(argv: list[str]) -> list[str]:
-    """Allow `model=<hf-id>` by rewriting to `model.name=<hf-id>` overrides."""
+    """Support `model=<any-value>` by auto-generating a config file when one is missing.
+
+    Two forms are handled:
+      model=org/name       HF id with slash  → rewrite to model.name= overrides
+      model=some_safe_name safe-name form    → auto-generate config using the value as-is
+    """
     rewritten: list[str] = []
     changed = False
 
     for arg in argv:
         if arg.startswith("model="):
             model_value = arg.split("=", 1)[1]
-            # Treat any value with a "/" or absolute/relative path as HF/local model id.
             if "/" in model_value or model_value.startswith(".") or model_value.startswith("/"):
+                # Full HF / local path — rewrite to model.name= and auto-generate config.
                 changed = True
-                safe_name = _safe_model_name(model_value)
-                _ensure_model_config_file(model_value, safe_name)
-                rewritten.append(f"model.name={model_value}")
-                # Provide a safe_name override for output paths.
+                hf_id = _normalize_hf_model_id(model_value)
+                safe_name = _safe_model_name(hf_id)
+                _ensure_model_config_file(hf_id, safe_name)
+                rewritten.append(f"model.name={hf_id}")
                 if safe_name:
                     rewritten.append(f"model.safe_name={safe_name}")
                 continue
+            else:
+                # Safe-name form — auto-generate config using model_value as-is for `name`.
+                _ensure_model_config_file(model_value, model_value)
         rewritten.append(arg)
 
     if not changed:
@@ -132,7 +170,7 @@ def _rewrite_hf_model_override(argv: list[str]) -> list[str]:
 
 
 def _maybe_rewrite_argv() -> None:
-    """Rewrite argv in-place to support `model=<hf-id>` overrides."""
+    """Rewrite argv in-place to support `model=<hf-id>` overrides and auto-config generation."""
     if os.environ.get("COTLAB_DISABLE_HF_MODEL_REWRITE") == "1":
         return
     sys.argv[:] = _rewrite_hf_model_override(sys.argv)
@@ -160,9 +198,9 @@ def _extract_backend_load_kwargs(cfg_backend: DictConfig) -> dict:
 
 
 @hydra.main(version_base=None, config_path="../../conf", config_name="config")
-def main(cfg: DictConfig) -> None:
+def _hydra_main(cfg: DictConfig) -> None:
     """
-    Main entry point for running experiments.
+    Hydra-decorated experiment runner. Do not call directly — use main().
 
     Uses Hydra for configuration management. Override configs via CLI:
         python -m cotlab.main model.name=google/gemma-3-1b-it
@@ -306,6 +344,11 @@ def main(cfg: DictConfig) -> None:
             raise
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Public entry point: rewrites argv for auto-config generation, then runs Hydra."""
     _maybe_rewrite_argv()
+    _hydra_main()
+
+
+if __name__ == "__main__":
     main()
