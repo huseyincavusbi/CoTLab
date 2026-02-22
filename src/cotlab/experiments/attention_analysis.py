@@ -41,7 +41,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
         target_layers: Optional[List[int]] = None,
         all_layers: bool = False,
         force_eager_reload: bool = True,
-        num_samples: int = 20,
+        num_samples: Optional[int] = None,
         last_k_tokens: int = 16,
         max_input_tokens: Optional[int] = 1024,
         analyze_generated_tokens: bool = False,
@@ -363,8 +363,8 @@ class AttentionAnalysisExperiment(BaseExperiment):
                 tokenizer = backend._tokenizer
 
         # Get samples from dataset
-        n_samples = num_samples or self.num_samples
-        samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
+        n_samples = num_samples if num_samples is not None else self.num_samples
+        samples = list(dataset) if n_samples is None else (dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset))
         print(f"\nAnalyzing attention on {len(samples)} samples...")
 
         # Aggregate statistics across samples

@@ -14,7 +14,7 @@ target_layers: null  # e.g. [55, 56, 57, 58, 59, 60, 61] when all_layers=false
 # Run with: backend.dtype=bfloat16
 
 force_eager_reload: false  # Set to false to avoid OOM; uses in-place attention switch
-num_samples: 20
+num_samples: null  # null = use all available samples from the dataset
 last_k_tokens: 16  # Secondary span metric for mean entropy over trailing prompt tokens
 max_input_tokens: 1024  # Safety cap to prevent OMMs
 analyze_generated_tokens: false  # If true, also analyze attentions while generating answers

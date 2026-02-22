@@ -71,7 +71,7 @@ class ExperimentConfig:
     _target_: str = MISSING
     name: str = MISSING
     description: str = ""
-    num_samples: int = 100
+    num_samples: Optional[int] = None  # None = use all available samples
     tests: List[str] = field(default_factory=list)
     metrics: List[str] = field(default_factory=list)
 

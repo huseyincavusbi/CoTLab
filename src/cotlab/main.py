@@ -238,9 +238,9 @@ def main(cfg: DictConfig) -> None:
                         cfg.model.temperature and cfg.model.temperature > 0
                     )
 
-                # num_samples is optional for some experiments
+                # num_samples is optional for some experiments; None means use all samples
                 num_samples = OmegaConf.select(cfg, "experiment.num_samples", default=None)
-                if num_samples is not None and isinstance(num_samples, int) and num_samples > 0:
+                if isinstance(num_samples, int) and num_samples > 0:
                     dataset_size = len(dataset)
                     if num_samples > dataset_size:
                         dataset_name = getattr(dataset, "name", type(dataset).__name__)
@@ -266,8 +266,7 @@ def main(cfg: DictConfig) -> None:
                     "logger": logger,
                 }
                 extra_kwargs = dict(gen_kwargs)
-                if num_samples is not None:
-                    extra_kwargs["num_samples"] = num_samples
+                extra_kwargs["num_samples"] = num_samples  # None = all samples, int = cap
 
                 if accepts_var_kwargs:
                     run_kwargs.update(extra_kwargs)
