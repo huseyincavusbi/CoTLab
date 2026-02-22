@@ -51,6 +51,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
         generated_top_p: float = 0.9,
         question: str = "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?",
         batch_size: int = 1,
+        layer_stride: int = 1,
         **kwargs,
     ):
         self._name = name
@@ -60,6 +61,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
         self.all_layers = all_layers
         self.force_eager_reload = force_eager_reload
         self.target_layers = self._target_layers_config
+        self.layer_stride = max(1, int(layer_stride))
         self.num_samples = num_samples
         self.last_k_tokens = max(1, int(last_k_tokens))
         self.max_input_tokens = (
@@ -512,11 +514,12 @@ class AttentionAnalysisExperiment(BaseExperiment):
             )
             if num_layers is None:
                 num_layers = backend.num_layers()
-            self.target_layers = list(range(int(num_layers)))
+            self.target_layers = list(range(0, int(num_layers), self.layer_stride))
 
         print(f"Model: {backend.model_name}")
         print(f"Attention heads: {num_heads}")
         print(f"All layers enabled: {self.all_layers}")
+        print(f"Layer stride: {self.layer_stride}")
         print(f"Resolved layers: {self.target_layers}")
         print(
             f"Max input tokens: {self.max_input_tokens if self.max_input_tokens is not None else 'None'}"
