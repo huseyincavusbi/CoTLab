@@ -226,17 +226,19 @@ def main(cfg: DictConfig) -> None:
                 start_time = time.time()
 
                 # Generation kwargs (passed through to backend.generate_batch via experiments that accept **kwargs).
+                is_sampling = bool(cfg.model.temperature and cfg.model.temperature > 0)
                 gen_kwargs: dict = {
                     "max_new_tokens": cfg.model.max_new_tokens,
                     "temperature": cfg.model.temperature,
-                    "top_p": cfg.model.top_p,
                 }
+                # top_p / top_k are only valid when sampling; suppress the HF warning otherwise.
+                if is_sampling:
+                    gen_kwargs["top_p"] = cfg.model.top_p
+
                 # HF Transformers uses `do_sample`; vLLM's SamplingParams does not accept it.
                 # For vLLM, greedy decoding is achieved by setting temperature=0.
                 if str(cfg.backend._target_).endswith("TransformersBackend"):
-                    gen_kwargs["do_sample"] = bool(
-                        cfg.model.temperature and cfg.model.temperature > 0
-                    )
+                    gen_kwargs["do_sample"] = is_sampling
 
                 # num_samples is optional for some experiments; None means use all samples
                 num_samples = OmegaConf.select(cfg, "experiment.num_samples", default=None)
