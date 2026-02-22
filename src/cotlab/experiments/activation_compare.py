@@ -28,7 +28,7 @@ class ActivationCompareExperiment(BaseExperiment):
         name: str = "activation_compare",
         description: str = "Compare residual stream activations across runs",
         variants: Optional[List[Dict[str, Any]]] = None,
-        num_samples: int = 20,
+        num_samples: Optional[int] = None,
         seed: int = 42,
         layers: Optional[List[int]] = None,
         pooling: str = "last_token",
@@ -297,7 +297,9 @@ class ActivationCompareExperiment(BaseExperiment):
                 raise ValueError(f"Unsupported pooling method: {pooling}")
         return pooled.detach().float().cpu()
 
-    def _select_samples(self, dataset: BaseDataset, *, num_samples: int, seed: int) -> List[Any]:
+    def _select_samples(
+        self, dataset: BaseDataset, *, num_samples: Optional[int], seed: int
+    ) -> List[Any]:
         if num_samples is None or num_samples <= 0 or num_samples >= len(dataset):
             return list(dataset)
         return dataset.sample(num_samples, seed=seed)

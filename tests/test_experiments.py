@@ -39,7 +39,7 @@ class TestActivationCompareExperiment:
         """Test default initialization."""
         exp = ActivationCompareExperiment()
         assert exp.name == "activation_compare"
-        assert exp.num_samples == 20
+        assert exp.num_samples is None
         assert exp.pooling == "last_token"
 
     def test_name_property(self):
@@ -90,7 +90,7 @@ class TestAttentionAnalysisExperiment:
         assert exp.target_layers == [55, 56, 57, 58, 59, 60]
         assert exp.all_layers is False
         assert exp.force_eager_reload is True
-        assert exp.num_samples == 20
+        assert exp.num_samples is None
         assert exp.last_k_tokens == 16
         assert exp.max_input_tokens == 1024
         assert exp.analyze_generated_tokens is False

@@ -49,7 +49,7 @@ class CoTAblationExperiment(BaseExperiment):
         self,
         name: str = "cot_ablation",
         description: str = "Test if reasoning tokens causally affect model answers",
-        num_samples: int = 10,
+        num_samples: Optional[int] = None,
         ablation_type: str = "zero",  # "zero", "mean", or "noise"
         **kwargs,
     ):
@@ -74,8 +74,11 @@ class CoTAblationExperiment(BaseExperiment):
         """Run the CoT ablation experiment."""
         from ..prompts import ChainOfThoughtStrategy
 
-        n_samples = num_samples or self.num_samples
-        samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
+        n_samples = num_samples if num_samples is not None else self.num_samples
+        if n_samples is None:
+            samples = list(dataset)
+        else:
+            samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
 
         # Ensure we have a CoT strategy
         cot_strategy = (

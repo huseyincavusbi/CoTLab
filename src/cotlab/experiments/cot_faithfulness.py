@@ -44,7 +44,7 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         name: str = "cot_faithfulness",
         description: str = "",
         tests: Optional[List[str]] = None,
-        num_samples: int = 100,
+        num_samples: Optional[int] = None,
         metrics: Optional[List[str]] = None,
         **kwargs,
     ):
@@ -70,8 +70,11 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         """Run the faithfulness experiment."""
         from ..prompts import DirectAnswerStrategy
 
-        n_samples = num_samples or self.num_samples
-        samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
+        n_samples = num_samples if num_samples is not None else self.num_samples
+        if n_samples is None:
+            samples = list(dataset)
+        else:
+            samples = dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset)
 
         results = []
         metrics = {

@@ -36,7 +36,7 @@ class ActivationPatchingExperiment(BaseExperiment):
         description: str = "",
         variants: Optional[List[Dict[str, Any]]] = None,
         patching: Dict[str, Any] = None,
-        num_samples: int = 50,
+        num_samples: Optional[int] = None,
         seed: int = 42,
         **kwargs,
     ):
@@ -76,7 +76,7 @@ class ActivationPatchingExperiment(BaseExperiment):
         """Run the activation patching experiment."""
         self.validate_backend(backend)
 
-        n_samples = num_samples or self.num_samples
+        n_samples = num_samples if num_samples is not None else self.num_samples
         variants = self._normalize_variants(
             variants=self.variants,
             base_dataset=dataset,
@@ -87,11 +87,14 @@ class ActivationPatchingExperiment(BaseExperiment):
 
         # If no variants provided, use dataset sample with optional corrupted prompt
         if len(variants) == 1:
-            samples = (
-                dataset.sample(n_samples, seed=self.seed)
-                if n_samples < len(dataset)
-                else list(dataset)
-            )
+            if n_samples is None:
+                samples = list(dataset)
+            else:
+                samples = (
+                    dataset.sample(n_samples, seed=self.seed)
+                    if n_samples < len(dataset)
+                    else list(dataset)
+                )
             clean_variant = variants[0]
             corrupt_variant = None
         else:

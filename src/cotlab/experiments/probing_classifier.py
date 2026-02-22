@@ -50,7 +50,7 @@ class ProbingClassifierExperiment(BaseExperiment):
         name: str = "probing_classifier",
         description: str = "Train linear probes on answer hidden states",
         target_layers: Optional[List[int]] = None,
-        num_samples: int = 30,
+        num_samples: Optional[int] = None,
         probe_target: str = "diagnosis",  # "diagnosis", "category", or "correctness"
         max_new_tokens: int = 128,
         use_gpu_probe: bool = False,
@@ -83,11 +83,14 @@ class ProbingClassifierExperiment(BaseExperiment):
     ) -> ExperimentResult:
         """Run probing classifier experiment."""
 
-        n_samples = num_samples or self.num_samples
+        n_samples = num_samples if num_samples is not None else self.num_samples
 
         # Collect samples
         print("Collecting samples...")
-        all_samples = list(dataset)[:n_samples]
+        if n_samples is None:
+            all_samples = list(dataset)
+        else:
+            all_samples = list(dataset)[:n_samples]
         print(f"Using {len(all_samples)} samples")
 
         tokenizer = backend.tokenizer
