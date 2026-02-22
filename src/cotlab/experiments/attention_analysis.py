@@ -209,7 +209,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
             tokenizer_kwargs.update({"truncation": True, "max_length": self.max_input_tokens})
 
         tokens = tokenizer(prompts, **tokenizer_kwargs).to(device)
-        input_ids = tokens["input_ids"]          # (B, padded_seq)
+        input_ids = tokens["input_ids"]  # (B, padded_seq)
         attention_mask = tokens["attention_mask"]  # (B, padded_seq)
         batch_size_actual = input_ids.shape[0]
         total_len = input_ids.shape[1]
@@ -250,9 +250,9 @@ class AttentionAnalysisExperiment(BaseExperiment):
                 # sample_attn: (heads, seq_len, seq_len) — padding stripped
                 sample_attn = layer_attn[sample_i, :, start:end, start:end]
 
-                last_token_attn = sample_attn[:, -1, :]   # (heads, seq_len)
+                last_token_attn = sample_attn[:, -1, :]  # (heads, seq_len)
                 last_k = min(self.last_k_tokens, seq_len)
-                last_k_tokens_attn = sample_attn[:, seq_len - last_k:, :]  # (heads, k, seq_len)
+                last_k_tokens_attn = sample_attn[:, seq_len - last_k :, :]  # (heads, k, seq_len)
 
                 head_entropies_last_token: List[float] = []
                 head_entropies_all_tokens: List[float] = []
@@ -556,7 +556,11 @@ class AttentionAnalysisExperiment(BaseExperiment):
 
         # Get samples from dataset
         n_samples = num_samples if num_samples is not None else self.num_samples
-        samples = list(dataset) if n_samples is None else (dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset))
+        samples = (
+            list(dataset)
+            if n_samples is None
+            else (dataset.sample(n_samples) if n_samples < len(dataset) else list(dataset))
+        )
         print(f"\nAnalyzing attention on {len(samples)} samples (batch_size={self.batch_size})...")
 
         # Aggregate statistics across samples
@@ -626,7 +630,9 @@ class AttentionAnalysisExperiment(BaseExperiment):
                     if gen_entropy is not None:
                         layer_entropy_stats_generated_tokens[layer_idx].append(gen_entropy)
                     if gen_head_entropies:
-                        layer_head_entropy_stats_generated_tokens[layer_idx].append(gen_head_entropies)
+                        layer_head_entropy_stats_generated_tokens[layer_idx].append(
+                            gen_head_entropies
+                        )
                     for tok in layer_data["top_tokens"][:3]:  # Top 3 tokens
                         all_top_tokens[layer_idx].append(tok["token"])
 

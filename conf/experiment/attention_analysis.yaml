@@ -25,14 +25,4 @@ generated_temperature: 0.7  # Used only when generated_do_sample=true
 generated_top_p: 0.9  # Used only when generated_do_sample=true
 question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"
 
-# Batch size for the prefill forward pass (output_attentions=True).
-# Samples are padded to the longest sequence in the batch; real-token slices
-# are extracted per-sample before computing entropy.
-# Each layer's (B, H, S, S) attention tensor is freed immediately after
-# processing so peak VRAM scales with one layer at a time, not all layers.
-# Memory budget (27B bfloat16, 46 layers, S=2048):
-#   model weights : ~54 GB
-#   1 layer attn  : B * 32 * 2048^2 * 2 bytes  (freed per layer)
-#   activations   : B * S * hidden * 2 bytes
-# A B200 (192 GB HBM3e) comfortably handles batch_size=8-16 at S=2048.
-batch_size: 1  # Override with experiment.batch_size=8 (or higher) on a B200
+batch_size: 1  # Override with experiment.batch_size=8 or higher

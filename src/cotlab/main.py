@@ -110,21 +110,27 @@ def _ensure_model_config_file(model_value: str, safe_name: str) -> None:
 
     # When model_value contains no "/" it is a safe-name, not a HF model id.
     # Write a stub but flag it clearly so the user knows to set the real id.
-    hf_comment = "" if "/" in model_value else (
-        "\n# WARNING: could not infer HuggingFace model id from safe-name.\n"
-        "# Set `name` to the correct HF repo id, e.g. google/medgemma-4b-it\n"
-        "# or re-run with model=org/repo-id to auto-generate a correct config.\n"
+    hf_comment = (
+        ""
+        if "/" in model_value
+        else (
+            "\n# WARNING: could not infer HuggingFace model id from safe-name.\n"
+            "# Set `name` to the correct HF repo id, e.g. google/medgemma-4b-it\n"
+            "# or re-run with model=org/repo-id to auto-generate a correct config.\n"
+        )
     )
 
-    content = "".join([
-        "# Auto-generated model config\n",
-        hf_comment,
-        f"name: {hf_name}\n",
-        "max_new_tokens: 512\n",
-        "temperature: 0.7\n",
-        "top_p: 0.9\n",
-        f"safe_name: {safe_name}\n",
-    ])
+    content = "".join(
+        [
+            "# Auto-generated model config\n",
+            hf_comment,
+            f"name: {hf_name}\n",
+            "max_new_tokens: 512\n",
+            "temperature: 0.7\n",
+            "top_p: 0.9\n",
+            f"safe_name: {safe_name}\n",
+        ]
+    )
     config_path.write_text(content)
     print(f"[cotlab] Auto-generated model config: conf/model/{safe_name}.yaml (name: {hf_name})")
     if "/" not in model_value:
