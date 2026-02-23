@@ -3,6 +3,21 @@ _target_: cotlab.experiments.LogitLensExperiment
 
 name: logit_lens
 description: "Visualize layer-by-layer token predictions"
-target_layers: null  # null = use all layers
-top_k: 5
+
+# Layer selection
+target_layers: null   # null = all layers; or e.g. [0,3,6,9,12,15,18,21,24,27,30,33]
+layer_stride: 1       # step when target_layers=null; matches attention_analysis runs
+
+# Sampling
+num_samples: 200      # samples per dataset run; override with experiment.num_samples=N
+seed: 42
+
+# Logit lens settings
+top_k: 10             # how many top tokens to track at each layer
+max_input_tokens: 1024
+# Appended to the prompt so the final token position is right before the answer.
+# The model will then predict the MCQ answer letter (A/B/C/D/E) at that position.
+answer_cue: "\n\nAnswer:"
+
+# Legacy single-question field (ignored when running with a dataset)
 question: "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?"

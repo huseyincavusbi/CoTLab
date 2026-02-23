@@ -15,7 +15,7 @@ services:
     volumes:
       # Mount project for live code changes
       - ./src:/app/src:ro
-      - ./conf:/app/conf:ro
+      - ./conf:/app/conf:rw
       - ./data:/app/data:ro
       # Mount HuggingFace cache for model persistence
       - ~/.cache/huggingface:/home/user/.cache/huggingface

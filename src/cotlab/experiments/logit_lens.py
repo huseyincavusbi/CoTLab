@@ -2,11 +2,15 @@
 
 Visualize what the model "thinks" at each layer by projecting
 intermediate activations through the unembedding matrix.
+
+Supports both single-question mode (legacy) and dataset-loop mode
+for aggregated analysis over many samples.
 """
 
 from typing import Any, Dict, List, Optional
 
 import torch
+from tqdm import tqdm
 
 from ..backends.base import InferenceBackend
 from ..core.base import BaseExperiment, ExperimentResult
@@ -22,7 +26,12 @@ class LogitLensExperiment(BaseExperiment):
 
     At each layer, project the residual stream through the unembedding
     matrix to see what tokens the model would predict at that point.
-    This reveals where reasoning emerges across layers.
+    Run over N dataset samples and aggregate:
+      - per-layer top-1 correct rate  (how often is the right answer rank-1 at layer L?)
+      - per-layer top-k correct rate
+      - mean emergence layer           (first layer where correct answer enters top-k)
+      - never-emerged rate             (samples where correct answer never appears in top-k)
+      - final accuracy                 (model's actual last-token accuracy)
     """
 
     def __init__(
@@ -30,21 +39,156 @@ class LogitLensExperiment(BaseExperiment):
         name: str = "logit_lens",
         description: str = "Visualize layer-by-layer token predictions",
         target_layers: Optional[List[int]] = None,
-        top_k: int = 5,
+        top_k: int = 10,
+        num_samples: Optional[int] = None,
+        layer_stride: int = 1,
+        max_input_tokens: int = 1024,
+        seed: int = 42,
+        answer_cue: str = "\n\nAnswer:",
+        # Legacy single-question field kept for backward compatibility
         question: str = "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?",
         **kwargs,
     ):
         self._name = name
         self.description = description
-        # None = auto-detect all layers at runtime
         self._target_layers_config = target_layers
-        self.target_layers = target_layers  # Will be set in run() if None
+        self.target_layers = target_layers  # resolved in run()
         self.top_k = top_k
-        self.question = question
+        self.num_samples = num_samples
+        self.layer_stride = layer_stride
+        self.max_input_tokens = max_input_tokens
+        self.seed = seed
+        self.answer_cue = answer_cue  # appended to prompt so last token precedes answer letter
+        self.question = question  # legacy fallback
 
     @property
     def name(self) -> str:
         return self._name
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _get_lm_head(self, model):
+        if hasattr(model, "lm_head"):
+            return model.lm_head
+        return model.get_output_embeddings()
+
+    def _resolve_layers(self, backend: InferenceBackend) -> List[int]:
+        if self._target_layers_config is not None:
+            return list(self._target_layers_config)
+        all_layers = list(range(backend.hook_manager.num_layers))
+        return all_layers[:: self.layer_stride]
+
+    def _correct_token_ids(self, tokenizer, label) -> set:
+        """Return all plausible token ids for a label.
+
+        Handles three cases:
+        - MCQ letter labels ("A"–"E"): tries with/without leading space/newline.
+        - Boolean labels (True/False): maps to "Yes"/"No" which is what the
+          model naturally outputs after an answer cue for binary questions.
+        - Free-text labels ("Pneumonia", "LUAD" etc.): matches the first token
+          of the label string (what the model would predict right after the cue).
+        """
+        if label is None:
+            return set()
+
+        # Boolean → Yes/No
+        if isinstance(label, bool):
+            label_str = "Yes" if label else "No"
+        else:
+            label_str = str(label).strip()
+
+        candidates = set()
+
+        # MCQ single-letter
+        if len(label_str) == 1 and label_str.upper() in "ABCDEFG":
+            upper = label_str.upper()
+            for prefix in (" ", "", "\n", " \n"):
+                ids = tokenizer.encode(prefix + upper, add_special_tokens=False)
+                if ids:
+                    candidates.add(ids[-1])
+            return candidates
+
+        # Free-text / Yes/No — match first token with/without leading space
+        for prefix in (" ", ""):
+            ids = tokenizer.encode(prefix + label_str, add_special_tokens=False)
+            if ids:
+                candidates.add(ids[0])
+        return candidates
+
+    def _run_single(
+        self,
+        backend: InferenceBackend,
+        prompt_str: str,
+        lm_head,
+        tokenizer,
+    ) -> tuple:
+        """
+        Forward-pass one prompt through the model with residual-stream hooks.
+
+        Projection through lm_head is done INSIDE each hook so we only store
+        tiny top-k results (ints + floats), never accumulating full hidden-state
+        tensors on GPU simultaneously — prevents GPU page faults on long prompts.
+
+        Returns:
+            layer_results  – list of {layer, top_ids, top_probs, top_tokens}
+            final_token_id – argmax of final logits at the last position
+        """
+        # Append answer cue so the final token position is right before the
+        # model would predict the answer letter (e.g. A/B/C/D).
+        prompt_with_cue = prompt_str + self.answer_cue
+        tokens = tokenizer(
+            prompt_with_cue,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_input_tokens,
+        ).to(backend.device)
+
+        # Store only lightweight top-k results, never the full hidden states
+        layer_results_map: Dict[int, Dict] = {}
+
+        def make_hook(layer_idx: int):
+            def hook(module, inp, output):
+                tensor = output[0] if isinstance(output, tuple) else output
+                last_hidden = tensor[0, -1] if tensor.dim() == 3 else tensor[0]
+                # Project and move to CPU immediately — release GPU memory
+                with torch.no_grad():
+                    logits = lm_head(last_hidden.unsqueeze(0))
+                    probs = torch.softmax(logits[0], dim=-1)
+                    top_probs, top_ids = torch.topk(probs, self.top_k)
+                ids_list = top_ids.cpu().tolist()
+                layer_results_map[layer_idx] = {
+                    "layer": layer_idx,
+                    "top_ids": ids_list,
+                    "top_probs": top_probs.cpu().tolist(),
+                    "top_tokens": [tokenizer.decode([tid]) for tid in ids_list],
+                }
+                return output  # pass through unchanged
+
+            return hook
+
+        handles = []
+        for layer_idx in self.target_layers:
+            if layer_idx < backend.hook_manager.num_layers:
+                mod = backend.hook_manager.get_residual_module(layer_idx)
+                handles.append(mod.register_forward_hook(make_hook(layer_idx)))
+
+        with torch.no_grad():
+            final_logits = backend._model(**tokens).logits
+
+        for h in handles:
+            h.remove()
+
+        final_token_id = int(torch.argmax(final_logits[0, -1]).item())
+        layer_results = [
+            layer_results_map[layer_idx] for layer_idx in sorted(layer_results_map.keys())
+        ]
+        return layer_results, final_token_id
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
 
     def run(
         self,
@@ -53,149 +197,136 @@ class LogitLensExperiment(BaseExperiment):
         prompt_strategy: Any,
         logger: Optional[ExperimentLogger] = None,
     ) -> ExperimentResult:
-        """Run logit lens experiment."""
+        """Run logit lens over dataset samples and aggregate per-layer metrics."""
 
-        # Auto-detect all layers if not specified
-        if self._target_layers_config is None:
-            self.target_layers = list(range(backend.hook_manager.num_layers))
-            print(f"Auto-detected {len(self.target_layers)} layers")
-
+        self.target_layers = self._resolve_layers(backend)
+        lm_head = self._get_lm_head(backend._model)
         tokenizer = backend._tokenizer
-        model = backend._model
-
-        # Get unembedding matrix (lm_head)
-        if hasattr(model, "lm_head"):
-            lm_head = model.lm_head
-        else:
-            lm_head = model.get_output_embeddings()
 
         print(f"Model: {backend.model_name}")
-        print(f"Target layers: {self.target_layers}")
-        print(f"Top-k tokens: {self.top_k}")
+        print(f"Layers ({len(self.target_layers)}): {self.target_layers}")
+        print(f"Top-k: {self.top_k}")
 
-        # 1. Build prompt
-        # Provide common fields so dataset-specific strategies can use text/report
-        prompt_input = {
-            "question": self.question,
-            "text": self.question,
-            "report": self.question,
-            "metadata": {},
-        }
-        prompt = prompt_strategy.build_prompt(prompt_input)
-        tokens = tokenizer(prompt, return_tensors="pt").to(backend.device)
-        print(f"\nPrompt: {prompt[:100]}...")
-        print(f"Token count: {tokens['input_ids'].shape[1]}")
+        # --- Sample selection -------------------------------------------
+        if self.num_samples is not None:
+            samples = dataset.sample(self.num_samples, seed=self.seed)
+        else:
+            samples = list(dataset)
+        n = len(samples)
+        print(f"Samples: {n}\n")
 
-        # 2. Cache residual stream at each target layer
-        residual_cache: Dict[int, torch.Tensor] = {}
+        # --- Per-layer accumulators -------------------------------------
+        layer_top1: Dict[int, List[bool]] = {layer_idx: [] for layer_idx in self.target_layers}
+        layer_topk: Dict[int, List[bool]] = {layer_idx: [] for layer_idx in self.target_layers}
+        emergence_layers: List[Optional[int]] = []
+        never_emerged = 0
+        final_correct = 0
 
-        def make_cache_hook(cache_dict: dict, layer_idx: int):
-            def hook(module, input, output):
-                cache_dict[layer_idx] = output.detach().clone()
-                return output
+        for sample in tqdm(samples, desc="Logit lens"):
+            # Build prompt
+            prompt_input = {
+                "text": sample.text,
+                "question": sample.text,
+                "report": sample.text,
+                "metadata": sample.metadata or {},
+            }
+            prompt_str = prompt_strategy.build_prompt(prompt_input)
 
-            return hook
+            # Correct answer token id(s)
+            correct_ids = self._correct_token_ids(tokenizer, sample.label)
 
-        handles = []
-        for layer_idx in self.target_layers:
-            if layer_idx < backend.hook_manager.num_layers:
-                residual_module = backend.hook_manager.get_residual_module(layer_idx)
-                h = residual_module.register_forward_hook(
-                    make_cache_hook(residual_cache, layer_idx)
+            try:
+                layer_results, final_token_id = self._run_single(
+                    backend, prompt_str, lm_head, tokenizer
                 )
-                handles.append(h)
-
-        with torch.no_grad():
-            final_logits = model(**tokens).logits
-
-        for h in handles:
-            h.remove()
-
-        # 3. Apply logit lens at each layer
-        print("\n" + "=" * 60)
-        print("LOGIT LENS: Layer-by-Layer Predictions")
-        print("=" * 60)
-        print("(Last token position - what would the model predict here?)")
-        print("-" * 60)
-
-        results = []
-
-        for layer_idx in sorted(residual_cache.keys()):
-            residual = residual_cache[layer_idx]
-            # Handle both 3D [batch, seq, hidden] (Transformer) and 2D [batch, hidden] (Mamba)
-            if residual.dim() == 3:
-                last_hidden = residual[0, -1, :]  # [hidden]
-            elif residual.dim() == 2:
-                last_hidden = residual[0, :]  # [hidden] - Mamba already gives last token
-            else:
-                print(f"Warning: Unexpected tensor shape at layer {layer_idx}: {residual.shape}")
+            except Exception as e:
+                tqdm.write(f"  [skip] sample {sample.idx}: {type(e).__name__}: {e}")
+                # Free any GPU memory left by the failed forward pass
+                torch.cuda.empty_cache()
+                n -= 1  # don't count this sample in the denominator
                 continue
 
-            # Project through unembedding
-            with torch.no_grad():
-                logits = lm_head(last_hidden.unsqueeze(0))  # [1, vocab]
+            if correct_ids and final_token_id in correct_ids:
+                final_correct += 1
 
-            # Get top-k predictions
-            probs = torch.softmax(logits[0], dim=-1)
-            top_probs, top_ids = torch.topk(probs, self.top_k)
+            # Track per-layer hit rates and emergence
+            emerged = False
+            for lr in layer_results:
+                lid = lr["layer"]
+                top_ids_list = lr["top_ids"]
+                in_top1 = bool(correct_ids) and (top_ids_list[0] in correct_ids)
+                in_topk = bool(correct_ids) and bool(correct_ids & set(top_ids_list))
+                layer_top1[lid].append(in_top1)
+                layer_topk[lid].append(in_topk)
+                if in_topk and not emerged:
+                    emergence_layers.append(lid)
+                    emerged = True
 
-            top_tokens = [tokenizer.decode([tid]) for tid in top_ids.tolist()]
-            top_probs_list = top_probs.tolist()
+            if not emerged:
+                emergence_layers.append(None)
+                never_emerged += 1
 
-            layer_result = {
-                "layer": layer_idx,
-                "top_tokens": top_tokens,
-                "top_probs": top_probs_list,
-            }
-            results.append(layer_result)
+            # Proactively free memory between samples
+            torch.cuda.empty_cache()
 
-            # Format output
-            token_strs = ", ".join(
-                f"'{t}' ({p:.2%})" for t, p in zip(top_tokens[:3], top_probs_list[:3])
+        # --- Aggregate --------------------------------------------------
+        valid_emergence = [e for e in emergence_layers if e is not None]
+        mean_emergence = (
+            round(sum(valid_emergence) / len(valid_emergence), 2) if valid_emergence else None
+        )
+        per_layer_top1_rate = {
+            layer_idx: round(sum(layer_top1[layer_idx]) / len(layer_top1[layer_idx]), 4)
+            if layer_top1[layer_idx]
+            else 0.0
+            for layer_idx in self.target_layers
+        }
+        per_layer_topk_rate = {
+            layer_idx: round(sum(layer_topk[layer_idx]) / len(layer_topk[layer_idx]), 4)
+            if layer_topk[layer_idx]
+            else 0.0
+            for layer_idx in self.target_layers
+        }
+
+        # --- Print summary ----------------------------------------------
+        print("\n" + "=" * 62)
+        print("LOGIT LENS SUMMARY")
+        print("=" * 62)
+        print(f"Samples : {n}   |   Final accuracy : {final_correct / n:.1%}")
+        if mean_emergence is not None:
+            print(
+                f"Mean emergence layer : {mean_emergence:.1f}  "
+                f"(first layer correct answer enters top-{self.top_k})"
             )
-            print(f"Layer {layer_idx:>2}: {token_strs}")
-
-        print("-" * 60)
-
-        # Final prediction
-        final_top = torch.argmax(final_logits[0, -1]).item()
-        final_token = tokenizer.decode([final_top])
-        print(f"\nFinal prediction: '{final_token}'")
-
-        # 4. Analyze where final answer emerges (check top-k, not just top-1)
-        final_token_id = final_top
-        emergence_layer = None
-        emergence_rank = None
-        for result in results:
-            # Check all top-k tokens for the final answer
-            for rank, token_str in enumerate(result["top_tokens"]):
-                top_ids = tokenizer.encode(token_str)
-                if top_ids and top_ids[-1] == final_token_id:
-                    emergence_layer = result["layer"]
-                    emergence_rank = rank + 1  # 1-indexed
-                    break
-            if emergence_layer is not None:
-                break
-
-        if emergence_layer is not None:
-            rank_str = f" (rank #{emergence_rank})" if emergence_rank > 1 else ""
-            print(f"Answer '{final_token}' first appears at layer {emergence_layer}{rank_str}")
-        else:
-            print("Answer emerges only at final layer or later layers")
+        print(f"Never emerged (top-{self.top_k}) : {never_emerged / n:.1%}")
+        print()
+        print(f"{'Layer':>6}  {'Top-1 Rate':>10}  {'Top-K Rate':>10}")
+        print("-" * 32)
+        for layer_idx in self.target_layers:
+            print(
+                f"{layer_idx:>6}  {per_layer_top1_rate[layer_idx]:>10.1%}  {per_layer_topk_rate[layer_idx]:>10.1%}"
+            )
+        print("=" * 62)
 
         return ExperimentResult(
             experiment_name=self.name,
             model_name=backend.model_name,
-            prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
+            prompt_strategy=(
+                prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom"
+            ),
             metrics={
-                "final_prediction": final_token,
-                "num_layers_analyzed": len(results),
-                "emergence_layer": emergence_layer,
-                "emergence_rank": emergence_rank,
+                "num_samples": n,
+                "final_accuracy": round(final_correct / n, 4),
+                "mean_emergence_layer": mean_emergence,
+                "never_emerged_rate": round(never_emerged / n, 4),
+                "per_layer_top1_rate": per_layer_top1_rate,
+                "per_layer_topk_rate": per_layer_topk_rate,
             },
-            raw_outputs=results,
+            raw_outputs={"emergence_layers": emergence_layers},
             metadata={
                 "target_layers": self.target_layers,
                 "top_k": self.top_k,
+                "layer_stride": self.layer_stride,
+                "num_samples": n,
+                "seed": self.seed,
             },
         )
