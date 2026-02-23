@@ -39,7 +39,7 @@ class ActivationCompareExperiment(BaseExperiment):
         name: str = "activation_compare",
         description: str = "Collect mean layer activations for representational comparison",
         layer_stride: int = 2,
-        num_samples: int = 50,
+        num_samples: Optional[int] = None,
         pooling: str = "last_token",  # "last_token" | "mean"
         max_input_tokens: int = 1024,
         seed: int = 42,
@@ -106,7 +106,10 @@ class ActivationCompareExperiment(BaseExperiment):
         print(f"Layers ({len(target_layers)}): {target_layers}")
         print(f"Pooling: {self.pooling}")
 
-        samples = dataset.sample(self.num_samples, seed=self.seed)
+        if self.num_samples is None:
+            samples = list(dataset)
+        else:
+            samples = dataset.sample(self.num_samples, seed=self.seed)
         n = len(samples)
         print(f"Samples: {n}\n")
 
