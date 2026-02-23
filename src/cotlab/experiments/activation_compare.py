@@ -1,14 +1,20 @@
-"""Activation comparison experiment for residual stream activations."""
+"""Activation Compare experiment — collect mean residual-stream vectors.
+
+One run = one condition (dataset + prompt settings).
+Saves per-layer mean activation vectors to results.json so that two or more
+runs can be compared offline with ``scripts/compare_activations.py``.
+
+Design follows logit_lens.py: hooks project inside the callback and move
+tensors to CPU immediately to avoid GPU page-faults on long reports.
+"""
 
 from typing import Any, Dict, List, Optional
 
 import torch
-from omegaconf import DictConfig, ListConfig, OmegaConf
 from tqdm import tqdm
 
 from ..backends.base import InferenceBackend
-from ..core import create_component
-from ..core.base import BaseExperiment, BasePromptStrategy, ExperimentResult
+from ..core.base import BaseExperiment, ExperimentResult
 from ..core.registry import Registry
 from ..datasets.loaders import BaseDataset
 from ..logging import ExperimentLogger
@@ -17,21 +23,30 @@ from ..logging import ExperimentLogger
 @Registry.register_experiment("activation_compare")
 class ActivationCompareExperiment(BaseExperiment):
     """
-    Compare mean residual stream activations across multiple runs.
+    Collect layer-wise mean residual-stream activations for one condition.
 
-    Each run can override dataset and/or prompt strategy. The experiment
-    caches residual stream activations and compares pooled vectors per layer.
+    Forward-passes N samples through the model.  At each layer a lightweight
+    hook captures the hidden state at the last token (or mean-pooled across
+    all tokens) and moves it to CPU immediately.  After all samples the
+    per-layer mean vector is computed and saved to results.json.
+
+    Two saved runs can then be compared with ``scripts/compare_activations.py``
+    which computes cosine-similarity and L2-distance profiles per layer.
     """
 
     def __init__(
         self,
         name: str = "activation_compare",
-        description: str = "Compare residual stream activations across runs",
-        variants: Optional[List[Dict[str, Any]]] = None,
-        num_samples: Optional[int] = None,
+        description: str = "Collect mean layer activations for representational comparison",
+        layer_stride: int = 2,
+        num_samples: int = 50,
+        pooling: str = "last_token",  # "last_token" | "mean"
+        max_input_tokens: int = 1024,
         seed: int = 42,
+        answer_cue: str = "\n\nAnswer:",  # appended so last position mirrors logit_lens
+        # Legacy fields kept so old YAML configs don't break
         layers: Optional[List[int]] = None,
-        pooling: str = "last_token",
+        variants: Optional[List[Dict[str, Any]]] = None,
         comparison_mode: str = "pairwise",
         store_per_layer: bool = True,
         log_samples: bool = False,
@@ -39,347 +54,182 @@ class ActivationCompareExperiment(BaseExperiment):
     ):
         self._name = name
         self.description = description
-        self.variants = variants or []
+        self.layer_stride = layer_stride
         self.num_samples = num_samples
-        self.seed = seed
-        self.layers = layers
         self.pooling = pooling
-        self.comparison_mode = comparison_mode
-        self.store_per_layer = store_per_layer
-        self.log_samples = log_samples
+        self.max_input_tokens = max_input_tokens
+        self.seed = seed
+        self.answer_cue = answer_cue
+        # Legacy fields silently ignored — kept for backward compat
+        self._layers_legacy = layers
+        self._variants_legacy = variants
 
     @property
     def name(self) -> str:
         return self._name
 
-    def validate_backend(self, backend: InferenceBackend) -> None:
-        if not backend.supports_activations:
-            raise ValueError(
-                f"Backend {type(backend).__name__} does not support activations. "
-                "Use TransformersBackend for activation comparison."
-            )
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_layers(self, backend: InferenceBackend) -> List[int]:
+        all_layers = list(range(backend.hook_manager.num_layers))
+        return all_layers[:: self.layer_stride]
+
+    def _pool(self, tensor: torch.Tensor) -> torch.Tensor:
+        """tensor: [seq_len, hidden_size] → [hidden_size]"""
+        if self.pooling == "last_token":
+            return tensor[-1]
+        elif self.pooling == "mean":
+            return tensor.mean(dim=0)
+        else:
+            raise ValueError(f"Unknown pooling: {self.pooling}")
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
 
     def run(
         self,
         backend: InferenceBackend,
         dataset: BaseDataset,
-        prompt_strategy: BasePromptStrategy,
-        num_samples: Optional[int] = None,
+        prompt_strategy: Any,
         logger: Optional[ExperimentLogger] = None,
         **kwargs,
     ) -> ExperimentResult:
-        self.validate_backend(backend)
+        """Collect mean residual-stream activations for one dataset condition."""
 
-        base_num_samples = num_samples if num_samples is not None else self.num_samples
+        target_layers = self._resolve_layers(backend)
+        tokenizer = backend._tokenizer
 
-        if self.layers is None:
-            if not hasattr(backend, "num_layers"):
-                raise ValueError("layers must be provided when backend has no num_layers")
-            layers = list(range(backend.num_layers))
-        else:
-            layers = list(self.layers)
+        print(f"Model : {backend.model_name}")
+        print(f"Layers ({len(target_layers)}): {target_layers}")
+        print(f"Pooling: {self.pooling}")
 
-        variants = self._normalize_variants(
-            variants=self.variants,
-            base_dataset=dataset,
-            base_prompt=prompt_strategy,
-            base_num_samples=base_num_samples,
-            base_seed=self.seed,
-        )
+        samples = dataset.sample(self.num_samples, seed=self.seed)
+        n = len(samples)
+        print(f"Samples: {n}\n")
 
-        run_summaries: List[Dict[str, Any]] = []
-        run_states: List[Dict[str, Any]] = []
+        # Accumulators: layer_idx → running sum tensor (float32, CPU)
+        layer_sums: Dict[int, torch.Tensor] = {}
+        layer_sq_sums: Dict[int, torch.Tensor] = {}
+        layer_counts: Dict[int, int] = {}
+        processed = 0
 
-        for idx, variant in enumerate(variants):
-            run_name = variant["name"]
-            run_dataset = variant["dataset"]
-            run_prompt = variant["prompt"]
-            run_num_samples = variant["num_samples"]
-            run_seed = variant["seed"]
-
-            print(
-                f"Collecting activations for {run_name}: "
-                f"{run_dataset.name}/{run_prompt.name} ({run_num_samples} samples)"
-            )
-
-            layer_means, sample_indices, system_prompt = self._collect_run_means(
-                backend=backend,
-                dataset=run_dataset,
-                prompt_strategy=run_prompt,
-                layers=layers,
-                num_samples=run_num_samples,
-                seed=run_seed,
-                pooling=self.pooling,
-                logger=logger if self.log_samples else None,
-                run_label=run_name,
-            )
-
-            layer_indices = [layer for layer in layers if layer in layer_means]
-            layer_norms = [float(torch.norm(layer_means[layer]).item()) for layer in layer_indices]
-
-            summary = {
-                "name": run_name,
-                "dataset": run_dataset.name,
-                "prompt": run_prompt.name,
-                "num_samples": len(sample_indices),
-                "seed": run_seed,
-                "pooling": self.pooling,
-                "layer_indices": layer_indices,
-                "mean_activation_norms": layer_norms,
-                "system_prompt": system_prompt,
+        for sample in tqdm(samples, desc="Activation collect"):
+            prompt_input = {
+                "text": sample.text,
+                "question": sample.text,
+                "report": sample.text,
+                "metadata": sample.metadata or {},
             }
-            run_summaries.append(summary)
-            run_states.append(
-                {
-                    "name": run_name,
-                    "layer_means": layer_means,
-                    "layer_indices": layer_indices,
-                }
-            )
+            prompt_str = prompt_strategy.build_prompt(prompt_input) + self.answer_cue
 
-            if logger:
-                logger.log_sample(idx, {"run_summary": summary})
+            tokens = tokenizer(
+                prompt_str,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.max_input_tokens,
+            ).to(backend.device)
 
-        comparisons = self._compare_runs(run_states, layers=layers)
+            # Capture hidden state in each hook; move to CPU immediately
+            layer_vecs: Dict[int, torch.Tensor] = {}
 
-        metrics = {
-            "num_runs": len(run_states),
-            "num_layers": len(layers),
-            "comparison_mode": self.comparison_mode,
-            "pooling": self.pooling,
-            "pair_count": len(comparisons),
-        }
+            def make_hook(layer_idx: int):
+                def hook(module, inp, output):
+                    tensor = output[0] if isinstance(output, tuple) else output
+                    # tensor: [batch, seq_len, hidden]
+                    with torch.no_grad():
+                        vec = self._pool(tensor[0]).cpu().float()
+                    layer_vecs[layer_idx] = vec
+                    return output
+
+                return hook
+
+            handles = []
+            for layer_idx in target_layers:
+                if layer_idx < backend.hook_manager.num_layers:
+                    mod = backend.hook_manager.get_residual_module(layer_idx)
+                    handles.append(mod.register_forward_hook(make_hook(layer_idx)))
+
+            try:
+                with torch.no_grad():
+                    backend._model(**tokens)
+            except Exception as e:
+                tqdm.write(f"  [skip] sample {sample.idx}: {type(e).__name__}: {e}")
+                torch.cuda.empty_cache()
+                for h in handles:
+                    h.remove()
+                continue
+            finally:
+                for h in handles:
+                    h.remove()
+
+            for layer_idx, vec in layer_vecs.items():
+                if layer_idx not in layer_sums:
+                    layer_sums[layer_idx] = torch.zeros_like(vec)
+                    layer_sq_sums[layer_idx] = torch.zeros_like(vec)
+                    layer_counts[layer_idx] = 0
+                layer_sums[layer_idx] += vec
+                layer_sq_sums[layer_idx] += vec**2
+                layer_counts[layer_idx] += 1
+
+            del layer_vecs
+            torch.cuda.empty_cache()
+            processed += 1
+
+        # --- Compute statistics -----------------------------------------
+        mean_activations: Dict[int, List[float]] = {}
+        activation_norm: Dict[int, float] = {}
+        activation_std: Dict[int, float] = {}
+
+        for layer_idx in target_layers:
+            cnt = layer_counts.get(layer_idx, 0)
+            if cnt == 0:
+                continue
+            mean_vec = layer_sums[layer_idx] / cnt  # [hidden]
+            var_vec = layer_sq_sums[layer_idx] / cnt - mean_vec**2
+            std_val = float(var_vec.clamp(min=0).sqrt().mean().item())
+            norm_val = float(mean_vec.norm().item())
+            mean_activations[layer_idx] = mean_vec.tolist()
+            activation_norm[layer_idx] = round(norm_val, 4)
+            activation_std[layer_idx] = round(std_val, 6)
+
+        # --- Print summary -----------------------------------------------
+        print("\n" + "=" * 60)
+        print("ACTIVATION COLLECT SUMMARY")
+        print("=" * 60)
+        print(f"Processed samples : {processed} / {n}")
+        print(f"{'Layer':>6}  {'Norm':>10}  {'Std':>10}")
+        print("-" * 32)
+        for layer_idx in target_layers:
+            if layer_idx in activation_norm:
+                print(
+                    f"{layer_idx:>6}  {activation_norm[layer_idx]:>10.2f}  {activation_std[layer_idx]:>10.6f}"
+                )
+        print("=" * 60)
 
         return ExperimentResult(
             experiment_name=self.name,
-            model_name=backend.model_name or "unknown",
-            prompt_strategy=prompt_strategy.name,
-            metrics=metrics,
-            raw_outputs=[{"runs": run_summaries, "comparisons": comparisons}],
+            model_name=backend.model_name,
+            prompt_strategy=(
+                prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom"
+            ),
+            metrics={
+                "num_samples": processed,
+                "pooling": self.pooling,
+                "layer_stride": self.layer_stride,
+                "activation_norms": activation_norm,
+                "activation_std": activation_std,
+            },
+            raw_outputs={
+                "mean_activations_per_layer": mean_activations,
+            },
             metadata={
-                "layers": layers,
-                "variants": [v["name"] for v in variants],
-                "description": self.description,
+                "target_layers": target_layers,
+                "pooling": self.pooling,
+                "num_samples": processed,
+                "seed": self.seed,
+                "answer_cue": self.answer_cue,
             },
         )
-
-    def _normalize_variants(
-        self,
-        *,
-        variants: List[Dict[str, Any]],
-        base_dataset: BaseDataset,
-        base_prompt: BasePromptStrategy,
-        base_num_samples: int,
-        base_seed: int,
-    ) -> List[Dict[str, Any]]:
-        if not variants:
-            return [
-                {
-                    "name": "base",
-                    "dataset": base_dataset,
-                    "prompt": base_prompt,
-                    "num_samples": base_num_samples,
-                    "seed": base_seed,
-                }
-            ]
-
-        normalized = []
-        variant_list = list(variants) if isinstance(variants, ListConfig) else variants
-        for idx, variant in enumerate(variant_list):
-            cfg = variant
-            if isinstance(variant, DictConfig):
-                cfg = OmegaConf.to_container(variant, resolve=True)
-
-            name = cfg.get("name", f"variant_{idx}")
-            dataset_cfg = cfg.get("dataset", None)
-            prompt_cfg = cfg.get("prompt", None)
-            num_samples = cfg.get("num_samples", base_num_samples)
-            seed = cfg.get("seed", base_seed)
-
-            resolved_dataset = self._resolve_component(dataset_cfg, base_dataset)
-            resolved_prompt = self._resolve_component(prompt_cfg, base_prompt)
-
-            normalized.append(
-                {
-                    "name": name,
-                    "dataset": resolved_dataset,
-                    "prompt": resolved_prompt,
-                    "num_samples": num_samples,
-                    "seed": seed,
-                }
-            )
-
-        return normalized
-
-    def _resolve_component(self, cfg: Any, base: Any) -> Any:
-        if cfg is None:
-            return base
-        if isinstance(cfg, str) and cfg.lower() in ("base", "default"):
-            return base
-        if isinstance(cfg, (BaseDataset, BasePromptStrategy)):
-            return cfg
-        if isinstance(cfg, DictConfig):
-            return create_component(cfg)
-        if isinstance(cfg, dict):
-            return create_component(OmegaConf.create(cfg))
-        raise ValueError(f"Unsupported component config type: {type(cfg)}")
-
-    def _collect_run_means(
-        self,
-        *,
-        backend: InferenceBackend,
-        dataset: BaseDataset,
-        prompt_strategy: BasePromptStrategy,
-        layers: List[int],
-        num_samples: int,
-        seed: int,
-        pooling: str,
-        logger: Optional[ExperimentLogger],
-        run_label: str,
-    ) -> tuple[Dict[int, torch.Tensor], List[int], Optional[str]]:
-        samples = self._select_samples(dataset, num_samples=num_samples, seed=seed)
-
-        layer_sums: Dict[int, torch.Tensor] = {}
-        layer_counts: Dict[int, int] = {}
-        sample_indices: List[int] = []
-
-        system_prompt = self._get_system_prompt(prompt_strategy)
-
-        for sample in tqdm(samples, desc=f"Samples ({run_label})"):
-            prompt = prompt_strategy.build_prompt(
-                {
-                    "question": sample.text,
-                    "text": sample.text,
-                    "report": sample.text,
-                    "metadata": sample.metadata,
-                }
-            )
-            full_prompt = self._apply_system_prompt(prompt, system_prompt)
-
-            _, cache = backend.forward_with_cache(full_prompt, layers=layers)
-
-            for layer_idx in layers:
-                activation = cache.get(layer_idx)
-                if activation is None:
-                    continue
-                pooled = self._pool_activation(activation, pooling=pooling)
-                if layer_idx not in layer_sums:
-                    layer_sums[layer_idx] = torch.zeros_like(pooled)
-                    layer_counts[layer_idx] = 0
-                layer_sums[layer_idx] += pooled
-                layer_counts[layer_idx] += 1
-
-            cache.clear()
-            sample_indices.append(sample.idx)
-
-            if logger:
-                logger.log_sample(
-                    sample.idx,
-                    {"run": run_label, "prompt": prompt, "system_prompt": system_prompt},
-                )
-
-        layer_means = {
-            layer_idx: layer_sums[layer_idx] / max(layer_counts[layer_idx], 1)
-            for layer_idx in layer_sums
-        }
-
-        return layer_means, sample_indices, system_prompt
-
-    def _pool_activation(self, activation: torch.Tensor, pooling: str) -> torch.Tensor:
-        if activation.dim() == 2:
-            pooled = activation[0]
-        else:
-            if pooling == "mean":
-                pooled = activation[0].mean(dim=0)
-            elif pooling == "last_token":
-                pooled = activation[0, -1]
-            else:
-                raise ValueError(f"Unsupported pooling method: {pooling}")
-        return pooled.detach().float().cpu()
-
-    def _select_samples(
-        self, dataset: BaseDataset, *, num_samples: Optional[int], seed: int
-    ) -> List[Any]:
-        if num_samples is None or num_samples <= 0 or num_samples >= len(dataset):
-            return list(dataset)
-        return dataset.sample(num_samples, seed=seed)
-
-    def _compare_runs(self, run_states: List[Dict[str, Any]], *, layers: List[int]) -> List[Dict]:
-        comparisons: List[Dict[str, Any]] = []
-
-        if len(run_states) < 2:
-            return comparisons
-
-        pairs = []
-        if self.comparison_mode == "baseline":
-            base = run_states[0]
-            pairs = [(base, other) for other in run_states[1:]]
-        elif self.comparison_mode == "pairwise":
-            for i in range(len(run_states)):
-                for j in range(i + 1, len(run_states)):
-                    pairs.append((run_states[i], run_states[j]))
-        else:
-            raise ValueError(f"Unsupported comparison mode: {self.comparison_mode}")
-
-        for run_a, run_b in pairs:
-            common_layers = [
-                layer
-                for layer in layers
-                if layer in run_a["layer_means"] and layer in run_b["layer_means"]
-            ]
-            cosine_values = []
-            l2_values = []
-
-            for layer in common_layers:
-                vec_a = run_a["layer_means"][layer]
-                vec_b = run_b["layer_means"][layer]
-                cosine_values.append(self._cosine_similarity(vec_a, vec_b))
-                l2_values.append(float(torch.norm(vec_a - vec_b).item()))
-
-            comparison = {
-                "run_a": run_a["name"],
-                "run_b": run_b["name"],
-                "layer_indices": common_layers,
-                "mean_cosine_similarity": self._safe_mean(cosine_values),
-                "mean_l2_distance": self._safe_mean(l2_values),
-            }
-
-            if self.store_per_layer:
-                comparison["layer_cosine_similarity"] = cosine_values
-                comparison["layer_l2_distance"] = l2_values
-
-            comparisons.append(comparison)
-
-        return comparisons
-
-    @staticmethod
-    def _cosine_similarity(vec_a: torch.Tensor, vec_b: torch.Tensor) -> float:
-        denom = torch.norm(vec_a) * torch.norm(vec_b)
-        if denom.item() == 0:
-            return 0.0
-        return float(torch.dot(vec_a, vec_b).item() / denom.item())
-
-    @staticmethod
-    def _safe_mean(values: List[float]) -> float:
-        return sum(values) / len(values) if values else 0.0
-
-    @staticmethod
-    def _get_system_prompt(prompt_strategy: BasePromptStrategy) -> Optional[str]:
-        system_prompt = None
-        get_system_message = getattr(prompt_strategy, "get_system_message", None)
-        if callable(get_system_message):
-            system_prompt = get_system_message()
-        if system_prompt is None:
-            get_system_prompt = getattr(prompt_strategy, "get_system_prompt", None)
-            if callable(get_system_prompt):
-                system_prompt = get_system_prompt()
-        if not system_prompt:
-            return None
-        stripped = system_prompt.strip()
-        return stripped if stripped else None
-
-    @staticmethod
-    def _apply_system_prompt(prompt: str, system_prompt: Optional[str]) -> str:
-        if not system_prompt:
-            return prompt
-        return f"{system_prompt}\n\n{prompt}"
