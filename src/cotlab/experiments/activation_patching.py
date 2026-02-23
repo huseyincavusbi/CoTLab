@@ -74,6 +74,7 @@ class ActivationPatchingExperiment(BaseExperiment):
         self.max_input_tokens = max_input_tokens
         self.seed = seed
         self.answer_cue = answer_cue
+        self.patching = patching or {}
 
     @property
     def name(self) -> str:
@@ -86,6 +87,33 @@ class ActivationPatchingExperiment(BaseExperiment):
     def _resolve_layers(self, backend: InferenceBackend) -> List[int]:
         all_layers = list(range(backend.hook_manager.num_layers))
         return all_layers[:: self.layer_stride]
+
+    def _resolve_head_targets(self, layers: List[int]) -> Dict[int, List[int]]:
+        """Resolve optional head-target mapping from `patching` config.
+
+        Supported configs (mutually exclusive):
+        - `patching.head_indices`: list of heads to apply to all `layers`
+        - `patching.target_heads`: mapping layer -> list of heads
+        """
+        head_indices = self.patching.get("head_indices")
+        target_heads = self.patching.get("target_heads")
+
+        if head_indices is not None and target_heads is not None:
+            raise ValueError("Use either target_heads or head_indices, not both.")
+
+        if target_heads is not None:
+            resolved: Dict[int, List[int]] = {}
+            for layer_key, heads in dict(target_heads).items():
+                layer_idx = int(layer_key)
+                if layer_idx in layers:
+                    resolved[layer_idx] = [int(h) for h in list(heads)]
+            return resolved
+
+        if head_indices is not None:
+            head_list = [int(h) for h in list(head_indices)]
+            return {layer_idx: head_list for layer_idx in layers}
+
+        return {}
 
     def _answer_token_id(self, tokenizer, label) -> Optional[int]:
         """Return the first token id of the label string (the logit we track)."""
