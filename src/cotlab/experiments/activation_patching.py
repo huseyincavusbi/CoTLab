@@ -1,502 +1,367 @@
-"""Activation Patching experiment implementation."""
+"""Activation Patching experiment — causal intervention via residual-stream replacement.
+
+Two patching modes
+------------------
+``pairs``  (default — requires PatchingPairsDataset)
+    clean   = sample.text
+    corrupt = sample.metadata["corrupted_prompt"]
+    Answers Q: which layers encode the specific diagnosis/fact?
+
+``few_shot_contrast``  (works with ANY dataset)
+    clean   = few-shot prompt of the sample  (prompt_strategy with few_shot=True)
+    corrupt = zero-shot prompt of the sample (prompt_strategy with few_shot=False)
+    Answers Q: which layers causally drive few-shot's benefit on OOD / non-OOD?
+    Use this mode for afrimedqa, medmcqa, cardiology, etc.
+
+Algorithm (logit-recovery metric, one sample):
+  1. Forward clean → cache per-layer residuals (CPU).
+  2. Forward corrupt → baseline logit at last token.
+  3. For each layer L (strided):
+       Re-run corrupt with hook replacing layer L's output with cached clean.
+       effect(L) = (logit_patched[clean_tok] - logit_corrupt[clean_tok])
+                  / (logit_clean[clean_tok]  - logit_corrupt[clean_tok] + ε)
+       1 = full recovery, 0 = no effect, negative = made things worse.
+
+Memory safety: activations moved to CPU immediately inside each hook.
+"""
 
 from typing import Any, Dict, List, Optional
 
-from omegaconf import DictConfig, ListConfig, OmegaConf
+import torch
 from tqdm import tqdm
 
 from ..backends.base import InferenceBackend
-from ..core import create_component
-from ..core.base import BaseExperiment, BasePromptStrategy, ExperimentResult
+from ..core.base import BaseExperiment, ExperimentResult
 from ..core.registry import Registry
 from ..datasets.loaders import BaseDataset
 from ..logging import ExperimentLogger
-from ..patching import ActivationPatcher
 
 
 @Registry.register_experiment("activation_patching")
 class ActivationPatchingExperiment(BaseExperiment):
     """
-    Layer-wise causal interventions to study CoT importance.
+    Layer-wise causal activation patching with logit-recovery scoring.
 
-    This experiment uses activation patching to test the causal
-    importance of different layers for the model's reasoning:
-
-    1. Run model on "clean" prompt → cache activations
-    2. Run model on "corrupted" prompt → get different output
-    3. Patch layer L from clean → corrupted run
-    4. If output changes toward clean, layer L is causally important
-
-    This helps answer: "Which layers actually use the CoT reasoning?"
+    Supports two patching modes:
+    - ``pairs``              PatchingPairsDataset clean/corrupt pairs.
+    - ``few_shot_contrast``  Any dataset — few-shot (clean) vs zero-shot (corrupt).
     """
 
     def __init__(
         self,
         name: str = "activation_patching",
-        description: str = "",
-        variants: Optional[List[Dict[str, Any]]] = None,
-        patching: Dict[str, Any] = None,
-        num_samples: Optional[int] = None,
+        description: str = "Layer-wise causal activation patching (logit recovery)",
+        patching_mode: str = "pairs",  # "pairs" | "few_shot_contrast"
+        layer_stride: int = 2,
+        num_samples: int = 50,
+        max_input_tokens: int = 1024,
         seed: int = 42,
+        answer_cue: str = "\n\nAnswer:",
+        # Legacy fields kept so old YAML configs don't break
+        variants: Optional[List[Dict[str, Any]]] = None,
+        patching: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
+        if patching_mode not in ("pairs", "few_shot_contrast"):
+            raise ValueError(
+                f"patching_mode must be 'pairs' or 'few_shot_contrast', got {patching_mode!r}"
+            )
         self._name = name
         self.description = description
-        self.variants = variants or []
-        self.patching_config = patching or {}
+        self.patching_mode = patching_mode
+        self.layer_stride = layer_stride
         self.num_samples = num_samples
+        self.max_input_tokens = max_input_tokens
         self.seed = seed
-
-        self.sweep_all_layers = self.patching_config.get("sweep_all_layers", True)
-        self.target_layers = self.patching_config.get("target_layers", None)
-        self.target_heads = self.patching_config.get("target_heads", None)
-        self.head_indices = self.patching_config.get("head_indices", None)
+        self.answer_cue = answer_cue
 
     @property
     def name(self) -> str:
         return self._name
 
-    def validate_backend(self, backend: InferenceBackend) -> None:
-        """Ensure backend supports activation patching."""
-        if not backend.supports_activations:
-            raise ValueError(
-                f"Backend {type(backend).__name__} does not support activations. "
-                "Use TransformersBackend for activation patching experiments."
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_layers(self, backend: InferenceBackend) -> List[int]:
+        all_layers = list(range(backend.hook_manager.num_layers))
+        return all_layers[:: self.layer_stride]
+
+    def _answer_token_id(self, tokenizer, label) -> Optional[int]:
+        """Return the first token id of the label string (the logit we track)."""
+        if label is None:
+            return None
+        label_str = str(label).strip()
+        if not label_str:
+            return None
+        for prefix in (" ", ""):
+            ids = tokenizer.encode(prefix + label_str, add_special_tokens=False)
+            if ids:
+                return ids[0]
+        return None
+
+    def _tokenize(self, tokenizer, text: str, device):
+        return tokenizer(
+            text,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_input_tokens,
+        ).to(device)
+
+    def _forward_with_cache(
+        self,
+        backend: InferenceBackend,
+        tokens,
+        target_layers: List[int],
+    ) -> tuple:
+        """Run a forward pass, caching residual activations (last token, CPU) per layer.
+
+        Returns:
+            logits_last  – [vocab_size] float32 CPU tensor at last token position
+            act_cache    – dict[layer_idx → [hidden] float32 CPU tensor]
+        """
+        act_cache: Dict[int, torch.Tensor] = {}
+
+        def make_cache_hook(layer_idx: int):
+            def hook(module, inp, output):
+                tensor = output[0] if isinstance(output, tuple) else output
+                with torch.no_grad():
+                    # keep bfloat16 so patching is dtype-compatible with the model
+                    act_cache[layer_idx] = tensor[0, -1].detach().cpu()
+                return output
+
+            return hook
+
+        handles = [
+            backend.hook_manager.get_residual_module(layer_idx).register_forward_hook(
+                make_cache_hook(layer_idx)
             )
+            for layer_idx in target_layers
+            if layer_idx < backend.hook_manager.num_layers
+        ]
+        try:
+            with torch.no_grad():
+                out = backend._model(**tokens)
+        finally:
+            for h in handles:
+                h.remove()
+
+        logits_last = out.logits[0, -1].detach().float().cpu()  # float32 for stable arithmetic
+        return logits_last, act_cache
+
+    def _forward_patched(
+        self,
+        backend: InferenceBackend,
+        tokens,
+        patch_layer: int,
+        patch_vec: torch.Tensor,  # CPU [hidden]
+    ) -> torch.Tensor:
+        """Forward pass replacing layer `patch_layer` output with `patch_vec`.
+
+        Returns [vocab_size] float32 CPU logit vector at last token.
+        """
+        # cast to model dtype (bfloat16) before injection — avoids dtype mismatch
+        model_dtype = next(backend._model.parameters()).dtype
+        patch_gpu = patch_vec.to(dtype=model_dtype, device=backend.device)
+
+        def patch_hook(module, inp, output):
+            if isinstance(output, tuple):
+                patched = list(output)
+                patched[0] = patch_gpu.unsqueeze(0).unsqueeze(0).expand_as(output[0])
+                return tuple(patched)
+            return patch_gpu.unsqueeze(0).unsqueeze(0).expand_as(output)
+
+        mod = backend.hook_manager.get_residual_module(patch_layer)
+        handle = mod.register_forward_hook(patch_hook)
+        try:
+            with torch.no_grad():
+                out = backend._model(**tokens)
+        finally:
+            handle.remove()
+            del patch_gpu
+
+        return out.logits[0, -1].detach().float().cpu()
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
+
+    def _build_prompt(self, prompt_strategy: Any, text: str, metadata: dict) -> str:
+        return (
+            prompt_strategy.build_prompt(
+                {
+                    "text": text,
+                    "question": text,
+                    "report": text,
+                    "metadata": metadata,
+                }
+            )
+            + self.answer_cue
+        )
+
+    def _build_prompt_few_shot(
+        self, prompt_strategy: Any, text: str, metadata: dict, few_shot: bool
+    ) -> str:
+        """Build prompt with few_shot toggled — restores original value afterwards."""
+        orig = getattr(prompt_strategy, "few_shot", None)
+        try:
+            if hasattr(prompt_strategy, "few_shot"):
+                prompt_strategy.few_shot = few_shot
+            return self._build_prompt(prompt_strategy, text, metadata)
+        finally:
+            if orig is not None:
+                prompt_strategy.few_shot = orig
 
     def run(
         self,
         backend: InferenceBackend,
         dataset: BaseDataset,
-        prompt_strategy: BasePromptStrategy,
-        num_samples: int = None,
-        logger: ExperimentLogger = None,
+        prompt_strategy: Any,
+        logger: Optional[ExperimentLogger] = None,
         **kwargs,
     ) -> ExperimentResult:
-        """Run the activation patching experiment."""
-        self.validate_backend(backend)
+        """Run layer-sweep activation patching over paired (clean, corrupted) samples."""
 
-        n_samples = num_samples if num_samples is not None else self.num_samples
-        variants = self._normalize_variants(
-            variants=self.variants,
-            base_dataset=dataset,
-            base_prompt=prompt_strategy,
-            base_num_samples=n_samples,
-            base_seed=self.seed,
-        )
+        target_layers = self._resolve_layers(backend)
+        tokenizer = backend._tokenizer
 
-        # If no variants provided, use dataset sample with optional corrupted prompt
-        if len(variants) == 1:
-            if n_samples is None:
-                samples = list(dataset)
-            else:
-                samples = (
-                    dataset.sample(n_samples, seed=self.seed)
-                    if n_samples < len(dataset)
-                    else list(dataset)
-                )
-            clean_variant = variants[0]
-            corrupt_variant = None
-        else:
-            clean_variant = variants[0]
-            corrupt_variant = variants[1]
+        print(f"Model        : {backend.model_name}")
+        print(f"Patching mode: {self.patching_mode}")
+        print(f"Layers ({len(target_layers)}): {target_layers}")
+        print(f"Stride : {self.layer_stride}  |  max_input_tokens: {self.max_input_tokens}")
 
-        # Create patcher
-        patcher = ActivationPatcher(backend)
+        samples = dataset.sample(self.num_samples, seed=self.seed)
+        n = len(samples)
+        print(f"Samples: {n}  (each requires {len(target_layers) + 2} forward passes)\n")
 
-        # Determine layers to sweep
-        if self.target_layers:
-            layers = self.target_layers
-        else:
-            layers = list(range(backend.num_layers))
+        # Per-layer effect accumulators
+        layer_effects: Dict[int, List[float]] = {lid: [] for lid in target_layers}
+        per_sample_results: List[Dict] = []
+        processed = 0
 
-        head_targets = self._resolve_head_targets(layers)
-        use_head_patching = head_targets is not None
+        for sample in tqdm(samples, desc="Activation patching"):
+            clean_tok_id = self._answer_token_id(tokenizer, sample.label)
+            if clean_tok_id is None:
+                tqdm.write(f"  [skip] sample {sample.idx}: cannot resolve answer token")
+                continue
 
-        results = []
-        layer_effects = {layer: [] for layer in layers}
-        head_effects = (
-            {(layer, head): [] for layer, heads in head_targets.items() for head in heads}
-            if use_head_patching
-            else {}
-        )
-
-        if corrupt_variant is None:
-            print(f"Running Activation Patching on {len(samples)} samples, {len(layers)} layers...")
-        else:
-            clean_dataset = clean_variant["dataset"]
-            corrupt_dataset = corrupt_variant["dataset"]
-            clean_prompt_strategy = clean_variant["prompt"]
-            corrupt_prompt_strategy = corrupt_variant["prompt"]
-            clean_samples = (
-                clean_dataset.sample(clean_variant["num_samples"], seed=clean_variant["seed"])
-                if clean_variant["num_samples"] < len(clean_dataset)
-                else list(clean_dataset)
-            )
-            corrupt_samples = (
-                corrupt_dataset.sample(corrupt_variant["num_samples"], seed=corrupt_variant["seed"])
-                if corrupt_variant["num_samples"] < len(corrupt_dataset)
-                else list(corrupt_dataset)
-            )
-            pair_count = min(len(clean_samples), len(corrupt_samples))
-            print(
-                "Running Activation Patching across variants: "
-                f"{clean_dataset.name}/{clean_prompt_strategy.name} -> "
-                f"{corrupt_dataset.name}/{corrupt_prompt_strategy.name} "
-                f"({pair_count} paired samples), {len(layers)} layers..."
-            )
-
-        if corrupt_variant is None:
-            for sample in tqdm(samples, desc="Processing samples"):
-                # Get clean and corrupted prompts
-                clean_prompt = sample.text
+            # ── Build clean / corrupted prompt strings based on mode ──────
+            if self.patching_mode == "pairs":
                 corrupted_prompt = sample.metadata.get("corrupted_prompt")
-
-                if corrupted_prompt is None:
-                    # If no corrupted prompt, create a simple one
-                    corrupted_prompt = "What is the answer?"
-
-                clean_formatted = self._build_prompt(
-                    prompt_strategy=prompt_strategy,
-                    sample_text=clean_prompt,
-                    metadata=sample.metadata,
+                if not corrupted_prompt:
+                    tqdm.write(f"  [skip] sample {sample.idx}: no corrupted_prompt in metadata")
+                    continue
+                clean_str = self._build_prompt(prompt_strategy, sample.text, sample.metadata or {})
+                corr_str = self._build_prompt(prompt_strategy, corrupted_prompt, {})
+            else:  # few_shot_contrast
+                # few-shot = clean  (more context → better answer representation)
+                # zero-shot = corrupted
+                clean_str = self._build_prompt_few_shot(
+                    prompt_strategy, sample.text, sample.metadata or {}, few_shot=True
                 )
-                corrupted_formatted = self._build_prompt(
-                    prompt_strategy=prompt_strategy,
-                    sample_text=corrupted_prompt,
-                    metadata={},
+                corr_str = self._build_prompt_few_shot(
+                    prompt_strategy, sample.text, sample.metadata or {}, few_shot=False
                 )
 
-                # Sweep layers or heads using forward-only patching (no generation)
-                if use_head_patching:
-                    sweep_results = patcher.sweep_heads(
-                        clean_prompt=clean_formatted,
-                        corrupted_prompt=corrupted_formatted,
-                        layers=layers,
-                        target_heads=head_targets,
+            clean_tokens = self._tokenize(tokenizer, clean_str, backend.device)
+            corr_tokens = self._tokenize(tokenizer, corr_str, backend.device)
+
+            try:
+                # Step 1 — clean forward, cache activations
+                logits_clean, act_cache = self._forward_with_cache(
+                    backend, clean_tokens, target_layers
+                )
+                # Step 2 — corrupted baseline (no patching needed, reuse cache run)
+                logits_corr, _ = self._forward_with_cache(backend, corr_tokens, [])
+            except Exception as exc:
+                tqdm.write(f"  [skip] sample {sample.idx} (baseline): {type(exc).__name__}: {exc}")
+                torch.cuda.empty_cache()
+                continue
+
+            clean_logit = float(logits_clean[clean_tok_id].item())
+            corr_logit = float(logits_corr[clean_tok_id].item())
+            denom = clean_logit - corr_logit  # may be 0 or negative
+
+            sample_layer_effects: Dict[int, float] = {}
+
+            # Step 3 — patching sweep over layers
+            for layer_idx in target_layers:
+                if layer_idx not in act_cache:
+                    continue
+                try:
+                    logits_patch = self._forward_patched(
+                        backend, corr_tokens, layer_idx, act_cache[layer_idx]
                     )
+                except Exception as exc:
+                    tqdm.write(f"  [skip] sample {sample.idx} layer {layer_idx}: {exc}")
+                    torch.cuda.empty_cache()
+                    continue
+
+                patch_logit = float(logits_patch[clean_tok_id].item())
+                eps = 1e-6
+                if abs(denom) < eps:
+                    effect = 0.0
                 else:
-                    sweep_results = patcher.sweep_layers(
-                        clean_prompt=clean_formatted,
-                        corrupted_prompt=corrupted_formatted,
-                        layers=layers,
-                    )
+                    effect = (patch_logit - corr_logit) / denom
+                # Clip to [-1, 2] to handle outliers
+                effect = max(-1.0, min(2.0, effect))
+                layer_effects[layer_idx].append(effect)
+                sample_layer_effects[layer_idx] = round(effect, 4)
+                torch.cuda.empty_cache()
 
-                sample_result = {
+            per_sample_results.append(
+                {
                     "sample_idx": sample.idx,
-                    "clean_prompt": clean_prompt,
-                    "corrupted_prompt": corrupted_prompt,
-                    "layer_results": {},
-                    "head_results": {},
+                    "clean_logit": round(clean_logit, 4),
+                    "corrupt_logit": round(corr_logit, 4),
+                    "logit_gap": round(denom, 4),
+                    "layer_effects": sample_layer_effects,
                 }
-
-                for key, patch_result in sweep_results.items():
-                    # Use the effect_score computed from logit comparison
-                    effect = patch_result.effect_score
-
-                    if use_head_patching:
-                        layer_idx, head_idx = key
-                        head_effects[(layer_idx, head_idx)].append(effect)
-                        sample_result["head_results"].setdefault(layer_idx, {})[head_idx] = {
-                            "effect": effect
-                        }
-                    else:
-                        layer_idx = key
-                        layer_effects[layer_idx].append(effect)
-                        sample_result["layer_results"][layer_idx] = {
-                            "effect": effect,
-                        }
-
-                results.append(sample_result)
-
-                if logger:
-                    logger.log_sample(sample.idx, sample_result)
-        else:
-            clean_dataset = clean_variant["dataset"]
-            corrupt_dataset = corrupt_variant["dataset"]
-            clean_prompt_strategy = clean_variant["prompt"]
-            corrupt_prompt_strategy = corrupt_variant["prompt"]
-            clean_samples = (
-                clean_dataset.sample(clean_variant["num_samples"], seed=clean_variant["seed"])
-                if clean_variant["num_samples"] < len(clean_dataset)
-                else list(clean_dataset)
             )
-            corrupt_samples = (
-                corrupt_dataset.sample(corrupt_variant["num_samples"], seed=corrupt_variant["seed"])
-                if corrupt_variant["num_samples"] < len(corrupt_dataset)
-                else list(corrupt_dataset)
-            )
-            pair_count = min(len(clean_samples), len(corrupt_samples))
-            for idx in tqdm(range(pair_count), desc="Processing paired samples"):
-                clean_sample = clean_samples[idx]
-                corrupt_sample = corrupt_samples[idx]
+            processed += 1
+            torch.cuda.empty_cache()
 
-                clean_formatted = self._build_prompt(
-                    prompt_strategy=clean_prompt_strategy,
-                    sample_text=clean_sample.text,
-                    metadata=clean_sample.metadata,
-                )
-                corrupted_formatted = self._build_prompt(
-                    prompt_strategy=corrupt_prompt_strategy,
-                    sample_text=corrupt_sample.text,
-                    metadata=corrupt_sample.metadata,
-                )
+        # --- Aggregate --------------------------------------------------
+        mean_effects: Dict[int, float] = {}
+        for layer_idx in target_layers:
+            vals = layer_effects[layer_idx]
+            mean_effects[layer_idx] = round(sum(vals) / len(vals), 4) if vals else 0.0
 
-                # Sweep layers or heads using forward-only patching (no generation)
-                if use_head_patching:
-                    sweep_results = patcher.sweep_heads(
-                        clean_prompt=clean_formatted,
-                        corrupted_prompt=corrupted_formatted,
-                        layers=layers,
-                        target_heads=head_targets,
-                    )
-                else:
-                    sweep_results = patcher.sweep_layers(
-                        clean_prompt=clean_formatted,
-                        corrupted_prompt=corrupted_formatted,
-                        layers=layers,
-                    )
+        sorted_by_effect = sorted(mean_effects.items(), key=lambda x: x[1], reverse=True)
+        top_5_layers = [lid for lid, _ in sorted_by_effect[:5]]
 
-                sample_result = {
-                    "clean_sample_idx": clean_sample.idx,
-                    "corrupt_sample_idx": corrupt_sample.idx,
-                    "clean_dataset": clean_dataset.name,
-                    "corrupt_dataset": corrupt_dataset.name,
-                    "clean_prompt": clean_sample.text,
-                    "corrupted_prompt": corrupt_sample.text,
-                    "layer_results": {},
-                    "head_results": {},
-                }
-
-                for key, patch_result in sweep_results.items():
-                    # Use the effect_score computed from logit comparison
-                    effect = patch_result.effect_score
-
-                    if use_head_patching:
-                        layer_idx, head_idx = key
-                        head_effects[(layer_idx, head_idx)].append(effect)
-                        sample_result["head_results"].setdefault(layer_idx, {})[head_idx] = {
-                            "effect": effect
-                        }
-                    else:
-                        layer_idx = key
-                        layer_effects[layer_idx].append(effect)
-                        sample_result["layer_results"][layer_idx] = {
-                            "effect": effect,
-                        }
-
-                results.append(sample_result)
-
-                if logger:
-                    logger.log_sample(idx, sample_result)
-
-        # Compute aggregate metrics
-        metrics = {
-            "num_layers": len(layers),
-            "num_samples": len(results),
-        }
-
-        # Average effect per layer/head
-        avg_effects = {}
-        if use_head_patching:
-            for (layer_idx, head_idx), effects in head_effects.items():
-                avg_effect = sum(effects) / len(effects) if effects else 0
-                avg_effects[f"layer_{layer_idx}_head_{head_idx}_avg_effect"] = avg_effect
-
-            metrics.update(avg_effects)
-
-            sorted_heads = sorted(
-                head_effects.items(),
-                key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 0,
-                reverse=True,
-            )
-            metrics["top_10_heads"] = [f"{layer}:{head}" for (layer, head), _ in sorted_heads[:10]]
-        else:
-            for layer_idx, effects in layer_effects.items():
-                avg_effect = sum(effects) / len(effects) if effects else 0
-                avg_effects[f"layer_{layer_idx}_avg_effect"] = avg_effect
-
-            metrics.update(avg_effects)
-
-            # Find most important layers
-            sorted_layers = sorted(
-                layer_effects.items(),
-                key=lambda x: sum(x[1]) / len(x[1]) if x[1] else 0,
-                reverse=True,
-            )
-            metrics["top_5_layers"] = [layer for layer, _ in sorted_layers[:5]]
-
-        metadata = {
-            "layers_swept": layers,
-            "description": self.description,
-        }
-        if use_head_patching:
-            metadata["heads_swept"] = sorted(
-                [f"{layer}:{head}" for layer, heads in head_targets.items() for head in heads]
-            )
-        if corrupt_variant is None:
-            metadata["variants"] = [variants[0]["name"]]
-        else:
-            metadata["variants"] = [clean_variant["name"], corrupt_variant["name"]]
+        # --- Print summary -----------------------------------------------
+        print("\n" + "=" * 62)
+        print("ACTIVATION PATCHING SUMMARY  (logit-recovery effect)")
+        print("=" * 62)
+        print(f"Processed samples : {processed} / {n}")
+        print(f"Top-5 causal layers: {top_5_layers}")
+        print()
+        print(f"{'Layer':>6}  {'Mean Effect':>12}  {'N samples':>10}")
+        print("-" * 34)
+        for layer_idx in target_layers:
+            n_val = len(layer_effects[layer_idx])
+            print(f"{layer_idx:>6}  {mean_effects[layer_idx]:>12.4f}  {n_val:>10}")
+        print("=" * 62)
 
         return ExperimentResult(
             experiment_name=self.name,
-            model_name=backend.model_name or "unknown",
-            prompt_strategy=prompt_strategy.name,
-            metrics=metrics,
-            raw_outputs=results,
-            metadata=metadata,
+            model_name=backend.model_name,
+            prompt_strategy=(
+                prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom"
+            ),
+            metrics={
+                "num_samples": processed,
+                "layer_stride": self.layer_stride,
+                "mean_effect_per_layer": mean_effects,
+                "top_5_causal_layers": top_5_layers,
+            },
+            raw_outputs={"per_sample": per_sample_results},
+            metadata={
+                "target_layers": target_layers,
+                "layer_stride": self.layer_stride,
+                "num_samples": processed,
+                "seed": self.seed,
+                "answer_cue": self.answer_cue,
+            },
         )
-
-    def _resolve_head_targets(self, layers: List[int]) -> Optional[Dict[int, List[int]]]:
-        if not self.target_heads and not self.head_indices:
-            return None
-
-        if self.target_heads and self.head_indices:
-            raise ValueError("Use either target_heads or head_indices, not both.")
-
-        if self.target_heads:
-            targets = (
-                OmegaConf.to_container(self.target_heads, resolve=True)
-                if isinstance(self.target_heads, (DictConfig, ListConfig))
-                else self.target_heads
-            )
-            resolved: Dict[int, List[int]] = {}
-            for layer_key, heads in targets.items():
-                layer_idx = int(layer_key)
-                head_list = self._coerce_head_list(heads)
-                resolved[layer_idx] = [int(h) for h in head_list]
-            return resolved
-
-        head_list = self._coerce_head_list(self.head_indices)
-        return {layer: [int(h) for h in head_list] for layer in layers}
-
-    @staticmethod
-    def _coerce_head_list(heads: Any) -> List[int]:
-        if isinstance(heads, (DictConfig, ListConfig)):
-            heads = OmegaConf.to_container(heads, resolve=True)
-        if isinstance(heads, (list, tuple)):
-            return [int(h) for h in heads]
-        return [int(heads)]
-
-    def _normalize_variants(
-        self,
-        *,
-        variants: List[Dict[str, Any]],
-        base_dataset: BaseDataset,
-        base_prompt: BasePromptStrategy,
-        base_num_samples: int,
-        base_seed: int,
-    ) -> List[Dict[str, Any]]:
-        if not variants:
-            return [
-                {
-                    "name": "base",
-                    "dataset": base_dataset,
-                    "prompt": base_prompt,
-                    "num_samples": base_num_samples,
-                    "seed": base_seed,
-                }
-            ]
-
-        normalized = []
-        variant_list = list(variants) if isinstance(variants, ListConfig) else variants
-        for idx, variant in enumerate(variant_list):
-            cfg = variant
-            if isinstance(variant, DictConfig):
-                cfg = OmegaConf.to_container(variant, resolve=True)
-
-            name = cfg.get("name", f"variant_{idx}")
-            dataset_cfg = cfg.get("dataset", None)
-            prompt_cfg = cfg.get("prompt", None)
-            num_samples = cfg.get("num_samples", base_num_samples)
-            seed = cfg.get("seed", base_seed)
-
-            resolved_dataset = self._resolve_component(dataset_cfg, base_dataset)
-            resolved_prompt = self._resolve_component(prompt_cfg, base_prompt)
-
-            normalized.append(
-                {
-                    "name": name,
-                    "dataset": resolved_dataset,
-                    "prompt": resolved_prompt,
-                    "num_samples": num_samples,
-                    "seed": seed,
-                }
-            )
-
-        return normalized
-
-    def _resolve_component(self, cfg: Any, base: Any) -> Any:
-        if cfg is None:
-            return base
-        if isinstance(cfg, str) and cfg.lower() in ("base", "default"):
-            return base
-        if isinstance(cfg, (BaseDataset, BasePromptStrategy)):
-            return cfg
-        if isinstance(cfg, DictConfig):
-            return create_component(cfg)
-        if isinstance(cfg, dict):
-            return create_component(OmegaConf.create(cfg))
-        raise ValueError(f"Unsupported component config type: {type(cfg)}")
-
-    def _build_prompt(
-        self, *, prompt_strategy: BasePromptStrategy, sample_text: str, metadata: Dict[str, Any]
-    ) -> str:
-        prompt_input = {
-            "question": sample_text,
-            "text": sample_text,
-            "report": sample_text,
-            "metadata": metadata or {},
-        }
-        prompt = prompt_strategy.build_prompt(prompt_input)
-        system_prompt = self._get_system_prompt(prompt_strategy)
-        return self._apply_system_prompt(prompt, system_prompt)
-
-    @staticmethod
-    def _get_system_prompt(prompt_strategy: BasePromptStrategy) -> Optional[str]:
-        system_prompt = None
-        get_system_message = getattr(prompt_strategy, "get_system_message", None)
-        if callable(get_system_message):
-            system_prompt = get_system_message()
-        if system_prompt is None:
-            get_system_prompt = getattr(prompt_strategy, "get_system_prompt", None)
-            if callable(get_system_prompt):
-                system_prompt = get_system_prompt()
-        if not system_prompt:
-            return None
-        stripped = system_prompt.strip()
-        return stripped if stripped else None
-
-    @staticmethod
-    def _apply_system_prompt(prompt: str, system_prompt: Optional[str]) -> str:
-        if not system_prompt:
-            return prompt
-        return f"{system_prompt}\n\n{prompt}"
-
-    def _compute_effect(
-        self, clean_output: str, corrupted_output: str, patched_output: str
-    ) -> float:
-        """
-        Compute how much patching moved output from corrupted toward clean.
-
-        Returns a value from 0 (no effect) to 1 (full recovery).
-        """
-        # Simple word overlap metric
-        clean_words = set(clean_output.lower().split())
-        corrupted_words = set(corrupted_output.lower().split())
-        patched_words = set(patched_output.lower().split())
-
-        if clean_words == corrupted_words:
-            return 0.0  # No difference to measure
-
-        # How similar is patched to clean vs corrupted?
-        clean_overlap = len(patched_words & clean_words)
-        corrupted_overlap = len(patched_words & corrupted_words)
-
-        total = clean_overlap + corrupted_overlap
-        if total == 0:
-            return 0.0
-
-        # Return fraction toward clean
-        return clean_overlap / total
