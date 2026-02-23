@@ -248,7 +248,7 @@ class TestLogitLensExperiment:
         exp = LogitLensExperiment()
         assert exp.name == "logit_lens"
         assert exp.target_layers is None  # Auto-detected at runtime
-        assert exp.top_k == 5
+        assert exp.top_k == 10
 
     def test_init_custom_layers(self):
         """Test custom target layers."""
