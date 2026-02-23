@@ -1,16 +1,13 @@
-# Activation comparison experiment
+# Activation Compare — collect mean residual-stream vectors for one condition.
+# Compare two or more saved runs offline with scripts/compare_activations.py
 _target_: cotlab.experiments.ActivationCompareExperiment
 
 name: activation_compare
-description: Compare residual stream activations across runs
+description: Collect mean layer activations for representational comparison
 
-num_samples: 20
+layer_stride: 2        # stride 2 → even layers (informative for Gemma3 interleaved attn)
+num_samples: 50
+pooling: last_token    # last_token | mean
+max_input_tokens: 1024
 seed: 42
-pooling: last_token  # last_token or mean
-layers: null         # null = all layers
-comparison_mode: pairwise  # pairwise or baseline
-store_per_layer: true
-log_samples: false
-
-# Optional per-run overrides
-variants: []
+answer_cue: "\n\nAnswer:"
