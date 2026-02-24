@@ -47,24 +47,31 @@ class ActivationPatchingExperiment(BaseExperiment):
     - ``few_shot_contrast``  Any dataset — few-shot (clean) vs zero-shot (corrupt).
     """
 
+    VALID_MODES = ("pairs", "few_shot_contrast", "introspect_contrast")
+
     def __init__(
         self,
         name: str = "activation_patching",
         description: str = "Layer-wise causal activation patching (logit recovery)",
-        patching_mode: str = "pairs",  # "pairs" | "few_shot_contrast"
+        patching_mode: str = "pairs",  # "pairs" | "few_shot_contrast" | "introspect_contrast"
         layer_stride: int = 2,
         num_samples: int = 50,
         max_input_tokens: int = 1024,
         seed: int = 42,
         answer_cue: str = "\n\nAnswer:",
+        introspect_instruction: str = (
+            "Think deeply about this problem. "
+            "Carefully reason through the underlying mechanisms and consider "
+            "all relevant factors before committing to your answer."
+        ),
         # Legacy fields kept so old YAML configs don't break
         variants: Optional[List[Dict[str, Any]]] = None,
         patching: Optional[Dict[str, Any]] = None,
         **kwargs,
     ):
-        if patching_mode not in ("pairs", "few_shot_contrast"):
+        if patching_mode not in self.VALID_MODES:
             raise ValueError(
-                f"patching_mode must be 'pairs' or 'few_shot_contrast', got {patching_mode!r}"
+                f"patching_mode must be one of {self.VALID_MODES}, got {patching_mode!r}"
             )
         self._name = name
         self.description = description
@@ -74,6 +81,7 @@ class ActivationPatchingExperiment(BaseExperiment):
         self.max_input_tokens = max_input_tokens
         self.seed = seed
         self.answer_cue = answer_cue
+        self.introspect_instruction = introspect_instruction
         self.patching = patching or {}
 
     @property
@@ -240,6 +248,24 @@ class ActivationPatchingExperiment(BaseExperiment):
             if orig is not None:
                 prompt_strategy.few_shot = orig
 
+    def _build_prompt_introspect(
+        self, prompt_strategy: Any, text: str, metadata: dict, introspect: bool
+    ) -> str:
+        """Build prompt with introspect instruction appended (clean) or omitted (corrupt).
+
+        clean   (introspect=True)  → standard prompt + introspect_instruction prepended
+        corrupt (introspect=False) → standard prompt only (no instruction)
+
+        few_shot is kept at whatever the prompt strategy has configured so that
+        the only variable between clean and corrupt is the introspect wording.
+        """
+        base = self._build_prompt(prompt_strategy, text, metadata)
+        if introspect:
+            # Prepend the instruction before the main prompt body so it sets
+            # the reasoning intent from the first token.
+            return self.introspect_instruction + "\n\n" + base
+        return base
+
     def run(
         self,
         backend: InferenceBackend,
@@ -281,7 +307,7 @@ class ActivationPatchingExperiment(BaseExperiment):
                     continue
                 clean_str = self._build_prompt(prompt_strategy, sample.text, sample.metadata or {})
                 corr_str = self._build_prompt(prompt_strategy, corrupted_prompt, {})
-            else:  # few_shot_contrast
+            elif self.patching_mode == "few_shot_contrast":
                 # few-shot = clean  (more context → better answer representation)
                 # zero-shot = corrupted
                 clean_str = self._build_prompt_few_shot(
@@ -289,6 +315,15 @@ class ActivationPatchingExperiment(BaseExperiment):
                 )
                 corr_str = self._build_prompt_few_shot(
                     prompt_strategy, sample.text, sample.metadata or {}, few_shot=False
+                )
+            else:  # introspect_contrast
+                # introspect instruction prepended = clean
+                # no instruction = corrupted
+                clean_str = self._build_prompt_introspect(
+                    prompt_strategy, sample.text, sample.metadata or {}, introspect=True
+                )
+                corr_str = self._build_prompt_introspect(
+                    prompt_strategy, sample.text, sample.metadata or {}, introspect=False
                 )
 
             clean_tokens = self._tokenize(tokenizer, clean_str, backend.device)

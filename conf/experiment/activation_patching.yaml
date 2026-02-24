@@ -1,15 +1,17 @@
 # Activation Patching — logit-recovery causal intervention sweep.
 #
-# patching_mode: pairs              → PatchingPairsDataset (built-in clean/corrupt pairs)
-# patching_mode: few_shot_contrast  → any dataset; clean=few-shot, corrupt=zero-shot
+# patching_mode: pairs               → PatchingPairsDataset (built-in clean/corrupt pairs)
+# patching_mode: few_shot_contrast   → any dataset; clean=few-shot, corrupt=zero-shot
+# patching_mode: introspect_contrast → any dataset; clean=introspect instruction prepended, corrupt=no instruction
 _target_: cotlab.experiments.ActivationPatchingExperiment
 
 name: activation_patching
 description: "Layer-wise causal activation patching (logit recovery)"
 
-patching_mode: pairs   # pairs | few_shot_contrast
+patching_mode: pairs   # pairs | few_shot_contrast | introspect_contrast
 layer_stride: 2        # stride 2 → even layers (informative for Gemma3)
 num_samples: 50
 max_input_tokens: 1024
 seed: 42
 answer_cue: "\n\nAnswer:"
+introspect_instruction: "Think deeply about this problem. Carefully reason through the underlying mechanisms and consider all relevant factors before committing to your answer."
