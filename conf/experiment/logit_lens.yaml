@@ -11,6 +11,7 @@ layer_stride: 1       # step when target_layers=null; matches attention_analysis
 # Sampling
 num_samples: 200      # samples per dataset run; override with experiment.num_samples=N
 seed: 42
+batch_size: 1         # samples per forward pass
 
 # Logit lens settings
 top_k: 10             # how many top tokens to track at each layer

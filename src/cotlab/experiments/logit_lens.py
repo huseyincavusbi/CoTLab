@@ -45,6 +45,7 @@ class LogitLensExperiment(BaseExperiment):
         max_input_tokens: int = 1024,
         seed: int = 42,
         answer_cue: str = "\n\nAnswer:",
+        batch_size: int = 1,
         # Legacy single-question field kept for backward compatibility
         question: str = "Patient presents with chest pain, sweating, and shortness of breath. What is the diagnosis?",
         **kwargs,
@@ -59,6 +60,7 @@ class LogitLensExperiment(BaseExperiment):
         self.max_input_tokens = max_input_tokens
         self.seed = seed
         self.answer_cue = answer_cue  # appended to prompt so last token precedes answer letter
+        self.batch_size = max(1, int(batch_size))
         self.question = question  # legacy fallback
 
     @property
@@ -116,6 +118,100 @@ class LogitLensExperiment(BaseExperiment):
             if ids:
                 candidates.add(ids[0])
         return candidates
+
+    def _run_batch(
+        self,
+        backend: InferenceBackend,
+        prompt_strs: List[str],
+        lm_head,
+        tokenizer,
+    ) -> List[tuple]:
+        """
+        Forward-pass a batch of prompts simultaneously.
+
+        Left-pads sequences so that position [-1] is always the last real token
+        for every sample in the batch, regardless of length differences.
+
+        Returns:
+            List of (layer_results, final_token_id) tuples, one per sample.
+        """
+        prompts_with_cue = [p + self.answer_cue for p in prompt_strs]
+        B = len(prompts_with_cue)
+
+        orig_side = tokenizer.padding_side
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        tokens = tokenizer(
+            prompts_with_cue,
+            return_tensors="pt",
+            truncation=True,
+            max_length=self.max_input_tokens,
+            padding=True,
+        ).to(backend.device)
+        tokenizer.padding_side = orig_side
+
+        # Compute position_ids that skip padding so positional embeddings
+        # are identical to the non-padded single-sample case.
+        # For left-padded input: e.g. [PAD, PAD, t0, t1, t2] → positions [0,0,0,1,2]
+        attention_mask = tokens["attention_mask"]
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+        tokens["position_ids"] = position_ids
+
+        # batch_layer_results[layer_idx] = list of B per-sample dicts
+        batch_layer_results: Dict[int, List[Dict]] = {}
+
+        def make_hook(layer_idx: int):
+            def hook(module, inp, output):
+                tensor = output[0] if isinstance(output, tuple) else output
+                # tensor: [B, seq_len, hidden]
+                with torch.no_grad():
+                    last_hidden = tensor[:, -1, :]  # [B, hidden]
+                    logits = lm_head(last_hidden)  # [B, vocab]
+                    probs = torch.softmax(logits, dim=-1)
+                    top_probs, top_ids = torch.topk(probs, self.top_k)  # [B, top_k]
+                results_for_layer = []
+                for b in range(B):
+                    ids_list = top_ids[b].cpu().tolist()
+                    results_for_layer.append(
+                        {
+                            "layer": layer_idx,
+                            "top_ids": ids_list,
+                            "top_probs": top_probs[b].cpu().tolist(),
+                            "top_tokens": [tokenizer.decode([tid]) for tid in ids_list],
+                        }
+                    )
+                batch_layer_results[layer_idx] = results_for_layer
+                return output
+
+            return hook
+
+        handles = []
+        for layer_idx in self.target_layers:
+            if layer_idx < backend.hook_manager.num_layers:
+                mod = backend.hook_manager.get_residual_module(layer_idx)
+                handles.append(mod.register_forward_hook(make_hook(layer_idx)))
+
+        try:
+            with torch.no_grad():
+                final_logits = backend._model(**tokens).logits
+        finally:
+            for h in handles:
+                h.remove()
+
+        # final_logits: [B, seq_len, vocab] — last token is [-1]
+        final_token_ids = torch.argmax(final_logits[:, -1, :], dim=-1).cpu().tolist()
+
+        # Reorganise from layer→batch to batch→layer order
+        per_sample = []
+        for b in range(B):
+            layer_results = [
+                batch_layer_results[layer_idx][b]
+                for layer_idx in sorted(batch_layer_results.keys())
+            ]
+            per_sample.append((layer_results, int(final_token_ids[b])))
+        return per_sample
 
     def _run_single(
         self,
@@ -206,6 +302,7 @@ class LogitLensExperiment(BaseExperiment):
         print(f"Model: {backend.model_name}")
         print(f"Layers ({len(self.target_layers)}): {self.target_layers}")
         print(f"Top-k: {self.top_k}")
+        print(f"Batch size: {self.batch_size}")
 
         # --- Sample selection -------------------------------------------
         if self.num_samples is not None:
@@ -222,51 +319,61 @@ class LogitLensExperiment(BaseExperiment):
         never_emerged = 0
         final_correct = 0
 
-        for sample in tqdm(samples, desc="Logit lens"):
-            # Build prompt
-            prompt_input = {
-                "text": sample.text,
-                "question": sample.text,
-                "report": sample.text,
-                "metadata": sample.metadata or {},
-            }
-            prompt_str = prompt_strategy.build_prompt(prompt_input)
+        # Chunk samples into batches
+        batches = [
+            samples[i : i + self.batch_size] for i in range(0, len(samples), self.batch_size)
+        ]
 
-            # Correct answer token id(s)
-            correct_ids = self._correct_token_ids(tokenizer, sample.label)
+        for batch in tqdm(batches, desc="Logit lens"):
+            # Build prompts for the whole batch
+            prompt_strs = []
+            for sample in batch:
+                prompt_input = {
+                    "text": sample.text,
+                    "question": sample.text,
+                    "report": sample.text,
+                    "metadata": sample.metadata or {},
+                }
+                prompt_strs.append(prompt_strategy.build_prompt(prompt_input))
 
             try:
-                layer_results, final_token_id = self._run_single(
-                    backend, prompt_str, lm_head, tokenizer
-                )
+                if self.batch_size == 1:
+                    # Use original single-sample path (no padding overhead)
+                    layer_results, final_token_id = self._run_single(
+                        backend, prompt_strs[0], lm_head, tokenizer
+                    )
+                    batch_outputs = [(layer_results, final_token_id)]
+                else:
+                    batch_outputs = self._run_batch(backend, prompt_strs, lm_head, tokenizer)
             except Exception as e:
-                tqdm.write(f"  [skip] sample {sample.idx}: {type(e).__name__}: {e}")
-                # Free any GPU memory left by the failed forward pass
+                tqdm.write(f"  [skip] batch starting at {batch[0].idx}: {type(e).__name__}: {e}")
                 torch.cuda.empty_cache()
-                n -= 1  # don't count this sample in the denominator
+                n -= len(batch)
                 continue
 
-            if correct_ids and final_token_id in correct_ids:
-                final_correct += 1
+            for sample, (layer_results, final_token_id) in zip(batch, batch_outputs):
+                correct_ids = self._correct_token_ids(tokenizer, sample.label)
 
-            # Track per-layer hit rates and emergence
-            emerged = False
-            for lr in layer_results:
-                lid = lr["layer"]
-                top_ids_list = lr["top_ids"]
-                in_top1 = bool(correct_ids) and (top_ids_list[0] in correct_ids)
-                in_topk = bool(correct_ids) and bool(correct_ids & set(top_ids_list))
-                layer_top1[lid].append(in_top1)
-                layer_topk[lid].append(in_topk)
-                if in_topk and not emerged:
-                    emergence_layers.append(lid)
-                    emerged = True
+                if correct_ids and final_token_id in correct_ids:
+                    final_correct += 1
 
-            if not emerged:
-                emergence_layers.append(None)
-                never_emerged += 1
+                # Track per-layer hit rates and emergence
+                emerged = False
+                for lr in layer_results:
+                    lid = lr["layer"]
+                    top_ids_list = lr["top_ids"]
+                    in_top1 = bool(correct_ids) and (top_ids_list[0] in correct_ids)
+                    in_topk = bool(correct_ids) and bool(correct_ids & set(top_ids_list))
+                    layer_top1[lid].append(in_top1)
+                    layer_topk[lid].append(in_topk)
+                    if in_topk and not emerged:
+                        emergence_layers.append(lid)
+                        emerged = True
 
-            # Proactively free memory between samples
+                if not emerged:
+                    emergence_layers.append(None)
+                    never_emerged += 1
+
             torch.cuda.empty_cache()
 
         # --- Aggregate --------------------------------------------------
