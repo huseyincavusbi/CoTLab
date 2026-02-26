@@ -1368,6 +1368,7 @@ class PLABDataset(BaseDataset):
 
     def get_compatible_prompts(self) -> list[str]:
         return [
+            "plab",
             "mcq",
             "direct_answer",
             "chain_of_thought",
