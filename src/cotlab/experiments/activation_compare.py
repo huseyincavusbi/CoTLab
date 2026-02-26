@@ -44,6 +44,7 @@ class ActivationCompareExperiment(BaseExperiment):
         max_input_tokens: int = 1024,
         seed: int = 42,
         answer_cue: str = "\n\nAnswer:",  # appended so last position mirrors logit_lens
+        batch_size: int = 1,
         # Legacy fields kept so old YAML configs don't break
         layers: Optional[List[int]] = None,
         variants: Optional[List[Dict[str, Any]]] = None,
@@ -60,6 +61,7 @@ class ActivationCompareExperiment(BaseExperiment):
         self.max_input_tokens = max_input_tokens
         self.seed = seed
         self.answer_cue = answer_cue
+        self.batch_size = max(1, int(batch_size))
         # Legacy fields silently ignored — kept for backward compat
         self._layers_legacy = layers
         self._variants_legacy = variants
@@ -85,6 +87,15 @@ class ActivationCompareExperiment(BaseExperiment):
         else:
             raise ValueError(f"Unknown pooling: {self.pooling}")
 
+    def _pool_batch(self, tensor: torch.Tensor) -> torch.Tensor:
+        """tensor: [B, seq_len, hidden_size] → [B, hidden_size]"""
+        if self.pooling == "last_token":
+            return tensor[:, -1, :]  # left-padded: last position = last real token
+        elif self.pooling == "mean":
+            return tensor.mean(dim=1)
+        else:
+            raise ValueError(f"Unknown pooling: {self.pooling}")
+
     # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
@@ -105,6 +116,7 @@ class ActivationCompareExperiment(BaseExperiment):
         print(f"Model : {backend.model_name}")
         print(f"Layers ({len(target_layers)}): {target_layers}")
         print(f"Pooling: {self.pooling}")
+        print(f"Batch size: {self.batch_size}")
 
         if self.num_samples is None:
             samples = list(dataset)
@@ -119,31 +131,68 @@ class ActivationCompareExperiment(BaseExperiment):
         layer_counts: Dict[int, int] = {}
         processed = 0
 
-        for sample in tqdm(samples, desc="Activation collect"):
-            prompt_input = {
-                "text": sample.text,
-                "question": sample.text,
-                "report": sample.text,
-                "metadata": sample.metadata or {},
-            }
-            prompt_str = prompt_strategy.build_prompt(prompt_input) + self.answer_cue
+        # Chunk into batches
+        batches = [
+            samples[i : i + self.batch_size] for i in range(0, len(samples), self.batch_size)
+        ]
 
-            tokens = tokenizer(
-                prompt_str,
-                return_tensors="pt",
-                truncation=True,
-                max_length=self.max_input_tokens,
-            ).to(backend.device)
+        for batch in tqdm(batches, desc="Activation collect"):
+            prompt_strs = []
+            for sample in batch:
+                prompt_input = {
+                    "text": sample.text,
+                    "question": sample.text,
+                    "report": sample.text,
+                    "metadata": sample.metadata or {},
+                }
+                prompt_strs.append(prompt_strategy.build_prompt(prompt_input) + self.answer_cue)
 
-            # Capture hidden state in each hook; move to CPU immediately
-            layer_vecs: Dict[int, torch.Tensor] = {}
+            B = len(prompt_strs)
+
+            if B == 1:
+                # Single-sample path — no padding overhead
+                tokens = tokenizer(
+                    prompt_strs[0],
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=self.max_input_tokens,
+                ).to(backend.device)
+            else:
+                # Batched path — left-pad so position [-1] = last real token
+                orig_side = tokenizer.padding_side
+                tokenizer.padding_side = "left"
+                if tokenizer.pad_token_id is None:
+                    tokenizer.pad_token_id = tokenizer.eos_token_id
+                tokens = tokenizer(
+                    prompt_strs,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=self.max_input_tokens,
+                    padding=True,
+                ).to(backend.device)
+                tokenizer.padding_side = orig_side
+
+                # Compute position_ids that skip padding so positional embeddings
+                # are identical to the non-padded single-sample case.
+                # For left-padded input: e.g. [PAD, PAD, t0, t1, t2] → positions [0,0,0,1,2]
+                attention_mask = tokens["attention_mask"]
+                position_ids = attention_mask.long().cumsum(-1) - 1
+                position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+                tokens["position_ids"] = position_ids
+
+            # Capture hidden states in hooks; move to CPU immediately
+            layer_vecs: Dict[int, torch.Tensor] = {}  # layer_idx -> [B, hidden] CPU float32
 
             def make_hook(layer_idx: int):
                 def hook(module, inp, output):
                     tensor = output[0] if isinstance(output, tuple) else output
-                    # tensor: [batch, seq_len, hidden]
                     with torch.no_grad():
-                        vec = self._pool(tensor[0]).cpu().float()
+                        if B == 1:
+                            # tensor: [1, seq_len, hidden]
+                            vec = self._pool(tensor[0]).unsqueeze(0).cpu().float()  # [1, hidden]
+                        else:
+                            # tensor: [B, seq_len, hidden]
+                            vec = self._pool_batch(tensor).cpu().float()  # [B, hidden]
                     layer_vecs[layer_idx] = vec
                     return output
 
@@ -159,7 +208,7 @@ class ActivationCompareExperiment(BaseExperiment):
                 with torch.no_grad():
                     backend._model(**tokens)
             except Exception as e:
-                tqdm.write(f"  [skip] sample {sample.idx}: {type(e).__name__}: {e}")
+                tqdm.write(f"  [skip] batch starting at {batch[0].idx}: {type(e).__name__}: {e}")
                 torch.cuda.empty_cache()
                 for h in handles:
                     h.remove()
@@ -168,18 +217,21 @@ class ActivationCompareExperiment(BaseExperiment):
                 for h in handles:
                     h.remove()
 
-            for layer_idx, vec in layer_vecs.items():
-                if layer_idx not in layer_sums:
-                    layer_sums[layer_idx] = torch.zeros_like(vec)
-                    layer_sq_sums[layer_idx] = torch.zeros_like(vec)
-                    layer_counts[layer_idx] = 0
-                layer_sums[layer_idx] += vec
-                layer_sq_sums[layer_idx] += vec**2
-                layer_counts[layer_idx] += 1
+            # Accumulate — iterate over each sample in the batch
+            for layer_idx, vecs in layer_vecs.items():  # vecs: [B, hidden]
+                for b in range(B):
+                    vec = vecs[b]  # [hidden]
+                    if layer_idx not in layer_sums:
+                        layer_sums[layer_idx] = torch.zeros_like(vec)
+                        layer_sq_sums[layer_idx] = torch.zeros_like(vec)
+                        layer_counts[layer_idx] = 0
+                    layer_sums[layer_idx] += vec
+                    layer_sq_sums[layer_idx] += vec**2
+                    layer_counts[layer_idx] += 1
 
             del layer_vecs
             torch.cuda.empty_cache()
-            processed += 1
+            processed += B
 
         # --- Compute statistics -----------------------------------------
         mean_activations: Dict[int, List[float]] = {}

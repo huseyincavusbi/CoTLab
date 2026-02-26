@@ -11,3 +11,4 @@ pooling: last_token    # last_token | mean
 max_input_tokens: 1024
 seed: 42
 answer_cue: "\n\nAnswer:"
+batch_size: 1          # samples per forward pass
