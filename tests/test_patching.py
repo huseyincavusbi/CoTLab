@@ -421,3 +421,115 @@ class TestActivationPatcherHeadInfo:
         num_heads, head_dim = patcher._get_head_info()
         assert num_heads == 4
         assert head_dim == 4
+
+
+class TestTokenGroupContrast:
+    """Tests for _tag_tokens() and token_group_contrast config in ActivationPatchingExperiment."""
+
+    @pytest.fixture
+    def exp(self):
+        """Minimal ActivationPatchingExperiment in token_group_contrast mode."""
+        from cotlab.experiments.activation_patching import ActivationPatchingExperiment
+
+        return ActivationPatchingExperiment(
+            patching_mode="token_group_contrast",
+            token_group_contrast_layer=3,
+        )
+
+    class MockTokenizer:
+        """Minimal tokenizer stub: maps each integer token id to a string via a vocab."""
+
+        def __init__(self, vocab: dict):
+            # vocab: {token_id: string}
+            self._vocab = vocab
+
+        def decode(self, ids):
+            return "".join(self._vocab.get(i, "?") for i in ids)
+
+    def _make_input_ids(self, strings: list, vocab_inv: dict) -> torch.Tensor:
+        """Build an input_ids tensor from a list of token strings using inverted vocab."""
+        ids = [vocab_inv[s] for s in strings]
+        return torch.tensor(ids, dtype=torch.long)
+
+    def test_tag_tokens_three_groups_exhaustive(self, exp):
+        """Every token must fall into exactly one group; groups cover all positions."""
+        # Build a mini vocab covering a typical MCQ structure.
+        vocab = {
+            0: "A",  # question token
+            1: " patient",
+            2: " has",
+            3: " fever",
+            4: ".",
+            5: "\n",  # delimiter
+            6: "Options",  # delimiter
+            7: ":",  # delimiter
+            8: "A.",  # delimiter (answer label)
+            9: " Malaria",  # choice text
+            10: "\n",  # delimiter
+            11: "B.",  # delimiter
+            12: " Typhoid",  # choice text
+        }
+
+        tokenizer = self.MockTokenizer(vocab)
+        # Sequence: ["A", " patient", " has", " fever", ".", "\n", "Options", ":", "A.", " Malaria", "\n", "B.", " Typhoid"]
+        tokens_raw = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        input_ids = torch.tensor(tokens_raw, dtype=torch.long)
+
+        groups = exp._tag_tokens(input_ids, tokenizer, {})
+
+        all_positions = sorted(
+            groups.get("delimiter", []) + groups.get("choice", []) + groups.get("content", [])
+        )
+        # Every position must appear exactly once across the 3 primary groups.
+        assert all_positions == list(range(len(tokens_raw))), (
+            f"Positions not fully covered: got {all_positions}"
+        )
+
+    def test_tag_tokens_delimiter_detection(self, exp):
+        """\\n and 'Options' are classified as delimiters."""
+        vocab = {0: "\n", 1: "Options", 2: " chest", 3: " pain"}
+        tokenizer = self.MockTokenizer(vocab)
+        input_ids = torch.tensor([0, 1, 2, 3], dtype=torch.long)
+
+        groups = exp._tag_tokens(input_ids, tokenizer, {})
+
+        assert 0 in groups["delimiter"], "\\n should be a delimiter"
+        assert 1 in groups["delimiter"], "'Options' should be a delimiter"
+        # Non-delimiter tokens must exist in either content OR choice.
+        non_delimiters = groups.get("content", []) + groups.get("choice", [])
+        assert len(non_delimiters) > 0, "Expected some non-delimiter tokens (content or choice)"
+
+    def test_tag_tokens_medqa_entity_split(self, exp):
+        """When metamap_phrases is present, content tokens split into entity and stem."""
+        # Vocab: simple words
+        vocab = {0: "Patient", 1: " has", 2: " STEMI", 3: " and", 4: " fever"}
+
+        tokenizer = self.MockTokenizer(vocab)
+        input_ids = torch.tensor([0, 1, 2, 3, 4], dtype=torch.long)
+
+        metadata = {"metamap_phrases": ["STEMI"]}
+        groups = exp._tag_tokens(input_ids, tokenizer, metadata)
+
+        # After entity split, no plain "content" group — only entity + stem.
+        assert "entity" in groups, "entity group missing after metamap split"
+        assert "stem" in groups, "stem group missing after metamap split"
+        assert len(groups["content"]) == 0, "content should be empty after entity split"
+
+    def test_init_token_group_contrast_mode(self, exp):
+        """token_group_contrast is a valid mode and params are stored correctly."""
+        assert exp.patching_mode == "token_group_contrast"
+        assert exp.token_group_contrast_layer == 3
+        assert exp.token_group_mode == "all"
+
+    def test_invalid_mode_raises(self):
+        """Passing an unknown patching_mode raises ValueError."""
+        from cotlab.experiments.activation_patching import ActivationPatchingExperiment
+
+        with pytest.raises(ValueError, match="patching_mode must be one of"):
+            ActivationPatchingExperiment(patching_mode="invalid_mode")
+
+    def test_token_group_contrast_in_valid_modes(self):
+        """token_group_contrast appears in VALID_MODES."""
+        from cotlab.experiments.activation_patching import ActivationPatchingExperiment
+
+        assert "token_group_contrast" in ActivationPatchingExperiment.VALID_MODES
