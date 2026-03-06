@@ -1,7 +1,0 @@
-# MedGemma 4B PT (pretrained)
-name: google/medgemma-4b-pt
-variant: 4b
-max_new_tokens: 512
-temperature: 0.7
-top_p: 0.9
-safe_name: medgemma_4b_pt
