@@ -1,0 +1,22 @@
+# Token-Group Attention Contrast — Q1 (which token types does a layer causally attend to?)
+#
+# Hooks the attention weight matrix at `token_group_contrast_layer` and zeroes
+# one token group at a time (delimiter / choice / content), measuring how much
+# the answer logit shifts.
+#
+# To test a different layer, override:
+#   experiment.token_group_contrast_layer=24
+_target_: cotlab.experiments.ActivationPatchingExperiment
+
+name: token_group_contrast
+description: "Token-group attention masking at a target layer"
+
+patching_mode: token_group_contrast
+token_group_contrast_layer: 3
+token_group_mode: all
+
+layer_stride: 1
+num_samples: 50
+max_input_tokens: 1024
+seed: 42
+answer_cue: "\n\nAnswer:"
