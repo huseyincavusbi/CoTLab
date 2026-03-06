@@ -1,7 +1,7 @@
 """Activation Patching experiment — causal intervention via residual-stream replacement.
 
-Two patching modes
-------------------
+Patching modes
+--------------
 ``pairs``  (default — requires PatchingPairsDataset)
     clean   = sample.text
     corrupt = sample.metadata["corrupted_prompt"]
@@ -11,9 +11,20 @@ Two patching modes
     clean   = few-shot prompt of the sample  (prompt_strategy with few_shot=True)
     corrupt = zero-shot prompt of the sample (prompt_strategy with few_shot=False)
     Answers Q: which layers causally drive few-shot's benefit on OOD / non-OOD?
-    Use this mode for afrimedqa, medmcqa, cardiology, etc.
 
-Algorithm (logit-recovery metric, one sample):
+``introspect_contrast``  (works with ANY dataset)
+    clean   = prompt + introspect instruction
+    corrupt = prompt only
+    Answers Q: which layers carry the "think deeply" reasoning signal?
+
+``token_group_contrast``  (works with ANY dataset)
+    Hooks the attention weight matrix at a single target layer and zeros out
+    one token group at a time (delimiter / choice / content).  Measures how
+    much each group's removal shifts the answer logit.
+    Answers Q: which token positions does <target_mask_layer> attend to causally?
+    (Q1: run at layer 3 — the universal attention bottleneck)
+
+Algorithm (logit-recovery metric, one sample, residual patching modes):
   1. Forward clean → cache per-layer residuals (CPU).
   2. Forward corrupt → baseline logit at last token.
   3. For each layer L (strided):
@@ -22,10 +33,18 @@ Algorithm (logit-recovery metric, one sample):
                   / (logit_clean[clean_tok]  - logit_corrupt[clean_tok] + ε)
        1 = full recovery, 0 = no effect, negative = made things worse.
 
+Algorithm (token_group_contrast):
+  1. Single forward pass with no masking → logit_base.
+  2. For each group G in {delimiter, choice, content}:
+       Forward with attention weights at target_mask_layer zeroed for group G.
+       importance(G) = |logit_base - logit_masked|
+  3. dominant_group = argmax importance.
+
 Memory safety: activations moved to CPU immediately inside each hook.
 """
 
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Set
 
 import torch
 from tqdm import tqdm
@@ -47,7 +66,41 @@ class ActivationPatchingExperiment(BaseExperiment):
     - ``few_shot_contrast``  Any dataset — few-shot (clean) vs zero-shot (corrupt).
     """
 
-    VALID_MODES = ("pairs", "few_shot_contrast", "introspect_contrast")
+    VALID_MODES = ("pairs", "few_shot_contrast", "introspect_contrast", "token_group_contrast")
+
+    # Tokens that are purely structural / formatting — not medical content.
+    _DELIMITER_STRINGS: Set[str] = {
+        "\n",
+        ":",
+        "#",
+        "##",
+        "###",
+        "Options",
+        "Options:",
+        "Answer",
+        "Answer:",
+        "A.",
+        "B.",
+        "C.",
+        "D.",
+        "E.",
+        "F.",
+        "G.",
+        "(A)",
+        "(B)",
+        "(C)",
+        "(D)",
+        "(E)",
+        "(F)",
+        "(G)",
+        "A)",
+        "B)",
+        "C)",
+        "D)",
+        "E)",
+        "F)",
+        "G)",
+    }
 
     def __init__(
         self,
@@ -67,6 +120,9 @@ class ActivationPatchingExperiment(BaseExperiment):
         # Legacy fields kept so old YAML configs don't break
         variants: Optional[List[Dict[str, Any]]] = None,
         patching: Optional[Dict[str, Any]] = None,
+        # Token-group contrast params
+        token_group_contrast_layer: int = 3,
+        token_group_mode: str = "all",  # "all" | "delimiter" | "choice" | "content"
         **kwargs,
     ):
         if patching_mode not in self.VALID_MODES:
@@ -83,6 +139,8 @@ class ActivationPatchingExperiment(BaseExperiment):
         self.answer_cue = answer_cue
         self.introspect_instruction = introspect_instruction
         self.patching = patching or {}
+        self.token_group_contrast_layer = int(token_group_contrast_layer)
+        self.token_group_mode = token_group_mode
 
     @property
     def name(self) -> str:
@@ -219,6 +277,371 @@ class ActivationPatchingExperiment(BaseExperiment):
         return out.logits[0, -1].detach().float().cpu()
 
     # ------------------------------------------------------------------
+    # Token-group tagger and attention masking helpers
+    # ------------------------------------------------------------------
+
+    def _tag_tokens(
+        self,
+        input_ids: torch.Tensor,  # shape (seq_len,)
+        tokenizer,
+        metadata: dict,
+    ) -> Dict[str, List[int]]:
+        """Classify every token position into one of 3 groups.
+
+        Groups
+        ------
+        delimiter : structural tokens (\\n, A., Options:, …)
+        choice    : answer-option text (the words after A. / B. / …)
+        content   : question stem + clinical entities
+
+        For MedQA samples that carry ``metamap_phrases`` in metadata the
+        content group is further split into ``entity`` and ``stem``.
+
+        Returns
+        -------
+        dict mapping group name -> sorted list of 0-based token positions.
+        """
+        seq_len = input_ids.shape[0]
+        labels = ["content"] * seq_len  # default everything to content
+
+        # ── Pass 1: mark delimiter tokens ─────────────────────────────
+        for i in range(seq_len):
+            tok_raw = tokenizer.decode([input_ids[i].item()])
+            tok_str = tok_raw.strip()
+            # Match against stripped form OR raw form (catches \n, spaces, etc.)
+            if tok_str in self._DELIMITER_STRINGS or tok_raw in self._DELIMITER_STRINGS:
+                labels[i] = "delimiter"
+
+        # ── Pass 2: mark answer-choice span ───────────────────────────
+        # Options boundary detection: scan the full decoded text for the
+        # first occurrence of a newline followed by an answer label pattern.
+        # This handles tokenizers that split 'A)' into ['A', ')'] etc.
+        ANSWER_LABEL_RE = re.compile(r"\n(?:Options\s*:?|(?:[A-G][.)\s]|\([A-G]\)))", re.IGNORECASE)
+        options_start: Optional[int] = None
+
+        # Build cumulative char offsets per token (same approach as entity split).
+        cum_chars_pass2: list = []
+        offset_p2 = 0
+        for tid in input_ids.tolist():
+            decoded = tokenizer.decode([tid])
+            cum_chars_pass2.append(offset_p2)
+            offset_p2 += len(decoded)
+
+        full_text_p2 = tokenizer.decode(input_ids.tolist())
+        match = ANSWER_LABEL_RE.search(full_text_p2)
+        if match:
+            boundary_char = match.start()  # char index of the '\n'
+            # Find first token that starts at or after boundary_char.
+            for i, tok_char_start in enumerate(cum_chars_pass2):
+                if tok_char_start >= boundary_char:
+                    options_start = i
+                    break
+
+        if options_start is not None:
+            for i in range(options_start, seq_len):
+                if labels[i] != "delimiter":
+                    labels[i] = "choice"
+
+        # ── Pass 3 (MedQA only): entity vs stem split ──────────────────
+        metamap = metadata.get("metamap_phrases") if metadata else None
+        if metamap:
+            # metamap_phrases is a list of entity strings in their raw form.
+            # We decode a window of tokens and look for substring matches.
+            full_text = tokenizer.decode(input_ids.tolist())
+            entity_spans: List[tuple] = []  # (char_start, char_end)
+            for phrase in metamap:
+                phrase_str = str(phrase).strip()
+                if not phrase_str:
+                    continue
+                for m in re.finditer(re.escape(phrase_str), full_text, re.IGNORECASE):
+                    entity_spans.append((m.start(), m.end()))
+
+            # Map character spans back to token positions (approximate).
+            if entity_spans:
+                # Build cumulative char lengths per token.
+                cum_chars = []
+                offset = 0
+                for tid in input_ids.tolist():
+                    decoded = tokenizer.decode([tid])
+                    cum_chars.append((offset, offset + len(decoded)))
+                    offset += len(decoded)
+
+                for i, (tok_start, tok_end) in enumerate(cum_chars):
+                    if labels[i] != "content":
+                        continue
+                    for es, ee in entity_spans:
+                        if tok_start < ee and tok_end > es:  # overlap
+                            labels[i] = "entity"
+                            break
+                # Remaining "content" tokens become "stem".
+                labels = ["stem" if label == "content" else label for label in labels]
+
+        # ── Collect positions per group ────────────────────────────────
+        groups: Dict[str, List[int]] = {}
+        for i, lbl in enumerate(labels):
+            groups.setdefault(lbl, []).append(i)
+
+        # Always expose the 3 primary groups (even if empty).
+        for g in ("delimiter", "choice", "content", "stem", "entity"):
+            groups.setdefault(g, [])
+
+        return groups
+
+    def _forward_attention_masked(
+        self,
+        backend: InferenceBackend,
+        tokens,
+        mask_layer: int,
+        zero_positions: List[int],
+        answer_tok_id: int,
+    ) -> float:
+        """Forward pass suppressing ``zero_positions`` at ``mask_layer``'s attention.
+
+        Strategy: register a pre-forward hook on the target layer's ``self_attn``
+        module.  Inside the hook we add a large negative value (-1e4) to the
+        attention_mask at the key-columns we want to suppress.  The additive causal
+        mask is applied inside both ``eager`` and ``sdpa`` kernels before softmax, so
+        the suppressed positions get ~zero weight after softmax, with no
+        ``output_attentions`` flag required.
+
+        Returns the logit (float32, CPU) for ``answer_tok_id`` at the last token.
+        """
+        if not zero_positions:
+            with torch.no_grad():
+                out = backend._model(**tokens)
+            return float(out.logits[0, -1, answer_tok_id].detach().cpu().item())
+
+        seq_len = tokens["input_ids"].shape[-1]
+        device = tokens["input_ids"].device
+        # Build a (1, 1, seq_len, seq_len) additive bias tensor.
+        # -1e4 at every key-column in zero_positions, 0.0 elsewhere.
+        bias = torch.zeros(1, 1, seq_len, seq_len, dtype=torch.float32, device=device)
+        valid_pos = [p for p in zero_positions if p < seq_len]
+        if valid_pos:
+            bias[:, :, :, valid_pos] = -1e4
+
+        def _pre_hook(module, args, kwargs):
+            # Gemma self_attn receives attention_mask as a keyword argument.
+            if "attention_mask" in kwargs and kwargs["attention_mask"] is not None:
+                existing = kwargs["attention_mask"]
+                # Cast bias to match the existing mask dtype and device.
+                kwargs["attention_mask"] = existing + bias.to(
+                    dtype=existing.dtype, device=existing.device
+                )
+            else:
+                kwargs["attention_mask"] = bias.to(device)
+            return args, kwargs
+
+        layer_mod = backend.hook_manager.get_layer_module(mask_layer)
+        attn_mod = getattr(layer_mod, "self_attn", None)
+        if attn_mod is None:
+            tqdm.write(
+                f"  [warn] token_group_contrast: no self_attn on layer {mask_layer}, skipping mask"
+            )
+            with torch.no_grad():
+                out = backend._model(**tokens)
+            return float(out.logits[0, -1, answer_tok_id].detach().cpu().item())
+
+        handle = attn_mod.register_forward_pre_hook(_pre_hook, with_kwargs=True)
+        try:
+            with torch.no_grad():
+                out = backend._model(**tokens)
+        finally:
+            handle.remove()
+
+        return float(out.logits[0, -1, answer_tok_id].detach().float().cpu().item())
+
+    # ------------------------------------------------------------------
+    # Token-group contrast: sample loop
+    # ------------------------------------------------------------------
+
+    def _run_token_group_contrast(
+        self,
+        backend: InferenceBackend,
+        dataset: BaseDataset,
+        prompt_strategy: Any,
+        logger: Optional["ExperimentLogger"] = None,
+    ) -> "ExperimentResult":
+        """Token-group attention masking loop.
+
+        For each sample:
+          1. Build a single prompt (standard, no clean/corrupt split).
+          2. Tokenize and tag token positions into groups.
+          3. Run baseline forward (no masking) → logit_base + is_correct.
+          4. For each group, run _forward_attention_masked → logit_masked.
+          5. importance(group) = |logit_base - logit_masked|.
+          6. dominant_group = argmax importance.
+        """
+        tokenizer = backend._tokenizer
+        mask_layer = self.token_group_contrast_layer
+
+        print(f"Model        : {backend.model_name}")
+        print("Patching mode: token_group_contrast")
+        print(f"Mask layer   : L{mask_layer}")
+        print(f"max_input_tokens: {self.max_input_tokens}")
+
+        samples = dataset.sample(self.num_samples, seed=self.seed)
+        n = len(samples)
+        print(f"Samples: {n}  (each requires 4 forward passes)\n")
+
+        # Primary groups to probe (entity/stem only appear for MedQA).
+        PRIMARY_GROUPS = ("delimiter", "choice", "content")
+
+        per_sample_results: List[Dict] = []
+        # Accumulator: group → list of importance scores across samples.
+        group_importances: Dict[str, List[float]] = {g: [] for g in PRIMARY_GROUPS}
+        # Per-group: track whether dominant_group == group AND sample correct.
+        accuracy_by_dominant: Dict[str, List[bool]] = {g: [] for g in PRIMARY_GROUPS}
+        processed = 0
+
+        for sample in tqdm(samples, desc="Token-group contrast"):
+            answer_tok_id = self._answer_token_id(tokenizer, sample.label)
+            if answer_tok_id is None:
+                tqdm.write(f"  [skip] sample {sample.idx}: cannot resolve answer token")
+                continue
+
+            prompt_str = self._build_prompt(prompt_strategy, sample.text, sample.metadata or {})
+            tokens = self._tokenize(tokenizer, prompt_str, backend.device)
+            input_ids = tokens["input_ids"][0]  # (seq_len,)
+
+            # Tag tokens into groups.
+            try:
+                groups = self._tag_tokens(input_ids, tokenizer, sample.metadata or {})
+            except Exception as exc:
+                tqdm.write(f"  [skip] sample {sample.idx} (tagging): {exc}")
+                continue
+
+            # Baseline forward (no masking) — also derive is_correct in one pass.
+            try:
+                with torch.no_grad():
+                    out_base = backend._model(**tokens)
+                last_logits = out_base.logits[0, -1].detach().float().cpu()
+                logit_base = float(last_logits[answer_tok_id].item())
+                predicted_tok = int(last_logits.argmax().item())
+                is_correct = predicted_tok == answer_tok_id
+                del out_base, last_logits
+            except Exception as exc:
+                tqdm.write(f"  [skip] sample {sample.idx} (baseline): {exc}")
+                torch.cuda.empty_cache()
+                continue
+
+            # Masked forward passes per group.
+            sample_importances: Dict[str, float] = {}
+            for group in PRIMARY_GROUPS:
+                zero_pos = groups.get(group, [])
+                try:
+                    logit_masked = self._forward_attention_masked(
+                        backend, tokens, mask_layer, zero_pos, answer_tok_id
+                    )
+                    importance = abs(logit_base - logit_masked)
+                except Exception as exc:
+                    tqdm.write(f"  [skip] sample {sample.idx} group '{group}': {exc}")
+                    importance = 0.0
+                finally:
+                    torch.cuda.empty_cache()
+
+                sample_importances[group] = round(importance, 4)
+                group_importances[group].append(importance)
+
+            # Dominant group for this sample.
+            dominant = max(sample_importances, key=lambda g: sample_importances[g])
+            if is_correct is not None:
+                accuracy_by_dominant[dominant].append(is_correct)
+
+            # MedQA entity/stem breakdown (bonus — logged but not aggregated).
+            entity_importance: Optional[float] = None
+            stem_importance: Optional[float] = None
+            if groups.get("entity"):
+                try:
+                    lm_e = self._forward_attention_masked(
+                        backend, tokens, mask_layer, groups["entity"], answer_tok_id
+                    )
+                    entity_importance = round(abs(logit_base - lm_e), 4)
+                except Exception:
+                    pass
+                finally:
+                    torch.cuda.empty_cache()
+            if groups.get("stem"):
+                try:
+                    lm_s = self._forward_attention_masked(
+                        backend, tokens, mask_layer, groups["stem"], answer_tok_id
+                    )
+                    stem_importance = round(abs(logit_base - lm_s), 4)
+                except Exception:
+                    pass
+                finally:
+                    torch.cuda.empty_cache()
+
+            per_sample_results.append(
+                {
+                    "sample_idx": sample.idx,
+                    "is_correct": is_correct,
+                    "logit_base": round(logit_base, 4),
+                    "dominant_group": dominant,
+                    "group_importances": sample_importances,
+                    "token_counts": {g: len(groups.get(g, [])) for g in PRIMARY_GROUPS},
+                    "entity_importance": entity_importance,
+                    "stem_importance": stem_importance,
+                }
+            )
+            processed += 1
+
+        # ── Aggregate ─────────────────────────────────────────────────
+        mean_importance: Dict[str, float] = {
+            g: round(sum(v) / len(v), 4) if v else 0.0 for g, v in group_importances.items()
+        }
+        dominant_group_overall = max(mean_importance, key=lambda g: mean_importance[g])
+
+        acc_by_dom: Dict[str, Optional[float]] = {}
+        for g, hits in accuracy_by_dominant.items():
+            acc_by_dom[g] = round(sum(hits) / len(hits), 4) if hits else None
+
+        # ── Print summary ──────────────────────────────────────────────
+        print("\n" + "=" * 62)
+        print(f"TOKEN GROUP CONTRAST — L{mask_layer} attention masking")
+        print("=" * 62)
+        print(f"Processed samples   : {processed} / {n}")
+        print(f"Dominant group (avg): {dominant_group_overall}")
+        print()
+        print(f"{'Group':<12}  {'Mean Importance':>16}  {'Acc when dominant':>18}")
+        print("-" * 52)
+        for g in PRIMARY_GROUPS:
+            acc_str = f"{acc_by_dom[g]:.4f}" if acc_by_dom[g] is not None else "  n/a "
+            print(f"{g:<12}  {mean_importance[g]:>16.4f}  {acc_str:>18}")
+        print("=" * 62)
+        print()
+        print("Interpretation:")
+        print(
+            "  Higher importance = removing this group from L",
+            mask_layer,
+            "attention shifts the answer more.",
+        )
+        print("  The dominant group is what the layer causally relies on most.")
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy=(
+                prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom"
+            ),
+            metrics={
+                "num_samples": processed,
+                "mask_layer": mask_layer,
+                "mean_importance_per_group": mean_importance,
+                "dominant_group": dominant_group_overall,
+                "accuracy_when_dominant": acc_by_dom,
+            },
+            raw_outputs={"per_sample": per_sample_results},
+            metadata={
+                "mask_layer": mask_layer,
+                "token_group_mode": self.token_group_mode,
+                "num_samples": processed,
+                "seed": self.seed,
+                "answer_cue": self.answer_cue,
+            },
+        )
+
+    # ------------------------------------------------------------------
     # Main entry point
     # ------------------------------------------------------------------
 
@@ -274,10 +697,21 @@ class ActivationPatchingExperiment(BaseExperiment):
         logger: Optional[ExperimentLogger] = None,
         **kwargs,
     ) -> ExperimentResult:
-        """Run layer-sweep activation patching over paired (clean, corrupted) samples."""
+        """Run activation patching experiment.
 
-        target_layers = self._resolve_layers(backend)
+        Dispatches to the token_group_contrast branch when
+        ``patching_mode == 'token_group_contrast'``, otherwise runs the
+        standard layer-sweep residual patching.
+        """
+
         tokenizer = backend._tokenizer
+
+        # ── Dispatch to token_group_contrast mode ─────────────────────
+        if self.patching_mode == "token_group_contrast":
+            return self._run_token_group_contrast(backend, dataset, prompt_strategy, logger)
+
+        # ── Standard residual patching modes ──────────────────────────
+        target_layers = self._resolve_layers(backend)
 
         print(f"Model        : {backend.model_name}")
         print(f"Patching mode: {self.patching_mode}")
