@@ -208,13 +208,15 @@ jobs:
               CoTHeadsExperiment,
               LogitLensExperiment,
               MultiHeadCoTExperiment,
+              ResidualNormOODExperiment,
+              CompositeShiftDetectorExperiment,
           )
           from cotlab.prompts import ChainOfThoughtStrategy, RadiologyPromptStrategy, CardiologyPromptStrategy, NeurologyPromptStrategy, OncologyPromptStrategy
           from cotlab.datasets import RadiologyDataset, SyntheticMedicalDataset, CardiologyDataset, NeurologyDataset, OncologyDataset
           from cotlab.analysis import CoTParser, FaithfulnessMetrics
           from cotlab.patching import ActivationPatcher
 
-          print(f'CoTLab v{__version__} - All 13 experiments available!')
+          print(f'CoTLab v{__version__} - All 15 experiments available!')
           "
 
       - name: Test prompt strategies

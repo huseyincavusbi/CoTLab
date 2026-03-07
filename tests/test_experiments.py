@@ -1,11 +1,18 @@
 """Tests for new experiment classes."""
 
+import math
+
+import numpy as np
+import torch
+
 from cotlab.experiments import (
     ActivationCompareExperiment,
     ActivationPatchingExperiment,
     AttentionAnalysisExperiment,
+    CompositeShiftDetectorExperiment,
     FullLayerPatchingExperiment,
     MultiHeadPatchingExperiment,
+    ResidualNormOODExperiment,
     SteeringVectorsExperiment,
     SycophancyHeadsExperiment,
 )
@@ -263,3 +270,173 @@ class TestLogitLensExperiment:
 
         exp = LogitLensExperiment(top_k=10)
         assert exp.top_k == 10
+
+
+class TestResidualNormOODExperiment:
+    """Tests for ResidualNormOODExperiment."""
+
+    def test_init_defaults(self):
+        exp = ResidualNormOODExperiment()
+        assert exp.name == "residual_norm_ood"
+        assert exp._target_layer_config is None
+        assert exp.num_samples is None
+        assert exp.seed == 42
+        assert exp.max_input_tokens == 1024
+        assert exp.answer_cue == "\n\nAnswer:"
+        assert exp.threshold_percentile_step == 5
+
+    def test_init_custom(self):
+        exp = ResidualNormOODExperiment(
+            name="custom_ood",
+            target_layer=30,
+            num_samples=100,
+            seed=7,
+            threshold_percentile_step=10,
+        )
+        assert exp.name == "custom_ood"
+        assert exp._target_layer_config == 30
+        assert exp.num_samples == 100
+        assert exp.seed == 7
+        assert exp.threshold_percentile_step == 10
+
+    def test_compute_norm(self):
+        exp = ResidualNormOODExperiment()
+        hidden = torch.tensor([3.0, 4.0])
+        assert abs(exp._compute_norm(hidden) - 5.0) < 1e-5
+
+    def test_compute_logit_entropy_uniform(self):
+        exp = ResidualNormOODExperiment()
+        # Uniform distribution over 4 letters → max entropy = log(4)
+        logits = torch.zeros(10)
+        letter_ids = [0, 1, 2, 3]
+        entropy = exp._compute_logit_entropy(logits, letter_ids)
+        assert abs(entropy - math.log(4)) < 1e-4
+
+    def test_compute_logit_entropy_peaked(self):
+        exp = ResidualNormOODExperiment()
+        # Very peaked distribution → low entropy
+        logits = torch.tensor([100.0, 0.0, 0.0, 0.0])
+        entropy = exp._compute_logit_entropy(logits, [0, 1, 2, 3])
+        assert entropy < 0.01
+
+    def test_compute_logit_entropy_empty_ids(self):
+        exp = ResidualNormOODExperiment()
+        entropy = exp._compute_logit_entropy(torch.zeros(10), [])
+        assert math.isnan(entropy)
+
+    def test_find_threshold_all_same_label(self):
+        exp = ResidualNormOODExperiment()
+        norms = [1.0, 2.0, 3.0]
+        labels = [True, True, True]
+        tau, ba = exp._find_threshold(norms, labels)
+        # Cannot compute balanced accuracy with one class → returns mean, 0
+        assert ba == 0.0
+
+    def test_find_threshold_separable(self):
+        exp = ResidualNormOODExperiment()
+        norms = [1.0, 1.1, 5.0, 5.1]
+        labels = [False, False, True, True]
+        tau, ba = exp._find_threshold(norms, labels)
+        assert ba > 0.5
+        assert 1.0 < tau < 5.1
+
+
+class TestCompositeShiftDetectorExperiment:
+    """Tests for CompositeShiftDetectorExperiment."""
+
+    def test_init_defaults(self):
+        exp = CompositeShiftDetectorExperiment()
+        assert exp.name == "composite_shift_detector"
+        assert exp._norm_layer_config is None
+        assert exp.attn_layer == 3
+        assert exp.num_samples is None
+        assert exp.calibration_fraction == 0.3
+        assert exp.window_size == 20
+        assert exp.num_bins == 5
+        assert exp.seed == 42
+        assert exp.max_input_tokens == 1024
+        assert exp.answer_cue == "\n\nAnswer:"
+
+    def test_init_custom(self):
+        exp = CompositeShiftDetectorExperiment(
+            name="my_detector",
+            norm_layer=10,
+            attn_layer=5,
+            calibration_fraction=0.5,
+            window_size=10,
+            num_bins=3,
+        )
+        assert exp.name == "my_detector"
+        assert exp._norm_layer_config == 10
+        assert exp.attn_layer == 5
+        assert exp.calibration_fraction == 0.5
+        assert exp.window_size == 10
+        assert exp.num_bins == 3
+
+    def test_mahalanobis_identity(self):
+        exp = CompositeShiftDetectorExperiment()
+        mu = np.array([0.0, 0.0])
+        prec = np.eye(2)
+        d = exp._mahalanobis(np.array([3.0, 4.0]), mu, prec)
+        assert abs(d - 5.0) < 1e-5
+
+    def test_mahalanobis_zero_at_mean(self):
+        exp = CompositeShiftDetectorExperiment()
+        mu = np.array([1.0, 2.0])
+        prec = np.eye(2)
+        d = exp._mahalanobis(mu, mu, prec)
+        assert d == 0.0
+
+    def test_fit_mahalanobis_returns_shapes(self):
+        exp = CompositeShiftDetectorExperiment()
+        features = np.random.default_rng(0).normal(size=(20, 2))
+        mu, prec = exp._fit_mahalanobis(features)
+        assert mu.shape == (2,)
+        assert prec.shape == (2, 2)
+
+    def test_spearman_perfect_positive(self):
+        exp = CompositeShiftDetectorExperiment()
+        x = [1.0, 2.0, 3.0, 4.0, 5.0]
+        rho, p = exp._spearman(x, x)
+        assert abs(rho - 1.0) < 1e-6
+
+    def test_spearman_too_short(self):
+        exp = CompositeShiftDetectorExperiment()
+        rho, p = exp._spearman([1.0], [1.0])
+        assert math.isnan(rho) and math.isnan(p)
+
+    def test_bin_accuracy_count(self):
+        exp = CompositeShiftDetectorExperiment()
+        scores = list(range(20))
+        labels = [i % 2 == 0 for i in range(20)]
+        bins = exp._bin_accuracy(scores, labels)
+        assert len(bins) == 5
+        assert all(b["n"] > 0 for b in bins)
+
+    def test_bin_accuracy_empty(self):
+        exp = CompositeShiftDetectorExperiment()
+        assert exp._bin_accuracy([], []) == []
+
+    def test_rolling_accuracy_length(self):
+        exp = CompositeShiftDetectorExperiment(window_size=3)
+        scores = [0.1, 0.5, 0.3, 0.8, 0.2]
+        labels = [True, False, True, False, True]
+        roll_score, roll_acc = exp._rolling_accuracy(scores, labels)
+        # expected windows: len(scores) - window_size + 1 = 3
+        assert len(roll_score) == 3
+        assert len(roll_acc) == 3
+        assert all(0.0 <= a <= 1.0 for a in roll_acc)
+
+
+class TestNewExperimentImports:
+    """Smoke-test that newly added experiments are importable."""
+
+    def test_import_residual_norm_ood(self):
+        from cotlab.experiments import ResidualNormOODExperiment
+
+        assert ResidualNormOODExperiment is not None
+
+    def test_import_composite_shift_detector(self):
+        from cotlab.experiments import CompositeShiftDetectorExperiment
+
+        assert CompositeShiftDetectorExperiment is not None
