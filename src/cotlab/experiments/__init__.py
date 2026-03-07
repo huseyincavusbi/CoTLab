@@ -13,6 +13,7 @@ from .logit_lens import LogitLensExperiment
 from .multi_head_cot import MultiHeadCoTExperiment
 from .multi_head_patching import MultiHeadPatchingExperiment
 from .probing_classifier import ProbingClassifierExperiment
+from .sae_feature_analysis import SAEFeatureAnalysisExperiment
 from .steering_vectors import SteeringVectorsExperiment
 from .sycophancy_heads import SycophancyHeadsExperiment
 
@@ -24,6 +25,7 @@ __all__ = [
     "AttentionAnalysisExperiment",
     "ProbingClassifierExperiment",
     "ClassificationExperiment",
+    "SAEFeatureAnalysisExperiment",
     "SycophancyHeadsExperiment",
     "MultiHeadPatchingExperiment",
     "FullLayerPatchingExperiment",
