@@ -299,7 +299,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                 sae = saes[layer_idx]
                 term_resid = resid[term_positions]  # [n_toks, d_model]
                 with torch.no_grad():
-                    features = sae.encode(term_resid.to(sae.W_enc.device))
+                    features = sae.encode(term_resid.to(sae.w_enc.device))
                     # mean over term tokens → [d_sae]
                     mean_acts = features.mean(dim=0).cpu()
 
@@ -381,7 +381,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                     last_resid = resid[-1].unsqueeze(0)  # [1, d_model]
                     sae = saes[layer_idx]
                     with torch.no_grad():
-                        features = sae.encode(last_resid.to(sae.W_enc.device))
+                        features = sae.encode(last_resid.to(sae.w_enc.device))
                         feat_acts = features[0].cpu()  # [d_sae]
 
                     for feat_idx in top_features[layer_idx]:
