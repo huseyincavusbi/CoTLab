@@ -1,0 +1,17 @@
+# Residual Norm OOD Detection
+#
+# Computes L2 norm of the residual stream at target_layer (last block by
+# default) and logit entropy over answer letters — both from one forward pass.
+# Reports AUROC for each metric vs per-sample accuracy, plus a threshold τ*
+# for single-pass OOD flagging.
+_target_: cotlab.experiments.ResidualNormOODExperiment
+
+name: residual_norm_ood
+description: "L2 residual norm OOD flag vs logit entropy baseline"
+
+target_layer: null        # null = last transformer block (L61 for MedGemma-27B)
+num_samples: null         # null = full dataset
+seed: 42
+max_input_tokens: 1024
+answer_cue: "\n\nAnswer:"
+threshold_percentile_step: 5
