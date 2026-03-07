@@ -43,6 +43,7 @@ Algorithm (token_group_contrast):
 Memory safety: activations moved to CPU immediately inside each hook.
 """
 
+import math
 import re
 from typing import Any, Dict, List, Optional, Set
 
@@ -452,6 +453,104 @@ class ActivationPatchingExperiment(BaseExperiment):
         return float(out.logits[0, -1, answer_tok_id].detach().float().cpu().item())
 
     # ------------------------------------------------------------------
+    # Statistical correlation helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_correlations(per_sample_results: List[Dict]) -> Dict[str, Any]:
+        """Point-biserial correlations between each group's importance score and is_correct.
+
+        Point-biserial r equals Pearson r when one variable is binary, so we
+        compute standard Pearson r between the continuous importance score and
+        the 0/1 correctness label.  A two-tailed p-value is derived from the
+        t-distribution (df = n-2).  scipy is used for the CDF if available;
+        otherwise a normal approximation is used as a fallback.
+
+        Returns a dict keyed by group name, each with:
+            r                       – point-biserial correlation coefficient
+            p_value                 – two-tailed p-value
+            n                       – number of samples used
+            mean_importance_correct – mean importance when sample is correct
+            mean_importance_incorrect – mean importance when sample is incorrect
+        """
+        valid = [s for s in per_sample_results if s.get("is_correct") is not None]
+        if len(valid) < 3:
+            return {}
+
+        labels = [int(s["is_correct"]) for s in valid]
+
+        # Collect all group names present across samples.
+        groups: set = set()
+        for s in valid:
+            groups.update(s.get("group_importances", {}).keys())
+        if any(s.get("entity_importance") is not None for s in valid):
+            groups.add("entity")
+        if any(s.get("stem_importance") is not None for s in valid):
+            groups.add("stem")
+
+        # Try to import scipy t-distribution CDF once.
+        try:
+            from scipy.stats import t as _t_dist  # noqa: PLC0415
+
+            _t_cdf = _t_dist.cdf
+        except ImportError:
+            _t_cdf = None
+
+        def _p_value(t_stat: float, df: int) -> float:
+            if _t_cdf is not None:
+                return float(2 * (1 - _t_cdf(abs(t_stat), df=df)))
+            # Normal approximation fallback.
+            return float(2 * (1 - 0.5 * (1 + math.erf(abs(t_stat) / math.sqrt(2)))))
+
+        results: Dict[str, Any] = {}
+        for group in sorted(groups):
+            if group in ("entity", "stem"):
+                scores = [s.get(f"{group}_importance") for s in valid]
+            else:
+                scores = [s.get("group_importances", {}).get(group) for s in valid]
+
+            paired = [(y, x) for y, x in zip(labels, scores) if x is not None]
+            if len(paired) < 3:
+                continue
+
+            ys = [p[0] for p in paired]
+            xs = [p[1] for p in paired]
+            n_g = len(paired)
+
+            mean_x = sum(xs) / n_g
+            mean_y = sum(ys) / n_g
+            cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+            std_x = math.sqrt(sum((x - mean_x) ** 2 for x in xs) + 1e-12)
+            std_y = math.sqrt(sum((y - mean_y) ** 2 for y in ys) + 1e-12)
+            r = cov / (std_x * std_y)
+            r = max(-1.0, min(1.0, r))  # clamp to [-1, 1]
+
+            if abs(r) >= 1.0 - 1e-9:
+                p_val = 0.0
+            else:
+                t_stat = r * math.sqrt((n_g - 2) / (1 - r**2 + 1e-12))
+                p_val = _p_value(t_stat, n_g - 2)
+
+            correct_scores = [x for x, y in zip(xs, ys) if y == 1]
+            incorrect_scores = [x for x, y in zip(xs, ys) if y == 0]
+
+            results[group] = {
+                "r": round(r, 4),
+                "p_value": round(p_val, 4),
+                "n": n_g,
+                "mean_importance_correct": (
+                    round(sum(correct_scores) / len(correct_scores), 4) if correct_scores else None
+                ),
+                "mean_importance_incorrect": (
+                    round(sum(incorrect_scores) / len(incorrect_scores), 4)
+                    if incorrect_scores
+                    else None
+                ),
+            }
+
+        return results
+
+    # ------------------------------------------------------------------
     # Token-group contrast: sample loop
     # ------------------------------------------------------------------
 
@@ -596,10 +695,12 @@ class ActivationPatchingExperiment(BaseExperiment):
         for g, hits in accuracy_by_dominant.items():
             acc_by_dom[g] = round(sum(hits) / len(hits), 4) if hits else None
 
+        correlations = self._compute_correlations(per_sample_results)
+
         # ── Print summary ──────────────────────────────────────────────
-        print("\n" + "=" * 62)
+        print("\n" + "=" * 70)
         print(f"TOKEN GROUP CONTRAST — L{mask_layer} attention masking")
-        print("=" * 62)
+        print("=" * 70)
         print(f"Processed samples   : {processed} / {n}")
         print(f"Dominant group (avg): {dominant_group_overall}")
         print()
@@ -608,7 +709,32 @@ class ActivationPatchingExperiment(BaseExperiment):
         for g in PRIMARY_GROUPS:
             acc_str = f"{acc_by_dom[g]:.4f}" if acc_by_dom[g] is not None else "  n/a "
             print(f"{g:<12}  {mean_importance[g]:>16.4f}  {acc_str:>18}")
-        print("=" * 62)
+
+        if correlations:
+            print()
+            print("Point-biserial correlations (importance score → is_correct):")
+            print(
+                f"  {'Group':<12}  {'r':>7}  {'p':>8}  {'n':>5}  {'mean(corr)':>11}  {'mean(incorr)':>12}"
+            )
+            print("  " + "-" * 60)
+            for g, c in correlations.items():
+                sig = "*" if c["p_value"] < 0.05 else (" " if c["p_value"] < 0.10 else " ")
+                mc = (
+                    f"{c['mean_importance_correct']:.4f}"
+                    if c["mean_importance_correct"] is not None
+                    else "  n/a "
+                )
+                mi = (
+                    f"{c['mean_importance_incorrect']:.4f}"
+                    if c["mean_importance_incorrect"] is not None
+                    else "  n/a "
+                )
+                print(
+                    f"  {g:<12}  {c['r']:>+7.4f}  {c['p_value']:>8.4f}{sig}  {c['n']:>5}  {mc:>11}  {mi:>12}"
+                )
+            print("  (* p<0.05)")
+
+        print("=" * 70)
         print()
         print("Interpretation:")
         print(
@@ -617,6 +743,9 @@ class ActivationPatchingExperiment(BaseExperiment):
             "attention shifts the answer more.",
         )
         print("  The dominant group is what the layer causally relies on most.")
+        if correlations:
+            print("  Positive r = higher importance of this group → more likely correct.")
+            print("  Negative r = higher importance of this group → more likely incorrect.")
 
         return ExperimentResult(
             experiment_name=self.name,
@@ -630,6 +759,7 @@ class ActivationPatchingExperiment(BaseExperiment):
                 "mean_importance_per_group": mean_importance,
                 "dominant_group": dominant_group_overall,
                 "accuracy_when_dominant": acc_by_dom,
+                "point_biserial_correlations": correlations,
             },
             raw_outputs={"per_sample": per_sample_results},
             metadata={
