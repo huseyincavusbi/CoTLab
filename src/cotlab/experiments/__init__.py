@@ -4,6 +4,7 @@ from .activation_compare import ActivationCompareExperiment
 from .activation_patching import ActivationPatchingExperiment
 from .attention_analysis import AttentionAnalysisExperiment
 from .classification import ClassificationExperiment
+from .composite_shift_detector import CompositeShiftDetectorExperiment
 from .cot_ablation import CoTAblationExperiment
 from .cot_faithfulness import CoTFaithfulnessExperiment
 from .cot_heads import CoTHeadsExperiment
@@ -19,6 +20,7 @@ from .steering_vectors import SteeringVectorsExperiment
 from .sycophancy_heads import SycophancyHeadsExperiment
 
 __all__ = [
+    "CompositeShiftDetectorExperiment",
     "CoTAblationExperiment",
     "CoTFaithfulnessExperiment",
     "ActivationPatchingExperiment",

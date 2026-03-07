@@ -1,0 +1,20 @@
+# Composite Distribution Shift Detector
+#
+# Combines L61 residual norm + L3 attention entropy into a [norm, entropy]
+# feature vector per sample.  Mahalanobis distance from a calibration baseline
+# is the composite anomaly score.  Spearman ρ between that score and a rolling
+# accuracy window tests whether the signal precedes accuracy degradation.
+_target_: cotlab.experiments.CompositeShiftDetectorExperiment
+
+name: composite_shift_detector
+description: "L61 norm + L3 entropy Mahalanobis OOD detector"
+
+norm_layer: null          # null = last transformer block
+attn_layer: 3             # L3 attention entropy
+num_samples: null         # null = full dataset
+calibration_fraction: 0.3
+window_size: 20
+num_bins: 5
+seed: 42
+max_input_tokens: 1024
+answer_cue: "\n\nAnswer:"
