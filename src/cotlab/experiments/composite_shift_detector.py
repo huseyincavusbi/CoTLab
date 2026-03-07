@@ -167,8 +167,12 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
         # L3 attention: out.attentions is a tuple len=num_layers,
         # each [batch, heads, seq, seq].  We want last-token row.
         attn_entropy = float("nan")
-        if out.attentions is not None and len(out.attentions) > self.attn_layer:
-            attn_l3 = out.attentions[self.attn_layer]  # [1, heads, seq, seq]
+        attn_l3 = (
+            out.attentions[self.attn_layer]
+            if (out.attentions is not None and len(out.attentions) > self.attn_layer)
+            else None
+        )
+        if attn_l3 is not None:
             last_tok_attn = attn_l3[0, :, -1, :].float().cpu()  # [heads, seq]
             eps = 1e-10
             ent_per_head = -(last_tok_attn * (last_tok_attn + eps).log()).sum(dim=-1)
@@ -246,6 +250,8 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
 
     def _bin_accuracy(self, scores: List[float], labels: List[bool]) -> List[Dict]:
         """Split into num_bins quantile bins, report mean accuracy per bin."""
+        if not scores:
+            return []
         arr = np.array(scores)
         lbl = np.array([int(b) for b in labels])
         bins = []
@@ -335,6 +341,13 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
             dataset.sample(self.num_samples, seed=self.seed) if self.num_samples else list(dataset)
         )
 
+        # Switch to eager attention so output_attentions=True is honoured
+        model = backend._model
+        current_attn = getattr(getattr(model, "config", None), "_attn_implementation", None)
+        if current_attn != "eager" and hasattr(model, "set_attn_implementation"):
+            print(f"Switching attention implementation: {current_attn} → eager")
+            model.set_attn_implementation("eager")
+
         print(f"Model             : {backend.model_name}")
         print(f"Dataset           : {dataset.name}")
         print(f"Norm layer        : L{norm_layer}")
@@ -393,6 +406,18 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
 
         # ── Build feature matrix ────────────────────────────────────────
         n = len(all_labels)
+        if n == 0:
+            print("\n[composite_shift_detector] No samples collected — all were skipped. Aborting.")
+            return ExperimentResult(
+                experiment_name=self.name,
+                model_name=backend.model_name,
+                prompt_strategy=(
+                    prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom"
+                ),
+                metrics={"error": "all_samples_skipped", "num_samples": 0},
+                raw_outputs={},
+                metadata={},
+            )
         accuracy = sum(all_labels) / n if n else 0.0
 
         # Filter out NaN entropies; replace with mean for Mahalanobis
