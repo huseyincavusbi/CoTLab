@@ -8,12 +8,12 @@ _target_: cotlab.experiments.SAEFeatureAnalysisExperiment
 name: sae_feature_analysis
 description: "GemmaScope-2 histo feature identification and few-shot contrast"
 
-sae_repo_id: google/gemma-scope-2-270m-it
+sae_repo_id: google/gemma-scope-2-27b-it
 sae_site: resid_post_all   # alternatives: resid_post, attn_out_all, mlp_out_all
 sae_width: 16k             # 16k | 262k
 sae_l0: small              # small (<30) | medium (30-90) | big (>90)
 
-target_layers: null        # null = auto (50-65% depth); e.g. [24,25,26,27,28]
+target_layers: null        # null = all layers; override e.g. [24,25,26,27,28]
 
 top_k_features: 20
 # histo_vocab: null         # null = built-in 25-term list

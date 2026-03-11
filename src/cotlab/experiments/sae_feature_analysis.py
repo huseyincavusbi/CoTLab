@@ -139,11 +139,8 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
     def _resolve_layers(self, backend: InferenceBackend) -> List[int]:
         if self._target_layers_config is not None:
             return list(self._target_layers_config)
-        n = backend.hook_manager.num_layers
-        # Sensible defaults: ~55-65 % depth range, matching the 27B L24-28 intent.
-        lo = max(0, int(n * 0.50))
-        hi = min(n, int(n * 0.65) + 1)
-        return list(range(lo, hi))
+        # Default: all layers — lets post-hoc analysis focus on any band (e.g. L24-28).
+        return list(range(backend.hook_manager.num_layers))
 
     # ------------------------------------------------------------------
     # SAE loading
