@@ -208,6 +208,16 @@ class ActivationPatchingExperiment(BaseExperiment):
                 return ids[0]
         return None
 
+    def _answer_letter_token_ids(self, tokenizer) -> List[int]:
+        """Collect all plausible token ids for MCQ answer letters A-G."""
+        ids = set()
+        for letter in "ABCDEFG":
+            for prefix in (" ", "", "\n"):
+                encoded = tokenizer.encode(prefix + letter, add_special_tokens=False)
+                if encoded:
+                    ids.add(encoded[-1])
+        return sorted(ids)
+
     def _tokenize(self, tokenizer, text: str, device):
         return tokenizer(
             text,
@@ -631,8 +641,12 @@ class ActivationPatchingExperiment(BaseExperiment):
                     out_base = backend._model(**tokens)
                 last_logits = out_base.logits[0, -1].detach().float().cpu()
                 logit_base = float(last_logits[answer_tok_id].item())
-                predicted_tok = int(last_logits.argmax().item())
-                is_correct = predicted_tok == answer_tok_id
+                letter_ids = self._answer_letter_token_ids(tokenizer)
+                if letter_ids:
+                    best_letter_tok = max(letter_ids, key=lambda t: last_logits[t].item())
+                    is_correct = best_letter_tok == answer_tok_id
+                else:
+                    is_correct = False
                 del out_base, last_logits
             except Exception as exc:
                 tqdm.write(f"  [skip] sample {sample.idx} (baseline): {exc}")
