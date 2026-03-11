@@ -16,7 +16,7 @@ token_group_contrast_layer: 3
 token_group_mode: all
 
 layer_stride: 1
-num_samples: 50
+num_samples: 500
 max_input_tokens: 1024
 seed: 42
 answer_cue: "\n\nAnswer:"

@@ -19,7 +19,7 @@ top_k_features: 20
 # histo_vocab: null         # null = built-in 25-term list
 
 few_shot_contrast: true
-num_samples: 50
+num_samples: 500
 seed: 42
 max_input_tokens: 1024
 answer_cue: "\n\nAnswer:"
