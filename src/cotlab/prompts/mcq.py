@@ -67,6 +67,7 @@ D) Observation with repeat imaging in 3 months""",
         output_format: str = "json",
         answer_first: bool = False,
         contrarian: bool = False,
+        cot_trigger: str = "Let's think through this step by step:",
         **kwargs,
     ):
         self._name = name
@@ -74,6 +75,7 @@ D) Observation with repeat imaging in 3 months""",
         self.output_format = output_format
         self.answer_first = answer_first
         self.contrarian = contrarian
+        self.cot_trigger = cot_trigger
 
     @property
     def name(self) -> str:
@@ -109,6 +111,9 @@ D) Observation with repeat imaging in 3 months""",
 
         if examples_str:
             prompt = f"## Examples\n\n{examples_str}\n\n{prompt}"
+
+        if self.cot_trigger:
+            prompt += f"\n\n{self.cot_trigger}"
 
         return prompt
 
