@@ -9,10 +9,13 @@ _target_: cotlab.experiments.ActivationPatchingExperiment
 name: activation_patching
 description: "Layer-wise causal activation patching (logit recovery)"
 
-patching_mode: pairs   # pairs | few_shot_contrast | introspect_contrast | cot_contrast
+patching_mode: pairs   # pairs | few_shot_contrast | introspect_contrast | cot_contrast | token_group_contrast
 layer_stride: 2        # stride 2 → even layers (informative for Gemma3)
 num_samples: 500
 max_input_tokens: 1024
 seed: 42
 answer_cue: "\n\nAnswer:"
 introspect_instruction: "Think deeply about this problem. Carefully reason through the underlying mechanisms and consider all relevant factors before committing to your answer."
+# token_group_contrast settings (only used when patching_mode=token_group_contrast)
+token_group_contrast_layer: 3   # L3 = universal attention bottleneck (Q1)
+token_group_mode: all           # all | delimiter | choice | content
