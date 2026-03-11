@@ -433,17 +433,19 @@ class ActivationPatchingExperiment(BaseExperiment):
         valid_pos = [p for p in zero_positions if p < seq_len]
         if valid_pos:
             bias[:, :, :, valid_pos] = -1e4
+        # Gemma 3 SDPA kernel requires bias dtype == query dtype (e.g. bfloat16).
+        model_dtype = backend._model.dtype
 
         def _pre_hook(module, args, kwargs):
             # Gemma self_attn receives attention_mask as a keyword argument.
             if "attention_mask" in kwargs and kwargs["attention_mask"] is not None:
                 existing = kwargs["attention_mask"]
-                # Cast bias to match the existing mask dtype and device.
-                kwargs["attention_mask"] = existing + bias.to(
-                    dtype=existing.dtype, device=existing.device
-                )
+                # Add bias then cast to model dtype so SDPA dtype check passes.
+                kwargs["attention_mask"] = (
+                    existing + bias.to(dtype=existing.dtype, device=existing.device)
+                ).to(dtype=model_dtype)
             else:
-                kwargs["attention_mask"] = bias.to(device)
+                kwargs["attention_mask"] = bias.to(dtype=model_dtype, device=device)
             return args, kwargs
 
         layer_mod = backend.hook_manager.get_layer_module(mask_layer)
