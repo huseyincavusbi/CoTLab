@@ -17,6 +17,12 @@ Patching modes
     corrupt = prompt only
     Answers Q: which layers carry the "think deeply" reasoning signal?
 
+``cot_contrast``  (works with ANY dataset)
+    clean   = full CoT prompt (cot_trigger active, e.g. "Let's think through this step by step:")
+    corrupt = zero-shot prompt (cot_trigger stripped — same structure, no reasoning nudge)
+    Answers Q: which layers carry the chain-of-thought reasoning signal vs plain answering?
+    Use as the default/baseline contrast alongside few_shot_contrast and introspect_contrast.
+
 ``token_group_contrast``  (works with ANY dataset)
     Hooks the attention weight matrix at a single target layer and zeros out
     one token group at a time (delimiter / choice / content).  Measures how
@@ -65,9 +71,16 @@ class ActivationPatchingExperiment(BaseExperiment):
     Supports two patching modes:
     - ``pairs``              PatchingPairsDataset clean/corrupt pairs.
     - ``few_shot_contrast``  Any dataset — few-shot (clean) vs zero-shot (corrupt).
+    - ``cot_contrast``       Any dataset — CoT prompt (clean) vs zero-shot (corrupt).
     """
 
-    VALID_MODES = ("pairs", "few_shot_contrast", "introspect_contrast", "token_group_contrast")
+    VALID_MODES = (
+        "pairs",
+        "few_shot_contrast",
+        "introspect_contrast",
+        "token_group_contrast",
+        "cot_contrast",
+    )
 
     # Tokens that are purely structural / formatting — not medical content.
     _DELIMITER_STRINGS: Set[str] = {
@@ -819,6 +832,24 @@ class ActivationPatchingExperiment(BaseExperiment):
             return self.introspect_instruction + "\n\n" + base
         return base
 
+    def _build_prompt_cot(self, prompt_strategy: Any, text: str, metadata: dict, cot: bool) -> str:
+        """Build prompt with CoT trigger active (clean) or stripped (corrupt).
+
+        clean   (cot=True)  → full CoT prompt with cot_trigger intact
+        corrupt (cot=False) → same prompt with cot_trigger set to "" (zero-shot)
+
+        Only the cot_trigger attribute is toggled; few_shot and all other
+        strategy settings are preserved so CoT is the sole variable.
+        """
+        orig = getattr(prompt_strategy, "cot_trigger", None)
+        try:
+            if hasattr(prompt_strategy, "cot_trigger"):
+                prompt_strategy.cot_trigger = orig if cot else ""
+            return self._build_prompt(prompt_strategy, text, metadata)
+        finally:
+            if orig is not None:
+                prompt_strategy.cot_trigger = orig
+
     def run(
         self,
         backend: InferenceBackend,
@@ -880,7 +911,7 @@ class ActivationPatchingExperiment(BaseExperiment):
                 corr_str = self._build_prompt_few_shot(
                     prompt_strategy, sample.text, sample.metadata or {}, few_shot=False
                 )
-            else:  # introspect_contrast
+            elif self.patching_mode == "introspect_contrast":
                 # introspect instruction prepended = clean
                 # no instruction = corrupted
                 clean_str = self._build_prompt_introspect(
@@ -888,6 +919,15 @@ class ActivationPatchingExperiment(BaseExperiment):
                 )
                 corr_str = self._build_prompt_introspect(
                     prompt_strategy, sample.text, sample.metadata or {}, introspect=False
+                )
+            else:  # cot_contrast
+                # CoT trigger active = clean
+                # CoT trigger stripped (zero-shot) = corrupted
+                clean_str = self._build_prompt_cot(
+                    prompt_strategy, sample.text, sample.metadata or {}, cot=True
+                )
+                corr_str = self._build_prompt_cot(
+                    prompt_strategy, sample.text, sample.metadata or {}, cot=False
                 )
 
             clean_tokens = self._tokenize(tokenizer, clean_str, backend.device)
