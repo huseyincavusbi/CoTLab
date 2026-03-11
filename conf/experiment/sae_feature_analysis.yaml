@@ -10,8 +10,8 @@ description: "GemmaScope-2 histo feature identification and few-shot contrast"
 
 sae_repo_id: google/gemma-scope-2-27b-it
 sae_site: resid_post_all   # alternatives: resid_post, attn_out_all, mlp_out_all
-sae_width: 64k             # 16k | 64k | 256k | 1m
-sae_l0: medium             # small | medium | large
+sae_width: 16k             # resid_post_all has: 16k | 262k
+sae_l0: small              # resid_post_all has: small | big  (no medium)
 
 target_layers: null        # null = all layers; override e.g. [24,25,26,27,28]
 
