@@ -313,8 +313,11 @@ class ResidualNormOODExperiment(BaseExperiment):
             norm = self._compute_norm(hidden)
             entropy = self._compute_logit_entropy(logits, letter_ids)
 
-            predicted_tok = int(logits.argmax().item())
-            is_correct = (answer_tok_id is not None) and (predicted_tok == answer_tok_id)
+            if answer_tok_id is not None and letter_ids:
+                best_letter_tok = max(letter_ids, key=lambda t: logits[t].item())
+                is_correct = best_letter_tok == answer_tok_id
+            else:
+                is_correct = False
 
             norms.append(norm)
             entropies.append(entropy)

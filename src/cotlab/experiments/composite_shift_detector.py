@@ -355,6 +355,8 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
         print(f"Samples           : {len(samples)}")
         print(f"Calibration frac  : {self.calibration_fraction}")
 
+        letter_ids = self._answer_letter_token_ids(tokenizer)
+
         per_sample: List[Dict] = []
         all_norms: List[float] = []
         all_entropies: List[float] = []
@@ -382,8 +384,11 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
                 torch.cuda.empty_cache() if torch.cuda.is_available() else None
                 continue
 
-            predicted_tok = int(logits.argmax().item())
-            is_correct = (answer_tok_id is not None) and (predicted_tok == answer_tok_id)
+            if answer_tok_id is not None and letter_ids:
+                best_letter_tok = max(letter_ids, key=lambda t: logits[t].item())
+                is_correct = best_letter_tok == answer_tok_id
+            else:
+                is_correct = False
 
             all_norms.append(l2_norm)
             all_entropies.append(attn_entropy)
