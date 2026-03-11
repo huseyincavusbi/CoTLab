@@ -49,6 +49,30 @@ from ..datasets.loaders import BaseDataset
 from ..logging import ExperimentLogger
 from ..patching.sae import GemmaScopeLayer
 
+# Histopathology-specific few-shot examples for Phase 2.
+# These are heavily loaded with Phase-1 vocabulary (pleomorphism, mitotic figures,
+# Ki-67, cribriform, comedonecrosis, HER2, perineural invasion, Gleason, adenocarcinoma)
+# so that toggling them on/off gives a signal directly correlated with histo-feature
+# activation — unlike the generic Pneumonia/Meningitis examples that were used before.
+HISTO_FEW_SHOT_EXAMPLES: List[Tuple[str, str]] = [
+    (
+        "Sections show sheets of pleomorphic cells with vesicular nuclei, prominent nucleoli, "
+        "and frequent atypical mitotic figures. Ki-67 index 85%. No glandular differentiation.",
+        "High-grade invasive carcinoma with anaplastic features",
+    ),
+    (
+        "Cribriform architecture with comedonecrosis, nuclear atypia grade 3, HER2 3+, "
+        "ER-negative, PR-negative. Angiolymphatic invasion present, margins involved.",
+        "High-grade DCIS with comedonecrosis; triple-negative, HER2-amplified",
+    ),
+    (
+        "Core biopsy: acinar infiltrative growth, nuclear enlargement, prominent nucleoli, "
+        "perineural invasion, Gleason pattern 4+5. Extraprostatic extension confirmed.",
+        "Gleason grade group 5 prostatic adenocarcinoma with perineural invasion",
+    ),
+]
+
+
 # Default histopathology vocabulary — overridable via config.
 DEFAULT_HISTO_VOCAB: List[str] = [
     "pleomorphism",
@@ -318,19 +342,32 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
     # Phase 2: few-shot contrast
     # ------------------------------------------------------------------
 
+    def _build_histo_few_shot_block(self) -> str:
+        """Build a histopathology-specific few-shot context block.
+
+        Uses HISTO_FEW_SHOT_EXAMPLES — vocabulary-dense pathology report snippets
+        that directly activate the same sparse features Phase 1 identifies.
+        These replace the old generic Pneumonia/Meningitis examples which had no
+        overlap with histopathology vocabulary.
+        """
+        lines = [f"Q: {q}\nA: {a}" for q, a in HISTO_FEW_SHOT_EXAMPLES]
+        return "Histopathology examples:\n\n" + "\n\n".join(lines) + "\n\n"
+
     def _build_prompt(self, prompt_strategy: Any, text: str, metadata: dict, few_shot: bool) -> str:
-        """Build prompt with few_shot toggled; restore original value after."""
-        orig = getattr(prompt_strategy, "few_shot", None)
-        try:
-            if hasattr(prompt_strategy, "few_shot"):
-                prompt_strategy.few_shot = few_shot
-            result = prompt_strategy.build_prompt(
-                {"text": text, "question": text, "report": text, "metadata": metadata}
-            )
-            return result + self.answer_cue
-        finally:
-            if orig is not None:
-                prompt_strategy.few_shot = orig
+        """Build prompt, prepending histo-specific few-shot block when few_shot=True.
+
+        Bypasses the prompt strategy's own few_shot flag entirely — that flag uses
+        generic medical examples (Pneumonia, Meningitis) which are irrelevant to
+        histopathology feature activation.  Instead we directly prepend or omit
+        the HISTO_FEW_SHOT_EXAMPLES block so the contrast is always histo-specific.
+        """
+        base = prompt_strategy.build_prompt(
+            {"text": text, "question": text, "report": text, "metadata": metadata}
+        )
+        base += self.answer_cue
+        if few_shot:
+            return self._build_histo_few_shot_block() + base
+        return base
 
     def _contrast_few_shot(
         self,
@@ -585,12 +622,23 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                 round(scores[feats[0]], 4) if feats else 0.0
             )
             if layer_idx in contrast_stats_per_layer:
+                stats = contrast_stats_per_layer[layer_idx]
                 n_sig = sum(
-                    1
-                    for s in contrast_stats_per_layer[layer_idx]
-                    if s["p_bonferroni"] is not None and s["p_bonferroni"] < 0.05
+                    1 for s in stats if s["p_bonferroni"] is not None and s["p_bonferroni"] < 0.05
                 )
+                fs_acts = [s["mean_few_shot"] for s in stats if s["mean_few_shot"] is not None]
+                zs_acts = [s["mean_zero_shot"] for s in stats if s["mean_zero_shot"] is not None]
+                effects = [s["effect_size"] for s in stats if s["effect_size"] is not None]
                 compact_metrics[f"{prefix}_n_significant_features"] = n_sig
+                compact_metrics[f"{prefix}_mean_act_few_shot"] = (
+                    round(sum(fs_acts) / len(fs_acts), 4) if fs_acts else None
+                )
+                compact_metrics[f"{prefix}_mean_act_zero_shot"] = (
+                    round(sum(zs_acts) / len(zs_acts), 4) if zs_acts else None
+                )
+                compact_metrics[f"{prefix}_mean_effect_size"] = (
+                    round(sum(effects) / len(effects), 4) if effects else None
+                )
 
         return ExperimentResult(
             experiment_name=self.name,
