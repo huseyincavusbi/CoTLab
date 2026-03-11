@@ -47,7 +47,7 @@ from ..datasets.loaders import BaseDataset
 from ..logging import ExperimentLogger
 
 # MCQ answer letters and their common tokenisation variants.
-_MCQ_LETTERS = list("ABCDEFG")
+_MCQ_LETTERS = list("ABCDEFGHIJ")
 
 
 @Registry.register_experiment("residual_norm_ood")

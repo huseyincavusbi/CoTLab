@@ -209,9 +209,9 @@ class ActivationPatchingExperiment(BaseExperiment):
         return None
 
     def _answer_letter_token_ids(self, tokenizer) -> List[int]:
-        """Collect all plausible token ids for MCQ answer letters A-G."""
+        """Collect all plausible token ids for MCQ answer letters A-J."""
         ids = set()
-        for letter in "ABCDEFG":
+        for letter in "ABCDEFGHIJ":
             for prefix in (" ", "", "\n"):
                 encoded = tokenizer.encode(prefix + letter, add_special_tokens=False)
                 if encoded:

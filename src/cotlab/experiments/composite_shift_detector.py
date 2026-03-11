@@ -83,7 +83,7 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
         self.seed = seed
         self.max_input_tokens = max_input_tokens
         self.answer_cue = answer_cue
-        self.mcq_letters = mcq_letters or list("ABCDEFG")
+        self.mcq_letters = mcq_letters or list("ABCDEFGHIJ")
 
     @property
     def name(self) -> str:
