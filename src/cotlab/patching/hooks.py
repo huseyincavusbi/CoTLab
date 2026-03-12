@@ -74,6 +74,21 @@ class HookManager:
         "gpt2": "ln_2",
     }
 
+    # FFN down-projection modules — input is z_t (intermediate activations after SwiGLU gate)
+    # Used for CETT computation and H-Neuron causal interventions
+    MLP_DOWN_PROJ_POINTS = {
+        "gemma": "mlp.down_proj",
+        "gemma2": "mlp.down_proj",
+        "gemma3": "mlp.down_proj",
+        "gemma3_text": "mlp.down_proj",
+        "mistral": "mlp.down_proj",
+        "qwen2": "mlp.down_proj",
+        "olmo": "mlp.down_proj",
+        "olmo2": "mlp.down_proj",
+        "llama": "mlp.down_proj",
+        "gpt2": "mlp.c_proj",
+    }
+
     # Attention output projection modules for head-level patching
     # These modules take concatenated head outputs and project back to hidden dim
     ATTENTION_OUTPUT_POINTS = {
@@ -240,6 +255,38 @@ class HookManager:
                         return getattr(attn, proj_name)
 
         raise ValueError(f"Could not find attention output module for layer {layer_idx}")
+
+    def get_mlp_down_proj_module(self, layer_idx: int) -> nn.Module:
+        """
+        Get the FFN down-projection module for a layer.
+
+        This is the W_down linear layer whose input is z_t (post-SwiGLU intermediate
+        activations). Used for CETT computation and H-Neuron causal interventions.
+        """
+        layer_module = self.get_layer_module(layer_idx)
+        model_type = getattr(self.model.config, "model_type", None)
+        path = self.MLP_DOWN_PROJ_POINTS.get(model_type)
+
+        if path:
+            parts = path.split(".")
+            module = layer_module
+            for part in parts:
+                if hasattr(module, part):
+                    module = getattr(module, part)
+                else:
+                    break
+            else:
+                return module
+
+        # Fallback: common MLP down-projection names
+        for mlp_name in ["mlp", "feed_forward", "ffn"]:
+            if hasattr(layer_module, mlp_name):
+                mlp = getattr(layer_module, mlp_name)
+                for proj_name in ["down_proj", "c_proj", "w2", "fc2", "dense_4h_to_h"]:
+                    if hasattr(mlp, proj_name):
+                        return getattr(mlp, proj_name)
+
+        raise ValueError(f"Could not find MLP down-projection module for layer {layer_idx}")
 
     def register_forward_hook(
         self, layer_idx: int, hook_fn: Callable[[nn.Module, Any, Any], Optional[Any]]
