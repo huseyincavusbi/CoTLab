@@ -350,12 +350,22 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         X = np.stack(cett_matrix, axis=0)  # (n_valid, n_features)
         y = np.array(labels)  # (n_valid,)
 
-        # Clip and normalize to prevent matmul overflow in liblinear
+        # Clean up NaN/Inf
         X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-        X = np.clip(X, 0.0, np.percentile(X[X > 0], 99.9) if (X > 0).any() else 1.0)
-        col_max = X.max(axis=0)
-        col_max[col_max == 0] = 1.0
-        X = X / col_max  # scale each feature to [0, 1]
+
+        # Variance-based pre-selection: keep top-K neurons by CETT variance across samples.
+        # With n_samples << n_features (e.g. 100 vs 348k) the probe is underdetermined without this.
+        top_k = min(5000, X.shape[1])
+        feature_var = X.var(axis=0)
+        top_k_idx = np.argsort(feature_var)[-top_k:]  # indices of top-K highest-variance neurons
+        X = X[:, top_k_idx]
+        print(f"  Pre-selected top-{top_k} features by CETT variance (from {n_features:,})")
+
+        # StandardScaler: zero-mean unit-variance — required for saga numerical stability
+        col_mean = X.mean(axis=0)
+        col_std = X.std(axis=0)
+        col_std[col_std == 0] = 1.0
+        X = (X - col_mean) / col_std
 
         # Train / validation split
         X_train, X_val, y_train, y_val, idx_train, idx_val = train_test_split(
@@ -381,12 +391,13 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         probe_accuracy = balanced_accuracy_score(y_val, val_pred)
 
         # H-Neurons: positive-weight neurons (active during correct answers)
-        coef = clf.coef_[0]  # (n_features,)
-        h_neuron_flat = np.where(coef > 0)[0]
+        coef = clf.coef_[0]  # (top_k,)
+        selected_flat = np.where(coef > 0)[0]  # indices within the top-K subset
 
-        # Map flat indices → (layer_idx, neuron_idx_within_layer)
+        # Map back to original flat indices → (layer_idx, neuron_idx_within_layer)
         h_neurons_decoded: List[Tuple[int, int]] = []
-        for flat_idx in h_neuron_flat:
+        for sel_idx in selected_flat:
+            flat_idx = int(top_k_idx[sel_idx])
             layer_pos = flat_idx // intermediate_dim
             neuron_pos = flat_idx % intermediate_dim
             if layer_pos < len(layers):
@@ -469,11 +480,7 @@ class HNeuronAnalysisExperiment(BaseExperiment):
             "h_neuron_ratio_permille": len(h_neurons_decoded) / n_features * 1000,
             "layer_distribution": layer_counts,
             "top_h_neurons": [
-                {
-                    "layer": li,
-                    "neuron": ni,
-                    "coef": float(coef[layers.index(li) * intermediate_dim + ni]),
-                }
+                {"layer": li, "neuron": ni}
                 for li, ni in h_neurons_decoded[:50]  # top 50 by layer order
             ],
             **causal_results,
