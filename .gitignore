@@ -9,6 +9,9 @@
 outputs/
 multirun/
 
+# Model configs (local only — never commit)
+conf/model/
+
 # Python
 __pycache__/
 *.py[cod]
