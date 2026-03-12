@@ -350,6 +350,13 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         X = np.stack(cett_matrix, axis=0)  # (n_valid, n_features)
         y = np.array(labels)  # (n_valid,)
 
+        # Clip and normalize to prevent matmul overflow in liblinear
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        X = np.clip(X, 0.0, np.percentile(X[X > 0], 99.9) if (X > 0).any() else 1.0)
+        col_max = X.max(axis=0)
+        col_max[col_max == 0] = 1.0
+        X = X / col_max  # scale each feature to [0, 1]
+
         # Train / validation split
         X_train, X_val, y_train, y_val, idx_train, idx_val = train_test_split(
             X,
@@ -361,9 +368,10 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         )
 
         clf = LogisticRegression(
+            penalty="l1",
             solver="liblinear",
             C=self.l1_C,
-            l1_ratio=1.0,
+            class_weight="balanced",  # handle correct/incorrect imbalance
             max_iter=1000,
             random_state=self.seed,
         )
