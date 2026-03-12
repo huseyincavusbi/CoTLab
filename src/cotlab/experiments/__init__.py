@@ -10,6 +10,7 @@ from .cot_faithfulness import CoTFaithfulnessExperiment
 from .cot_heads import CoTHeadsExperiment
 from .full_layer_cot import FullLayerCoTExperiment
 from .full_layer_patching import FullLayerPatchingExperiment
+from .h_neuron_analysis import HNeuronAnalysisExperiment
 from .logit_lens import LogitLensExperiment
 from .multi_head_cot import MultiHeadCoTExperiment
 from .multi_head_patching import MultiHeadPatchingExperiment
@@ -20,6 +21,7 @@ from .steering_vectors import SteeringVectorsExperiment
 from .sycophancy_heads import SycophancyHeadsExperiment
 
 __all__ = [
+    "HNeuronAnalysisExperiment",
     "CompositeShiftDetectorExperiment",
     "CoTAblationExperiment",
     "CoTFaithfulnessExperiment",
