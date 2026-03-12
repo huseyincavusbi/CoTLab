@@ -250,8 +250,6 @@ class ResidualNormOODExperiment(BaseExperiment):
         print()
         print(f"  Norm threshold τ* : {tau:.2f}")
         print(f"  Balanced acc @ τ* : {balanced_acc:.4f}")
-        print()
-        print("  SE literature baseline (Kuhn et al. 2023): AUROC ~0.65–0.75")
         print("=" * 66)
 
     # ------------------------------------------------------------------
