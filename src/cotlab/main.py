@@ -95,35 +95,16 @@ def _normalize_hf_model_id(model_value: str) -> str:
     return model_value
 
 
-def _ensure_model_config_file(model_value: str, safe_name: str) -> None:
-    """Create a minimal model config using model_value as-is if it doesn't exist."""
-    if not safe_name:
-        return
-    config_dir = _repo_root() / "conf" / "model"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    config_path = config_dir / f"{safe_name}.yaml"
+def _ensure_model_config_file(hf_id: str) -> None:
+    """Create conf/model/{org}/{repo}.yaml if it doesn't exist."""
+    hf_name = _normalize_hf_model_id(hf_id)
+    config_path = _repo_root() / "conf" / "model" / f"{hf_name}.yaml"
     if config_path.exists():
         return
-
-    # Normalize HF model id: org/repo-name-with-hyphens
-    hf_name = _normalize_hf_model_id(model_value)
-
-    # When model_value contains no "/" it is a safe-name, not a HF model id.
-    # Write a stub but flag it clearly so the user knows to set the real id.
-    hf_comment = (
-        ""
-        if "/" in model_value
-        else (
-            "\n# WARNING: could not infer HuggingFace model id from safe-name.\n"
-            "# Set `name` to the correct HF repo id, e.g. google/medgemma-4b-it\n"
-            "# or re-run with model=org/repo-id to auto-generate a correct config.\n"
-        )
-    )
-
+    config_path.parent.mkdir(parents=True, exist_ok=True)
     content = "".join(
         [
             "# Auto-generated model config\n",
-            hf_comment,
             f"name: {hf_name}\n",
             "max_new_tokens: 512\n",
             "temperature: 0.7\n",
@@ -131,44 +112,23 @@ def _ensure_model_config_file(model_value: str, safe_name: str) -> None:
         ]
     )
     config_path.write_text(content)
-    print(f"[cotlab] Auto-generated model config: conf/model/{safe_name}.yaml (name: {hf_name})")
-    if "/" not in model_value:
-        print(
-            f"[cotlab] WARNING: '{model_value}' is not a HuggingFace model id (no '/' found).\n"
-            f"[cotlab]   Edit conf/model/{safe_name}.yaml and set `name` to the correct HF repo id,\n"
-            f"[cotlab]   e.g.  name: google/medgemma-4b-it\n"
-            f"[cotlab]   or re-run with: model=google/medgemma-4b-it"
-        )
+    print(f"[cotlab] Auto-generated model config: conf/model/{hf_name}.yaml")
 
 
 def _rewrite_hf_model_override(argv: list[str]) -> list[str]:
-    """Support `model=<any-value>` by auto-generating a config file when one is missing.
-
-    Two forms are handled:
-      model=org/name       HF id with slash  → rewrite to model.name= overrides
-      model=some_safe_name safe-name form    → auto-generate config using the value as-is
-    """
+    """Support `model=org/repo` by auto-generating conf/model/{org}/{repo}.yaml if missing."""
     rewritten: list[str] = []
-    changed = False
 
     for arg in argv:
         if arg.startswith("model="):
             model_value = arg.split("=", 1)[1]
-            if "/" in model_value or model_value.startswith(".") or model_value.startswith("/"):
-                # Full HF / local path — rewrite to model.name= and auto-generate config.
-                changed = True
+            if "/" in model_value:
                 hf_id = _normalize_hf_model_id(model_value)
-                safe_name = _safe_model_name(hf_id)
-                _ensure_model_config_file(hf_id, safe_name)
-                rewritten.append(f"model.name={hf_id}")
+                _ensure_model_config_file(hf_id)
+                rewritten.append(f"model={hf_id}")
                 continue
-            else:
-                # Safe-name form — auto-generate config using model_value as-is for `name`.
-                _ensure_model_config_file(model_value, model_value)
         rewritten.append(arg)
 
-    if not changed:
-        return argv
     return rewritten
 
 
