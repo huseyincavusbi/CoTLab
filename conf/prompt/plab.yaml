@@ -3,6 +3,6 @@ _target_: cotlab.prompts.PLABPromptStrategy
 
 name: plab
 few_shot: false
-output_format: json  # json or plain
+output_format: plain  # json or plain
 answer_first: false  # If true, output answer then reasoning
 contrarian: false  # If true, use skeptical/critical system role
