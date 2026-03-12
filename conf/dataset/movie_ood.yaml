@@ -1,0 +1,7 @@
+# Post-cutoff movie MCQ dataset — true zero-knowledge OOD baseline.
+# Films released after MedGemma training cutoff (2025-07-01).
+# Generated via: python scripts/build_movie_ood_dataset.py
+_target_: cotlab.datasets.loaders.MovieOODDataset
+
+name: movie_ood
+path: data/movie_ood.jsonl

@@ -1817,3 +1817,73 @@ class PubMedQADataset(BaseDataset):
             "contrarian",
             "few_shot",
         ]
+
+
+@Registry.register_dataset("movie_ood")
+class MovieOODDataset(BaseDataset):
+    """Post-cutoff movie MCQ dataset for true zero-knowledge OOD evaluation.
+
+    Generated from TMDB API: films released after MedGemma training cutoff (2025-07-01).
+    Question types: director, cast, genre, production_country.
+
+    Format: JSONL with fields:
+    - question: Question text
+    - options: Dict {"A": "...", "B": "...", "C": "...", "D": "..."}
+    - answer: Correct answer letter (A/B/C/D)
+    - metadata: movie_id, title, release_date, question_type
+    """
+
+    def __init__(
+        self,
+        name: str = "movie_ood",
+        path: str = "data/movie_ood.jsonl",
+        **kwargs,
+    ):
+        self._name = name
+        self._samples: List[Sample] = []
+        self._load(Path(path))
+
+    def _load(self, path: Path):
+        if not path.exists():
+            raise FileNotFoundError(
+                f"movie_ood dataset not found at {path}.\n"
+                "Run: python scripts/build_movie_ood_dataset.py"
+            )
+        with open(path, "r", encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                line = line.strip()
+                if not line:
+                    continue
+                data = json.loads(line)
+                question = data["question"]
+                options = data["options"]
+                formatted_options = "\n".join(
+                    f"{key}) {val}" for key, val in sorted(options.items())
+                )
+                text = f"{question}\n\n{formatted_options}"
+                self._samples.append(
+                    Sample(
+                        idx=i,
+                        text=text,
+                        label=data.get("answer", "").strip().upper(),
+                        metadata=data.get("metadata", {}),
+                    )
+                )
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def __len__(self) -> int:
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> Sample:
+        return self._samples[idx]
+
+    def get_compatible_prompts(self) -> list[str]:
+        return [
+            "mcq",
+            "direct_answer",
+            "chain_of_thought",
+            "few_shot",
+        ]
