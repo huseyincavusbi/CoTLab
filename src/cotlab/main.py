@@ -128,7 +128,6 @@ def _ensure_model_config_file(model_value: str, safe_name: str) -> None:
             "max_new_tokens: 512\n",
             "temperature: 0.7\n",
             "top_p: 0.9\n",
-            f"safe_name: {safe_name}\n",
         ]
     )
     config_path.write_text(content)
@@ -162,8 +161,6 @@ def _rewrite_hf_model_override(argv: list[str]) -> list[str]:
                 safe_name = _safe_model_name(hf_id)
                 _ensure_model_config_file(hf_id, safe_name)
                 rewritten.append(f"model.name={hf_id}")
-                if safe_name:
-                    rewritten.append(f"model.safe_name={safe_name}")
                 continue
             else:
                 # Safe-name form — auto-generate config using model_value as-is for `name`.
