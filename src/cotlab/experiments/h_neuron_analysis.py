@@ -206,7 +206,7 @@ class HNeuronAnalysisExperiment(BaseExperiment):
             z_last = z_cache[layer_idx]  # (intermediate_dim,)
             h_last = h_cache[layer_idx]  # (hidden_dim,)
             h_norm = torch.norm(h_last).item() + 1e-8
-            cett = (z_last.abs() * col_norms[layer_idx]) / h_norm  # (intermediate_dim,)
+            cett = (z_last * col_norms[layer_idx]) / h_norm  # signed: preserves direction for probe
             cett_parts.append(cett)
 
         return torch.cat(cett_parts, dim=0), logits
