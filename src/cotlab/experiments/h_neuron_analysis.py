@@ -296,9 +296,20 @@ class HNeuronAnalysisExperiment(BaseExperiment):
 
         # ----------------------------------------------------------------
         # Phase 1 — Extract CETT features + labels
+        # Online Welford variance tracking avoids building the full
+        # (n_samples × n_features) matrix in RAM — critical for large models
+        # where n_features can exceed 1M and cause OOM (e.g. 27b: 1.33M features).
         # ----------------------------------------------------------------
         print("\n[2/3] Extracting CETT features...")
-        cett_matrix = []
+        top_k = min(5000, n_features)
+
+        # Welford online mean/variance accumulators (float64 for numerical stability)
+        welford_n = 0
+        welford_mean = np.zeros(n_features, dtype=np.float64)
+        welford_M2 = np.zeros(n_features, dtype=np.float64)
+
+        # Store raw CETT vectors temporarily — we'll pre-select after Pass 1
+        cett_raw = []
         labels = []
         per_sample = []
         skipped = 0
@@ -321,7 +332,10 @@ class HNeuronAnalysisExperiment(BaseExperiment):
             pred = self._predict_letter(logits, letter_ids)
             is_correct = pred == gt
 
-            cett_matrix.append(cett_vec.numpy().astype(np.float32))
+            vec = np.nan_to_num(
+                cett_vec.numpy().astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0
+            )
+            cett_raw.append(vec)
             labels.append(int(is_correct))
             per_sample.append(
                 {
@@ -331,6 +345,12 @@ class HNeuronAnalysisExperiment(BaseExperiment):
                     "is_correct": is_correct,
                 }
             )
+
+            # Welford update
+            welford_n += 1
+            delta = vec.astype(np.float64) - welford_mean
+            welford_mean += delta / welford_n
+            welford_M2 += delta * (vec.astype(np.float64) - welford_mean)
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -347,19 +367,16 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         # Phase 2 — L1 Logistic Regression → H-Neurons
         # ----------------------------------------------------------------
         print("\n[3/3] Training L1 probe...")
-        X = np.stack(cett_matrix, axis=0)  # (n_valid, n_features)
-        y = np.array(labels)  # (n_valid,)
 
-        # Clean up NaN/Inf
-        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
-
-        # Variance-based pre-selection: keep top-K neurons by CETT variance across samples.
-        # With n_samples << n_features (e.g. 100 vs 348k) the probe is underdetermined without this.
-        top_k = min(5000, X.shape[1])
-        feature_var = X.var(axis=0)
-        top_k_idx = np.argsort(feature_var)[-top_k:]  # indices of top-K highest-variance neurons
-        X = X[:, top_k_idx]
+        # Variance pre-selection using online-computed variance (no full matrix needed)
+        feature_var = welford_M2 / max(welford_n - 1, 1)
+        top_k_idx = np.argsort(feature_var)[-top_k:]
         print(f"  Pre-selected top-{top_k} features by CETT variance (from {n_features:,})")
+
+        # Now build the compact matrix — only top-K columns
+        X = np.stack([v[top_k_idx] for v in cett_raw], axis=0)  # (n_valid, top_k)
+        del cett_raw  # free full-size vectors immediately
+        y = np.array(labels)  # (n_valid,)
 
         # StandardScaler: zero-mean unit-variance — required for saga numerical stability
         col_mean = X.mean(axis=0)
