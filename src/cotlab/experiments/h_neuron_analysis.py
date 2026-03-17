@@ -312,6 +312,7 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         cett_raw = []
         labels = []
         per_sample = []
+        valid_samples = []
         skipped = 0
 
         for sample in tqdm(samples, desc="CETT extraction"):
@@ -337,6 +338,7 @@ class HNeuronAnalysisExperiment(BaseExperiment):
             )
             cett_raw.append(vec)
             labels.append(int(is_correct))
+            valid_samples.append(sample)
             per_sample.append(
                 {
                     "sample_idx": sample.idx,
@@ -449,7 +451,7 @@ class HNeuronAnalysisExperiment(BaseExperiment):
                 correct_alpha = 0
                 total_alpha = 0
                 for val_i in idx_val:
-                    s = samples[val_i] if val_i < len(samples) else None
+                    s = valid_samples[val_i] if val_i < len(valid_samples) else None
                     if s is None:
                         continue
                     gt = self._ground_truth_letter(s)
