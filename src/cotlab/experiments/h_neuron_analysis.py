@@ -12,14 +12,26 @@ Phase 1 — Feature Extraction:
   at the final prompt token (answer cue position). Label each sample correct/incorrect
   via ground-truth comparison.
 
+  With contrastive_labeling=True (3-vs-1 strategy):
+    - CETT is captured at the GENERATED answer token (A/B/C/D), not the last prompt token.
+    - Each QA sample contributes TWO training rows:
+        answer-token row:  y=1 if hallucinatory,  y=0 if faithful
+        other-token row:   y=0 always  (negative control)
+    - H-Neurons have POSITIVE weight → active during hallucination generation.
+      Causal direction is inverted vs default: suppression RAISES accuracy,
+      amplification LOWERS it.
+
 Phase 2 — H-Neuron Discovery:
-  Train an L1-regularised logistic regression on the (n_samples × n_features) CETT
-  matrix. Neurons with positive weights are H-Neurons — they are active during correct
-  answers and absent during hallucination.
+  Train an L1-regularised logistic regression on the (n_rows × n_features) CETT
+  matrix. Neurons with positive weights are H-Neurons.
+
+  A random-neuron baseline is always computed: same N randomly selected neurons,
+  same probe, same hyperparameters. This replicates Table 1 of the paper.
 
 Phase 3 — Causal Validation:
   Re-run inference on a held-out split with H-Neuron activations scaled by α ∈ [0, 2].
-  α = 0 (full suppression) should drop accuracy; α > 1 (amplification) should raise it.
+  Default labeling:       α = 0 drops accuracy, α > 1 raises accuracy.
+  Contrastive labeling:   α = 0 raises accuracy, α > 1 drops accuracy.
 
 CETT Formula
 ------------
@@ -72,6 +84,7 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         max_input_tokens: int = 1024,
         answer_cue: str = "\n\nAnswer:",
         mcq_letters: Optional[List[str]] = None,
+        contrastive_labeling: bool = False,  # 3-vs-1: CETT at generated answer token, hallucination=1
         **kwargs,
     ):
         self._name = name
@@ -85,6 +98,7 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         self.max_input_tokens = max_input_tokens
         self.answer_cue = answer_cue
         self.mcq_letters = mcq_letters or _MCQ_LETTERS
+        self.contrastive_labeling = contrastive_labeling
 
     @property
     def name(self) -> str:
@@ -211,6 +225,71 @@ class HNeuronAnalysisExperiment(BaseExperiment):
 
         return torch.cat(cett_parts, dim=0), logits
 
+    def _forward_cett_at_answer_token(
+        self,
+        backend: InferenceBackend,
+        tokens: Dict[str, torch.Tensor],
+        predicted_letter: str,
+        letter_ids: Dict[str, int],
+        layers: List[int],
+        col_norms: Dict[int, torch.Tensor],
+    ) -> torch.Tensor:
+        """
+        Append the predicted answer letter token to the prompt and run a forward pass.
+        Captures CETT at the generated answer token position (last token).
+
+        Used by contrastive_labeling=True: hallucination neurons fire
+        specifically when the model is generating its (wrong) answer token.
+
+        Returns:
+            cett_answer: (n_layers * intermediate_dim,) float32 — CETT at answer token
+        """
+        letter_token_id = letter_ids[predicted_letter]
+        input_ids = tokens["input_ids"]  # (1, seq_len)
+        letter_t = torch.tensor([[letter_token_id]], device=input_ids.device)
+        extended_ids = torch.cat([input_ids, letter_t], dim=1)
+
+        extended_tokens: Dict[str, torch.Tensor] = {"input_ids": extended_ids}
+        if "attention_mask" in tokens:
+            m = tokens["attention_mask"]
+            extended_tokens["attention_mask"] = torch.cat(
+                [m, torch.ones((1, 1), device=m.device, dtype=m.dtype)], dim=1
+            )
+
+        z_cache: Dict[int, torch.Tensor] = {}
+        h_cache: Dict[int, torch.Tensor] = {}
+        handles = []
+
+        for layer_idx in layers:
+            down_proj = backend.hook_manager.get_mlp_down_proj_module(layer_idx)
+
+            def make_hook(idx: int):
+                def hook(module, input, output):
+                    z = input[0]
+                    h = output
+                    z_cache[idx] = z[0, -1, :].detach().float().cpu()  # answer token
+                    h_cache[idx] = h[0, -1, :].detach().float().cpu()
+                    return output
+
+                return hook
+
+            handles.append(down_proj.register_forward_hook(make_hook(layer_idx)))
+
+        try:
+            with torch.no_grad():
+                backend._model(**extended_tokens)
+        finally:
+            for h in handles:
+                h.remove()
+
+        cett_parts = []
+        for layer_idx in layers:
+            h_norm = torch.norm(h_cache[layer_idx]).item() + 1e-8
+            cett = (z_cache[layer_idx] * col_norms[layer_idx]) / h_norm
+            cett_parts.append(cett)
+
+        return torch.cat(cett_parts, dim=0)
+
     # ------------------------------------------------------------------
     # Causal validation
     # ------------------------------------------------------------------
@@ -281,10 +360,11 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         print(f"\n{'=' * 60}")
         print(f"H-NEURON ANALYSIS — {dataset.name}")
         print(f"{'=' * 60}")
-        print(f"  Layers     : {len(layers)} (stride {self.layer_stride})")
-        print(f"  Samples    : {len(samples)}")
-        print(f"  L1 C       : {self.l1_C}")
-        print(f"  Alpha vals : {self.alpha_values}")
+        print(f"  Layers          : {len(layers)} (stride {self.layer_stride})")
+        print(f"  Samples         : {len(samples)}")
+        print(f"  L1 C            : {self.l1_C}")
+        print(f"  Alpha vals      : {self.alpha_values}")
+        print(f"  Contrastive     : {self.contrastive_labeling}")
 
         # Precompute column norms once — shape per layer: (intermediate_dim,)
         print("\n[1/3] Precomputing W_down column norms...")
@@ -296,9 +376,6 @@ class HNeuronAnalysisExperiment(BaseExperiment):
 
         # ----------------------------------------------------------------
         # Phase 1 — Extract CETT features + labels
-        # Online Welford variance tracking avoids building the full
-        # (n_samples × n_features) matrix in RAM — critical for large models
-        # where n_features can exceed 1M and cause OOM (e.g. 27b: 1.33M features).
         # ----------------------------------------------------------------
         print("\n[2/3] Extracting CETT features...")
         top_k = min(5000, n_features)
@@ -308,11 +385,14 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         welford_mean = np.zeros(n_features, dtype=np.float64)
         welford_M2 = np.zeros(n_features, dtype=np.float64)
 
-        # Store raw CETT vectors temporarily — we'll pre-select after Pass 1
-        cett_raw = []
-        labels = []
-        per_sample = []
+        # cett_raw: one row per training example (2 rows per QA sample when contrastive_labeling)
+        cett_raw: List[np.ndarray] = []
+        labels: List[int] = []
+        # Maps each cett_raw row back to its QA sample index in valid_samples
+        row_to_sample_idx: List[int] = []
+
         valid_samples = []
+        per_sample = []
         skipped = 0
 
         for sample in tqdm(samples, desc="CETT extraction"):
@@ -333,11 +413,7 @@ class HNeuronAnalysisExperiment(BaseExperiment):
             pred = self._predict_letter(logits, letter_ids)
             is_correct = pred == gt
 
-            vec = np.nan_to_num(
-                cett_vec.numpy().astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0
-            )
-            cett_raw.append(vec)
-            labels.append(int(is_correct))
+            sample_pos = len(valid_samples)
             valid_samples.append(sample)
             per_sample.append(
                 {
@@ -348,19 +424,74 @@ class HNeuronAnalysisExperiment(BaseExperiment):
                 }
             )
 
-            # Welford update
-            welford_n += 1
-            delta = vec.astype(np.float64) - welford_mean
-            welford_mean += delta / welford_n
-            welford_M2 += delta * (vec.astype(np.float64) - welford_mean)
+            if self.contrastive_labeling:
+                # Contrastive labeling: capture CETT at the generated answer token.
+                # H-Neurons = neurons active during hallucination (wrong answer generation).
+                try:
+                    cett_answer_vec = self._forward_cett_at_answer_token(
+                        backend, tokens, pred, letter_ids, layers, col_norms
+                    )
+                except Exception:
+                    valid_samples.pop()
+                    per_sample.pop()
+                    skipped += 1
+                    continue
+
+                cett_answer = np.nan_to_num(
+                    cett_answer_vec.numpy().astype(np.float32),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+                cett_other = np.nan_to_num(
+                    cett_vec.numpy().astype(np.float32),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+
+                # Answer-token row: y=1 if hallucinatory, y=0 if faithful
+                cett_raw.append(cett_answer)
+                labels.append(0 if is_correct else 1)
+                row_to_sample_idx.append(sample_pos)
+
+                # Other-token row: always y=0 (negative control)
+                cett_raw.append(cett_other)
+                labels.append(0)
+                row_to_sample_idx.append(sample_pos)
+
+                for vec in (cett_answer, cett_other):
+                    welford_n += 1
+                    delta = vec.astype(np.float64) - welford_mean
+                    welford_mean += delta / welford_n
+                    welford_M2 += delta * (vec.astype(np.float64) - welford_mean)
+
+            else:
+                # Default: binary correct/incorrect label at last prompt token
+                vec = np.nan_to_num(
+                    cett_vec.numpy().astype(np.float32),
+                    nan=0.0,
+                    posinf=0.0,
+                    neginf=0.0,
+                )
+                cett_raw.append(vec)
+                labels.append(int(is_correct))
+                row_to_sample_idx.append(sample_pos)
+
+                welford_n += 1
+                delta = vec.astype(np.float64) - welford_mean
+                welford_mean += delta / welford_n
+                welford_M2 += delta * (vec.astype(np.float64) - welford_mean)
 
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-        n_valid = len(labels)
-        accuracy = sum(labels) / n_valid if n_valid > 0 else 0.0
-        print(f"  Valid samples : {n_valid}  (skipped {skipped})")
-        print(f"  Accuracy      : {accuracy:.3f}")
+        n_valid = len(valid_samples)  # number of QA samples
+        n_rows = len(labels)  # number of training rows (2× when contrastive_labeling)
+        accuracy = sum(p["is_correct"] for p in per_sample) / n_valid if n_valid > 0 else 0.0
+        print(f"  Valid QA samples : {n_valid}  (skipped {skipped})")
+        print(f"  Training rows    : {n_rows}")
+        print(f"  Accuracy         : {accuracy:.3f}")
 
         if n_valid < 20:
             print("  WARNING: too few valid samples for reliable probing.")
@@ -375,32 +506,41 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         top_k_idx = np.argsort(feature_var)[-top_k:]
         print(f"  Pre-selected top-{top_k} features by CETT variance (from {n_features:,})")
 
-        # Now build the compact matrix — only top-K columns
-        X = np.stack([v[top_k_idx] for v in cett_raw], axis=0)  # (n_valid, top_k)
+        # Build compact matrix — only top-K columns
+        X = np.stack([v[top_k_idx] for v in cett_raw], axis=0)  # (n_rows, top_k)
         del cett_raw  # free full-size vectors immediately
-        y = np.array(labels)  # (n_valid,)
+        y = np.array(labels)  # (n_rows,)
 
-        # StandardScaler: zero-mean unit-variance — required for saga numerical stability
+        # StandardScaler: zero-mean unit-variance
         col_mean = X.mean(axis=0)
         col_std = X.std(axis=0)
         col_std[col_std == 0] = 1.0
         X = (X - col_mean) / col_std
 
-        # Train / validation split
-        X_train, X_val, y_train, y_val, idx_train, idx_val = train_test_split(
-            X,
-            y,
-            np.arange(n_valid),
+        # ---- Train/val split at QA-sample level to avoid leakage ----
+        # Split sample indices, then expand to row indices.
+        sample_correct = np.array([int(p["is_correct"]) for p in per_sample])
+        sample_arr = np.arange(n_valid)
+        can_stratify = sample_correct.sum() > 1 and (n_valid - sample_correct.sum()) > 1
+        train_s, val_s = train_test_split(
+            sample_arr,
             test_size=self.validation_split,
             random_state=self.seed,
-            stratify=y if y.sum() > 1 and (len(y) - y.sum()) > 1 else None,
+            stratify=sample_correct if can_stratify else None,
         )
+        train_set = set(train_s.tolist())
+        val_set = set(val_s.tolist())
+        train_row_idx = np.array([i for i, si in enumerate(row_to_sample_idx) if si in train_set])
+        val_row_idx = np.array([i for i, si in enumerate(row_to_sample_idx) if si in val_set])
+
+        X_train, X_val = X[train_row_idx], X[val_row_idx]
+        y_train, y_val = y[train_row_idx], y[val_row_idx]
 
         clf = LogisticRegression(
             penalty="l1",
             solver="liblinear",
             C=self.l1_C,
-            class_weight="balanced",  # handle correct/incorrect imbalance
+            class_weight="balanced",
             max_iter=1000,
             random_state=self.seed,
         )
@@ -409,11 +549,13 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         val_pred = clf.predict(X_val)
         probe_accuracy = balanced_accuracy_score(y_val, val_pred)
 
-        # H-Neurons: positive-weight neurons (active during correct answers)
+        # H-Neurons: positive-weight neurons
+        # Default labeling:  positive weight → active during CORRECT answers
+        # Contrastive:       positive weight → active during HALLUCINATORY answers
         coef = clf.coef_[0]  # (top_k,)
-        selected_flat = np.where(coef > 0)[0]  # indices within the top-K subset
+        selected_flat = np.where(coef > 0)[0]
 
-        # Map back to original flat indices → (layer_idx, neuron_idx_within_layer)
+        # Map back to (layer_idx, neuron_idx_within_layer)
         h_neurons_decoded: List[Tuple[int, int]] = []
         for sel_idx in selected_flat:
             flat_idx = int(top_k_idx[sel_idx])
@@ -422,7 +564,7 @@ class HNeuronAnalysisExperiment(BaseExperiment):
             if layer_pos < len(layers):
                 h_neurons_decoded.append((layers[layer_pos], int(neuron_pos)))
 
-        # Layer distribution of H-neurons
+        # Layer distribution
         layer_counts: Dict[int, int] = {}
         for layer_idx, _ in h_neurons_decoded:
             layer_counts[layer_idx] = layer_counts.get(layer_idx, 0) + 1
@@ -434,26 +576,68 @@ class HNeuronAnalysisExperiment(BaseExperiment):
             top_layers = sorted(layer_counts.items(), key=lambda x: x[1], reverse=True)[:5]
             print(f"  Top layers (H-neurons): {top_layers}")
 
-        # AUROC of probe score vs correctness
+        # AUROC of probe score vs correctness label
         try:
             probe_scores_val = clf.predict_proba(X_val)[:, 1]
             probe_auroc = roc_auc_score(y_val, probe_scores_val)
         except Exception:
             probe_auroc = None
 
+        # ---- Random neuron baseline ----
+        # Same N neurons sampled randomly from the top-k variance pool.
+        # Same L1 probe, same hyperparameters. Validates H-Neuron advantage.
+        random_baseline_auroc = None
+        random_baseline_bal_acc = None
+        if len(h_neurons_decoded) > 0:
+            rng = np.random.RandomState(self.seed + 1)
+            n_rand = len(h_neurons_decoded)
+            rand_col_idx = rng.choice(top_k, size=min(n_rand, top_k), replace=False)
+            X_tr_rand = X_train[:, rand_col_idx]
+            X_v_rand = X_val[:, rand_col_idx]
+
+            clf_rand = LogisticRegression(
+                penalty="l1",
+                solver="liblinear",
+                C=self.l1_C,
+                class_weight="balanced",
+                max_iter=1000,
+                random_state=self.seed,
+            )
+            clf_rand.fit(X_tr_rand, y_train)
+            rand_pred = clf_rand.predict(X_v_rand)
+            random_baseline_bal_acc = balanced_accuracy_score(y_val, rand_pred)
+            try:
+                rand_scores = clf_rand.predict_proba(X_v_rand)[:, 1]
+                random_baseline_auroc = roc_auc_score(y_val, rand_scores)
+            except Exception:
+                pass
+
+            print(f"  Random baseline acc  : {random_baseline_bal_acc:.3f}")
+            print(f"  Random baseline AUROC: {random_baseline_auroc}")
+            if probe_auroc is not None and random_baseline_auroc is not None:
+                gap = probe_auroc - random_baseline_auroc
+                print(f"  H-Neuron AUROC gap   : {gap:+.3f}  (paper claims >0.10)")
+
         # ----------------------------------------------------------------
         # Phase 3 — Causal Validation
         # ----------------------------------------------------------------
         causal_results: Dict[str, float] = {}
-        if h_neurons_decoded and len(idx_val) > 0:
-            print(f"\n  Causal validation on {len(idx_val)} held-out samples...")
+        if h_neurons_decoded and len(val_s) > 0:
+            print(f"\n  Causal validation on {len(val_s)} held-out QA samples...")
+            if self.contrastive_labeling:
+                print(
+                    "  (Contrastive: suppression should RAISE accuracy, amplification should LOWER it)"
+                )
+            else:
+                print(
+                    "  (Default labeling: suppression should LOWER accuracy, amplification should RAISE it)"
+                )
+
             for alpha in self.alpha_values:
                 correct_alpha = 0
                 total_alpha = 0
-                for val_i in idx_val:
-                    s = valid_samples[val_i] if val_i < len(valid_samples) else None
-                    if s is None:
-                        continue
+                for si in val_s:
+                    s = valid_samples[si]
                     gt = self._ground_truth_letter(s)
                     if gt is None:
                         continue
@@ -484,20 +668,25 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         print(f"  Accuracy (no intervention)  : {accuracy:.3f}")
         print(f"  Probe balanced accuracy     : {probe_accuracy:.3f}")
         print(f"  Probe AUROC                 : {probe_auroc}")
+        print(f"  Random baseline AUROC       : {random_baseline_auroc}")
         print(f"  H-Neurons identified        : {len(h_neurons_decoded)}")
 
         metrics: Dict[str, Any] = {
             "dataset": dataset.name,
             "n_samples": n_valid,
+            "n_training_rows": n_rows,
             "n_layers": len(layers),
             "intermediate_dim": intermediate_dim,
             "n_features": n_features,
             "accuracy": accuracy,
             "probe_balanced_accuracy": probe_accuracy,
             "probe_auroc": probe_auroc,
+            "random_baseline_balanced_accuracy": random_baseline_bal_acc,
+            "random_baseline_auroc": random_baseline_auroc,
             "n_h_neurons": len(h_neurons_decoded),
             "h_neuron_ratio_permille": len(h_neurons_decoded) / n_features * 1000,
             "layer_distribution": layer_counts,
+            "contrastive_labeling": self.contrastive_labeling,
             "top_h_neurons": [
                 {"layer": li, "neuron": ni}
                 for li, ni in h_neurons_decoded[:50]  # top 50 by layer order
@@ -518,5 +707,6 @@ class HNeuronAnalysisExperiment(BaseExperiment):
                 "l1_C": self.l1_C,
                 "alpha_values": self.alpha_values,
                 "num_samples_requested": self.num_samples,
+                "contrastive_labeling": self.contrastive_labeling,
             },
         )

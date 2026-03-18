@@ -1,14 +1,12 @@
 # H-Neuron Analysis — CETT-based hallucination neuron identification.
 #
-# Implements arXiv:2512.01797 adapted for MCQ tasks.
-#
 # Phase 1: Extract per-neuron CETT features across all FFN layers
 # Phase 2: L1 logistic regression → sparse H-Neuron set
 # Phase 3: Causal validation (suppress/amplify H-Neurons, measure accuracy)
 _target_: cotlab.experiments.HNeuronAnalysisExperiment
 
 name: h_neuron_analysis
-description: "CETT-based H-Neuron discovery and causal validation (arXiv:2512.01797)"
+description: "CETT-based H-Neuron discovery and causal validation"
 
 num_samples: 500
 validation_split: 0.2          # 20% held out for causal validation
@@ -18,3 +16,4 @@ layer_stride: 1                # 1 = all layers; 2 = even layers only (faster)
 seed: 42
 max_input_tokens: 1024
 answer_cue: "\n\nAnswer:"
+contrastive_labeling: false    # true: CETT at generated answer token, hallucination=1 (3-vs-1)
