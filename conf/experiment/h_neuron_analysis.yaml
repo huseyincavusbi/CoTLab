@@ -10,7 +10,7 @@ description: "CETT-based H-Neuron discovery and causal validation"
 
 num_samples: 500
 validation_split: 0.2          # 20% held out for causal validation
-l1_C: 0.1                      # Inverse L1 strength — lower = sparser solution
+l1_C: 0.01                     # Inverse L1 strength — lower = sparser solution
 alpha_values: [0.0, 0.5, 1.0, 1.5, 2.0]  # Causal scaling factors for validation (1.0 = baseline check)
 layer_stride: 1                # 1 = all layers; 2 = even layers only (faster)
 seed: 42
