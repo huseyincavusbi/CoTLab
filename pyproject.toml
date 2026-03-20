@@ -23,12 +23,6 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-
-[project.urls]
-Repository = "https://github.com/huseyincavusbi/CoTLab"
-Documentation = "https://huseyincavusbi.github.io/CoTLab"
-Issues = "https://github.com/huseyincavusbi/CoTLab/issues"
-
 dependencies = [
     "click>=8.1.0",
     "torch>=2.1.0",
@@ -65,6 +59,11 @@ dev = [
     "jupyter>=1.0.0",
     "pre-commit>=3.0.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/huseyincavusbi/CoTLab"
+Documentation = "https://huseyincavusbi.github.io/CoTLab"
+Issues = "https://github.com/huseyincavusbi/CoTLab/issues"
 
 [project.scripts]
 cotlab = "cotlab.main:main"
