@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Hüseyin Çavuş" }
+    { name = "Huseyin Cavus", email = "huseyincavus@proton.me" }
 ]
 keywords = ["chain-of-thought", "interpretability", "mechanistic-interpretability", "llm", "medical-ai", "probing"]
 classifiers = [
