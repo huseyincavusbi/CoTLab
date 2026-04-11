@@ -10,33 +10,29 @@ on:
       - '.github/workflows/docs.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Setup micromamba
-        uses: mamba-org/setup-micromamba@v2
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          micromamba-version: "2.0.5-0"
-          environment-name: cotlab
-          create-args: >-
-            python=3.11
-            pip
-          init-shell: bash
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
-        run: |
-          pip install mkdocs mkdocs-material "mkdocstrings[python]"
-        shell: micromamba-shell {0}
-
-      - name: Install CoTLab package
-        run: pip install -e .
-        shell: micromamba-shell {0}
+        run: uv sync --frozen --extra docs
 
       - name: Deploy to GitHub Pages
-        run: mkdocs gh-deploy --force
-        shell: micromamba-shell {0}
+        run: uv run mkdocs gh-deploy --force
