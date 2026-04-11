@@ -586,7 +586,7 @@ class StructuredOutputMixin:
         except Exception:
             # Fallback to ElementTree with recursive parsing
             try:
-                import xml.etree.ElementTree as ET
+                import defusedxml.ElementTree as ET
 
                 def elem_to_dict(elem):
                     text = elem.text.strip() if elem.text else None
