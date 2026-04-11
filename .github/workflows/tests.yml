@@ -8,6 +8,9 @@ on:
   schedule:
     - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
 
+permissions:
+  contents: read
+
 jobs:
   unit-tests:
     runs-on: ${{ matrix.os }}
@@ -17,7 +20,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Free disk space (Linux)
         if: runner.os == 'Linux'
@@ -25,27 +28,27 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --frozen --all-extras
 
       - name: Run unit tests
-        run: python -m pytest tests/ -v --tb=short
+        run: uv run python -m pytest tests/ -v --tb=short
 
   vllm-metal:
     runs-on: macos-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Print Apple Silicon info
         run: |
@@ -53,12 +56,12 @@ jobs:
           uname -m
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
@@ -71,21 +74,21 @@ jobs:
           cd /tmp
           curl -OL https://github.com/vllm-project/vllm/releases/download/v0.13.0/vllm-0.13.0.tar.gz
           tar xf vllm-0.13.0.tar.gz && cd vllm-0.13.0
-          pip install -r requirements/cpu.txt
-          pip install .
+          uv run pip install -r requirements/cpu.txt
+          uv run pip install .
 
       - name: Pin transformers for vLLM
-        run: pip install "transformers>=4.56.0,<5"
+        run: uv run pip install "transformers>=4.56.0,<5"
 
       - name: Install vllm-metal plugin
-        run: pip install vllm-metal
+        run: uv run pip install vllm-metal
 
       - name: Re-pin transformers (final)
-        run: pip install "transformers>=4.56.0,<5"
+        run: uv run pip install "transformers>=4.56.0,<5"
 
       - name: Show versions
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
           import transformers, vllm
           print("transformers:", transformers.__version__)
           print("vllm:", vllm.__version__)
@@ -93,7 +96,7 @@ jobs:
 
       - name: Test vllm-metal installation
         run: |
-          python -c "
+          uv run python -c "
           from vllm import LLM
           import vllm_metal
           print(f'vLLM-Metal ready!')
@@ -102,7 +105,7 @@ jobs:
 
       - name: Test VLLMBackend platform detection
         run: |
-          python -c "
+          uv run python -c "
           from cotlab.backends.vllm_backend import VLLMBackend, _detect_platform, _is_apple_silicon
           assert _is_apple_silicon(), 'Should detect Apple Silicon'
           assert _detect_platform() == 'metal', 'Should detect metal platform'
@@ -120,7 +123,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Free disk space (Linux)
         if: runner.os == 'Linux'
@@ -128,18 +131,18 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.11"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+        run: uv sync --frozen --all-extras
 
       - name: Check Hugging Face token
         run: |
@@ -150,7 +153,7 @@ jobs:
 
       - name: Authenticate Hugging Face
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
           import os
           from huggingface_hub import login
 
@@ -160,7 +163,7 @@ jobs:
 
       - name: Test framework imports
         run: |
-          python -c "
+          uv run python -c "
           from cotlab import __version__
           from cotlab.backends import TransformersBackend
           from cotlab.experiments import (
@@ -189,7 +192,7 @@ jobs:
 
       - name: Test prompt strategies
         run: |
-          python -c "
+          uv run python -c "
           from cotlab.prompts import create_prompt_strategy
 
           strategies = [
@@ -207,7 +210,7 @@ jobs:
 
       - name: Test dataset loading
         run: |
-          python -c "
+          uv run python -c "
           from cotlab.datasets import SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset, PubHealthBenchDataset, MARCDataset, MedBulletsDataset, PLABDataset
 
           for Dataset in [SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset, PubHealthBenchDataset, MARCDataset, MedBulletsDataset, PLABDataset]:
@@ -219,7 +222,7 @@ jobs:
 
       - name: Test CoT parser
         run: |
-          python -c "
+          uv run python -c "
           from cotlab.analysis import CoTParser
 
           parser = CoTParser()
@@ -237,7 +240,7 @@ jobs:
 
       - name: Test new prompt features (answer_first, few_shot, contrarian)
         run: |
-          python -c "
+          uv run python -c "
           from cotlab.prompts import RadiologyPromptStrategy, CardiologyPromptStrategy
 
           answer_first = RadiologyPromptStrategy(answer_first=True)
@@ -270,7 +273,7 @@ jobs:
 
       - name: Test histopathology dataset and prompt
         run: |
-          python -c "
+          uv run python -c "
           from cotlab.datasets import HistopathologyDataset
           from cotlab.prompts import HistopathologyPromptStrategy
 
@@ -315,7 +318,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Free disk space (Linux)
         if: runner.os == 'Linux'
@@ -323,21 +326,21 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.11"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
         with:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[dev]"
-          pip install papermill ipykernel
-          python -m ipykernel install --user --name cotlab --display-name "CoTLab"
+          uv sync --frozen --all-extras
+          uv pip install --system papermill ipykernel
+          uv run python -m ipykernel install --user --name cotlab --display-name "CoTLab"
 
       - name: Check Hugging Face token
         run: |
@@ -348,17 +351,17 @@ jobs:
 
       - name: Authenticate Hugging Face
         run: |
-          python - <<'PY'
+          uv run python - <<'PY'
           import os
           from huggingface_hub import login
 
           login(token=os.environ["HF_TOKEN"], add_to_git_credential=False)
-          print("Authenticated to Hugging Face Hub.")
+          print("Authenticated to Hugging Hub.")
           PY
 
       - name: Execute tutorial notebook
         run: |
           echo "Running notebook: cotlab_tutorial.ipynb (CI mode: 5 samples, 64 max_tokens)"
           cd notebooks
-          papermill cotlab_tutorial.ipynb cotlab_tutorial_executed.ipynb -k cotlab --progress-bar -p NUM_SAMPLES 5 -p MAX_TOKENS 64
+          uv run papermill cotlab_tutorial.ipynb cotlab_tutorial_executed.ipynb -k cotlab --progress-bar -p NUM_SAMPLES 5 -p MAX_TOKENS 64
           echo "Notebook executed successfully on ${{ matrix.os }}!"
