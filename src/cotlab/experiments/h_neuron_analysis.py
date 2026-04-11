@@ -44,6 +44,7 @@ Reference: arXiv:2512.01797 — "H-Neurons: On the Existence, Impact, and Origin
 of Hallucination-Associated Neurons in LLMs"
 """
 
+import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -406,7 +407,8 @@ class HNeuronAnalysisExperiment(BaseExperiment):
 
             try:
                 cett_vec, logits = self._forward_cett(backend, tokens, layers, col_norms)
-            except Exception:
+            except (RuntimeError, ValueError) as e:
+                logging.warning(f"Error during forward_cett: {e}")
                 skipped += 1
                 continue
 
@@ -431,7 +433,8 @@ class HNeuronAnalysisExperiment(BaseExperiment):
                     cett_answer_vec = self._forward_cett_at_answer_token(
                         backend, tokens, pred, letter_ids, layers, col_norms
                     )
-                except Exception:
+                except (RuntimeError, ValueError, KeyError) as e:
+                    logging.warning(f"Error during forward_cett_at_answer_token: {e}")
                     valid_samples.pop()
                     per_sample.pop()
                     skipped += 1
@@ -580,7 +583,8 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         try:
             probe_scores_val = clf.predict_proba(X_val)[:, 1]
             probe_auroc = roc_auc_score(y_val, probe_scores_val)
-        except Exception:
+        except ValueError as e:
+            logging.warning(f"roc_auc_score failed (likely only one class present): {e}")
             probe_auroc = None
 
         # ---- Random neuron baseline ----
@@ -609,8 +613,8 @@ class HNeuronAnalysisExperiment(BaseExperiment):
             try:
                 rand_scores = clf_rand.predict_proba(X_v_rand)[:, 1]
                 random_baseline_auroc = roc_auc_score(y_val, rand_scores)
-            except Exception:
-                pass
+            except ValueError as e:
+                logging.warning(f"Random baseline roc_auc_score failed: {e}")
 
             print(f"  Random baseline acc  : {random_baseline_bal_acc:.3f}")
             print(f"  Random baseline AUROC: {random_baseline_auroc}")
@@ -650,7 +654,8 @@ class HNeuronAnalysisExperiment(BaseExperiment):
                         pred = self._predict_letter(logits, letter_ids)
                         correct_alpha += int(pred == gt)
                         total_alpha += 1
-                    except Exception:
+                    except (RuntimeError, ValueError) as e:
+                        logging.warning(f"Error during causal validation forward pass: {e}")
                         continue
                     if torch.cuda.is_available():
                         torch.cuda.empty_cache()

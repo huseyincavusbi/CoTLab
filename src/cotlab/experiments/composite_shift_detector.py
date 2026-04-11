@@ -32,6 +32,7 @@ Additionally, samples are binned into ``num_bins`` quantile groups and mean
 accuracy per bin is reported.
 """
 
+import logging
 import math
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -196,7 +197,8 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
 
             ec = EmpiricalCovariance(assume_centered=False).fit(features)
             prec = ec.precision_
-        except Exception:
+        except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
+            logging.warning(f"Covariance fit failed: {exc}. Falling back to diagonal variance.")
             # Diagonal fallback
             var = features.var(axis=0) + 1e-8
             prec = np.diag(1.0 / var)
@@ -236,7 +238,8 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
 
             res = spearmanr(x, y)
             return float(res.statistic), float(res.pvalue)
-        except Exception:
+        except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
+            logging.warning(f"Spearmanr failed: {exc}. Using normal approximation.")
             # Normal approximation
             n = len(x)
             rx = np.argsort(np.argsort(x)).astype(float)
@@ -379,7 +382,7 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
 
             try:
                 logits, l2_norm, attn_entropy = self._forward(backend, tokens, norm_layer)
-            except Exception as exc:
+            except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                 tqdm.write(f"  [skip] sample {sample.idx}: {exc}")
                 torch.cuda.empty_cache() if torch.cuda.is_available() else None
                 continue
@@ -455,8 +458,8 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
 
                 # Higher Mahalanobis → OOD → incorrect: negate for AUROC
                 auroc = float(roc_auc_score(lbl_arr, [-s for s in scores]))
-            except Exception:
-                pass
+            except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
+                logging.warning(f"AUROC calculation failed: {exc}")
 
         # ── Rolling accuracy + Spearman ─────────────────────────────────
         roll_scores, roll_acc = self._rolling_accuracy(scores, all_labels)

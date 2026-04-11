@@ -631,7 +631,7 @@ class ActivationPatchingExperiment(BaseExperiment):
             # Tag tokens into groups.
             try:
                 groups = self._tag_tokens(input_ids, tokenizer, sample.metadata or {})
-            except Exception as exc:
+            except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                 tqdm.write(f"  [skip] sample {sample.idx} (tagging): {exc}")
                 continue
 
@@ -648,7 +648,7 @@ class ActivationPatchingExperiment(BaseExperiment):
                 else:
                     is_correct = False
                 del out_base, last_logits
-            except Exception as exc:
+            except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                 tqdm.write(f"  [skip] sample {sample.idx} (baseline): {exc}")
                 torch.cuda.empty_cache()
                 continue
@@ -662,7 +662,7 @@ class ActivationPatchingExperiment(BaseExperiment):
                         backend, tokens, mask_layer, zero_pos, answer_tok_id
                     )
                     importance = abs(logit_base - logit_masked)
-                except Exception as exc:
+                except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                     tqdm.write(f"  [skip] sample {sample.idx} group '{group}': {exc}")
                     importance = 0.0
                 finally:
@@ -685,8 +685,8 @@ class ActivationPatchingExperiment(BaseExperiment):
                         backend, tokens, mask_layer, groups["entity"], answer_tok_id
                     )
                     entity_importance = round(abs(logit_base - lm_e), 4)
-                except Exception:
-                    pass
+                except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
+                    tqdm.write(f"  [skip] sample {sample.idx} (entity): {exc}")
                 finally:
                     torch.cuda.empty_cache()
             if groups.get("stem"):
@@ -695,8 +695,8 @@ class ActivationPatchingExperiment(BaseExperiment):
                         backend, tokens, mask_layer, groups["stem"], answer_tok_id
                     )
                     stem_importance = round(abs(logit_base - lm_s), 4)
-                except Exception:
-                    pass
+                except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
+                    tqdm.write(f"  [skip] sample {sample.idx} (stem): {exc}")
                 finally:
                     torch.cuda.empty_cache()
 
@@ -956,7 +956,7 @@ class ActivationPatchingExperiment(BaseExperiment):
                 )
                 # Step 2 — corrupted baseline (no patching needed, reuse cache run)
                 logits_corr, _ = self._forward_with_cache(backend, corr_tokens, [])
-            except Exception as exc:
+            except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                 tqdm.write(f"  [skip] sample {sample.idx} (baseline): {type(exc).__name__}: {exc}")
                 torch.cuda.empty_cache()
                 continue
@@ -975,7 +975,7 @@ class ActivationPatchingExperiment(BaseExperiment):
                     logits_patch = self._forward_patched(
                         backend, corr_tokens, layer_idx, act_cache[layer_idx]
                     )
-                except Exception as exc:
+                except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                     tqdm.write(f"  [skip] sample {sample.idx} layer {layer_idx}: {exc}")
                     torch.cuda.empty_cache()
                     continue
