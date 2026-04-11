@@ -38,7 +38,7 @@ class TransformersBackend(InferenceBackend):
         device: str = "cuda",
         dtype: str = "bfloat16",
         enable_hooks: bool = True,
-        trust_remote_code: bool = True,
+        trust_remote_code: bool = False,
         **kwargs,
     ):
         self._device_map = device  # Used for model loading (supports "auto")
@@ -46,6 +46,15 @@ class TransformersBackend(InferenceBackend):
         self.dtype = getattr(torch, dtype) if isinstance(dtype, str) else dtype
         self.enable_hooks = enable_hooks
         self.trust_remote_code = trust_remote_code
+
+        if self.trust_remote_code:
+            import warnings
+
+            warnings.warn(
+                "trust_remote_code is set to True. This will execute code downloaded from the "
+                "Hugging Face Hub. Ensure you trust the repository before proceeding!",
+                UserWarning,
+            )
 
         self._model = None
         self._tokenizer = None
