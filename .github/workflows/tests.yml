@@ -105,7 +105,7 @@ jobs:
 
       - name: Test VLLMBackend platform detection
         run: |
-          uv run python -c "
+          python -c "
           from cotlab.backends.vllm_backend import VLLMBackend, _detect_platform, _is_apple_silicon
           assert _is_apple_silicon(), 'Should detect Apple Silicon'
           assert _detect_platform() == 'metal', 'Should detect metal platform'
