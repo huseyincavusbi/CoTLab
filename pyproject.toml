@@ -100,3 +100,10 @@ check_untyped_defs = false
 warn_return_any = false
 warn_unused_ignores = false
 no_implicit_optional = false
+
+[tool.uv]
+environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'"
+]

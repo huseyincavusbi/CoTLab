@@ -29,7 +29,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen --all-extras
 
       - name: Check formatting
         run: uv run ruff format --check src/ tests/
