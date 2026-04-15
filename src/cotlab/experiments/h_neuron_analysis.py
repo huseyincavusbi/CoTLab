@@ -691,7 +691,6 @@ class HNeuronAnalysisExperiment(BaseExperiment):
             "n_h_neurons": len(h_neurons_decoded),
             "h_neuron_ratio_permille": len(h_neurons_decoded) / n_features * 1000,
             "layer_distribution": layer_counts,
-            "contrastive_labeling": self.contrastive_labeling,
             "top_h_neurons": [
                 {"layer": li, "neuron": ni}
                 for li, ni in h_neurons_decoded[:50]  # top 50 by layer order
@@ -712,6 +711,5 @@ class HNeuronAnalysisExperiment(BaseExperiment):
                 "l1_C": self.l1_C,
                 "alpha_values": self.alpha_values,
                 "num_samples_requested": self.num_samples,
-                "contrastive_labeling": self.contrastive_labeling,
             },
         )
