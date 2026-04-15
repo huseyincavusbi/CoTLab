@@ -365,7 +365,6 @@ class HNeuronAnalysisExperiment(BaseExperiment):
         print(f"  Samples         : {len(samples)}")
         print(f"  L1 C            : {self.l1_C}")
         print(f"  Alpha vals      : {self.alpha_values}")
-        print(f"  Contrastive     : {self.contrastive_labeling}")
 
         # Precompute column norms once — shape per layer: (intermediate_dim,)
         print("\n[1/3] Precomputing W_down column norms...")
