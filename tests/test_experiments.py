@@ -10,6 +10,8 @@ from cotlab.experiments import (
     ActivationPatchingExperiment,
     AttentionAnalysisExperiment,
     CompositeShiftDetectorExperiment,
+    ConfabulationAnalysisExperiment,
+    EntropyNeuronOverlapExperiment,
     FullLayerPatchingExperiment,
     MultiHeadPatchingExperiment,
     ResidualNormOODExperiment,
@@ -440,3 +442,103 @@ class TestNewExperimentImports:
         from cotlab.experiments import CompositeShiftDetectorExperiment
 
         assert CompositeShiftDetectorExperiment is not None
+
+
+class TestConfabulationAnalysisExperiment:
+    """Tests for ConfabulationAnalysisExperiment."""
+
+    def test_init_defaults(self):
+        """Test default initialization."""
+        exp = ConfabulationAnalysisExperiment()
+        assert exp.name == "confabulation_analysis"
+        assert exp.probe_path is None
+        assert exp.ood_dataset_path is None
+        assert exp.num_samples == 50
+        assert exp.conf_high == 13.0
+        assert exp.conf_low == 10.0
+        assert exp.seed == 42
+
+    def test_init_custom_params(self):
+        """Test custom parameters."""
+        exp = ConfabulationAnalysisExperiment(
+            probe_path="test.json",
+            ood_dataset_path="ood.jsonl",
+            num_samples=100,
+            conf_high=15.0,
+            conf_low=8.0,
+        )
+        assert exp.probe_path == "test.json"
+        assert exp.ood_dataset_path == "ood.jsonl"
+        assert exp.num_samples == 100
+        assert exp.conf_high == 15.0
+        assert exp.conf_low == 8.0
+
+    def test_name_property(self):
+        """Test name property."""
+        exp = ConfabulationAnalysisExperiment(name="custom_confab")
+        assert exp.name == "custom_confab"
+
+    def test_compute_h_score(self):
+        """Test H-Score computation."""
+        exp = ConfabulationAnalysisExperiment()
+        features = np.array([0.5, 0.3, 0.2])
+        weights = np.array([1.0, -0.5, 0.8])
+        h_score = exp._compute_h_score(features, weights)
+        assert isinstance(h_score, float)
+        assert 0.0 <= h_score <= 1.0
+
+
+class TestEntropyNeuronOverlapExperiment:
+    """Tests for EntropyNeuronOverlapExperiment."""
+
+    def test_init_defaults(self):
+        """Test default initialization."""
+        exp = EntropyNeuronOverlapExperiment()
+        assert exp.name == "entropy_neuron_overlap"
+        assert exp.probe_path is None
+        assert exp.percentile == 99.0
+
+    def test_init_custom_params(self):
+        """Test custom parameters."""
+        exp = EntropyNeuronOverlapExperiment(
+            probe_path="test.json",
+            percentile=95.0,
+        )
+        assert exp.probe_path == "test.json"
+        assert exp.percentile == 95.0
+
+    def test_name_property(self):
+        """Test name property."""
+        exp = EntropyNeuronOverlapExperiment(name="custom_entropy")
+        assert exp.name == "custom_entropy"
+
+    def test_compute_overlap(self):
+        """Test overlap computation."""
+        exp = EntropyNeuronOverlapExperiment()
+        h_neurons = [(1, 10), (2, 20), (3, 30)]
+        entropy_neurons = [(2, 20), (4, 40), (5, 50)]
+
+        overlap_metrics = exp._compute_overlap(h_neurons, entropy_neurons)
+
+        assert overlap_metrics["h_neurons_count"] == 3
+        assert overlap_metrics["entropy_neurons_count"] == 3
+        assert overlap_metrics["overlap_count"] == 1
+        assert overlap_metrics["jaccard_index"] == 1.0 / 5.0  # 1 overlap, 5 union
+        assert overlap_metrics["overlap_pct_of_h"] == 1.0 / 3.0
+        assert overlap_metrics["overlap_pct_of_entropy"] == 1.0 / 3.0
+
+
+class TestConfabulationAndEntropyImports:
+    """Test that new experiments can be imported."""
+
+    def test_import_confabulation_analysis(self):
+        """Test ConfabulationAnalysisExperiment import."""
+        from cotlab.experiments import ConfabulationAnalysisExperiment
+
+        assert ConfabulationAnalysisExperiment is not None
+
+    def test_import_entropy_neuron_overlap(self):
+        """Test EntropyNeuronOverlapExperiment import."""
+        from cotlab.experiments import EntropyNeuronOverlapExperiment
+
+        assert EntropyNeuronOverlapExperiment is not None
