@@ -1,0 +1,12 @@
+# SAE Feature to H-Neuron Overlap — Test if SAE features overlap with H-Neurons
+_target_: cotlab.experiments.SAEFeatureNeuronOverlapExperiment
+
+name: sae_feature_neuron_overlap
+description: "Test if SAE features overlap with H-Neurons"
+
+sae_repo_id: "google/gemma-scope-2-1b-it"
+sae_layer: 9
+sae_feature_id: 1000
+sae_width: "16k"
+probe_path: sweep_C_1.json
+top_k_neurons: 50
