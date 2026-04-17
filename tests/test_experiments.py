@@ -15,6 +15,7 @@ from cotlab.experiments import (
     FullLayerPatchingExperiment,
     MultiHeadPatchingExperiment,
     ResidualNormOODExperiment,
+    SAEFeatureNeuronOverlapExperiment,
     SteeringVectorsExperiment,
     SycophancyHeadsExperiment,
 )
@@ -542,3 +543,62 @@ class TestConfabulationAndEntropyImports:
         from cotlab.experiments import EntropyNeuronOverlapExperiment
 
         assert EntropyNeuronOverlapExperiment is not None
+
+    def test_import_sae_feature_neuron_overlap(self):
+        """Test SAEFeatureNeuronOverlapExperiment import."""
+
+        assert SAEFeatureNeuronOverlapExperiment is not None
+
+
+class TestSAEFeatureNeuronOverlapExperiment:
+    """Tests for SAEFeatureNeuronOverlapExperiment."""
+
+    def test_init_defaults(self):
+        """Test default initialization."""
+
+        exp = SAEFeatureNeuronOverlapExperiment()
+        assert exp.name == "sae_feature_neuron_overlap"
+        assert exp.sae_repo_id == "google/gemma-scope-2b-pt-res"
+        assert exp.sae_layer == 9
+        assert exp.sae_feature_id == 1000
+        assert exp.sae_width == "16k"
+        assert exp.top_k_neurons == 50
+
+    def test_init_custom_params(self):
+        """Test custom parameters."""
+
+        exp = SAEFeatureNeuronOverlapExperiment(
+            sae_repo_id="google/gemma-scope-2-27b-it",
+            sae_layer=60,
+            sae_feature_id=14443,
+            sae_width="262k",
+            top_k_neurons=100,
+        )
+        assert exp.sae_repo_id == "google/gemma-scope-2-27b-it"
+        assert exp.sae_layer == 60
+        assert exp.sae_feature_id == 14443
+        assert exp.sae_width == "262k"
+        assert exp.top_k_neurons == 100
+
+    def test_name_property(self):
+        """Test name property."""
+
+        exp = SAEFeatureNeuronOverlapExperiment(name="custom_sae")
+        assert exp.name == "custom_sae"
+
+    def test_compute_overlap(self):
+        """Test overlap computation."""
+
+        exp = SAEFeatureNeuronOverlapExperiment()
+        h_neurons = [(9, 10), (9, 20), (9, 30)]
+        sae_neurons = [(9, 20), (9, 40), (9, 50)]
+
+        overlap_metrics = exp._compute_overlap(h_neurons, sae_neurons)
+
+        assert overlap_metrics["h_neurons_count"] == 3
+        assert overlap_metrics["sae_neurons_count"] == 3
+        assert overlap_metrics["overlap_count"] == 1
+        assert overlap_metrics["jaccard_index"] == 1.0 / 5.0
+        assert overlap_metrics["overlap_pct_of_h"] == 1.0 / 3.0
+        assert overlap_metrics["overlap_pct_of_sae"] == 1.0 / 3.0
+        assert overlap_metrics["overlap_neurons"] == [(9, 20)]
