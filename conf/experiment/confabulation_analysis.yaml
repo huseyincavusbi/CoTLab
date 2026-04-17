@@ -1,0 +1,14 @@
+# Confabulation Analysis — Test if H-Neurons encode confident errors vs uncertainty
+_target_: cotlab.experiments.ConfabulationAnalysisExperiment
+
+name: confabulation_analysis
+description: "Test if H-Neurons encode confabulation vs uncertainty"
+
+probe_path: sweep_C_1.json
+ood_dataset_path: CoTLab/data/movie_ood.jsonl
+num_samples: 50
+conf_high: 13.0
+conf_low: 10.0
+seed: 42
+max_input_tokens: 1024
+answer_cue: "\n\nAnswer:"

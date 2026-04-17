@@ -5,9 +5,11 @@ from .activation_patching import ActivationPatchingExperiment
 from .attention_analysis import AttentionAnalysisExperiment
 from .classification import ClassificationExperiment
 from .composite_shift_detector import CompositeShiftDetectorExperiment
+from .confabulation_analysis import ConfabulationAnalysisExperiment
 from .cot_ablation import CoTAblationExperiment
 from .cot_faithfulness import CoTFaithfulnessExperiment
 from .cot_heads import CoTHeadsExperiment
+from .entropy_neuron_overlap import EntropyNeuronOverlapExperiment
 from .full_layer_cot import FullLayerCoTExperiment
 from .full_layer_patching import FullLayerPatchingExperiment
 from .h_neuron_analysis import HNeuronAnalysisExperiment
@@ -22,6 +24,8 @@ from .sycophancy_heads import SycophancyHeadsExperiment
 
 __all__ = [
     "HNeuronAnalysisExperiment",
+    "ConfabulationAnalysisExperiment",
+    "EntropyNeuronOverlapExperiment",
     "CompositeShiftDetectorExperiment",
     "CoTAblationExperiment",
     "CoTFaithfulnessExperiment",
