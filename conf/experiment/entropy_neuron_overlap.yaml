@@ -1,0 +1,8 @@
+# Entropy Neuron Overlap — Test overlap between H-Neurons and entropy neurons
+_target_: cotlab.experiments.EntropyNeuronOverlapExperiment
+
+name: entropy_neuron_overlap
+description: "Test overlap between H-Neurons and entropy neurons"
+
+probe_path: sweep_C_1.json
+percentile: 99.0
