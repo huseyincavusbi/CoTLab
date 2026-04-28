@@ -112,6 +112,18 @@ python -m cotlab.main \
     experiment.top_k=10
 ```
 
+## Acknowledgements
+
+This research is conducted in collaboration with the
+[Great Ormond Street Hospital DRIVE Unit](https://www.gosh.nhs.uk/our-research/drive-unit-for-digital-innovation/).
+
+## Contributors
+
+- **Huseyin Cavus** — Core Contributor
+- **Dr. Pavithra Rajendran** — Machine Learning Lead, GOSH DRIVE
+- **Sebin Sabu** — Senior AI Scientist, GOSH DRIVE
+- **Jaskaran Singh Kawatra** — ML Engineer, GOSH DRIVE
+
 ## License
 
 MIT
