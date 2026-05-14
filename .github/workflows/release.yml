@@ -28,6 +28,10 @@ jobs:
           nproc
           echo "CPU Details:"
           lscpu | head -10
+          echo ""
+          echo "Memory Information:"
+          free -h | awk '/^Mem:/{print "Memory: " $2}'
+          free -h | awk '/^Swap:/{print "Swap: " $2}'
 
       - uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v5
 
