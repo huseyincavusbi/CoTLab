@@ -47,7 +47,49 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
-        run: uv sync --frozen --extra dev
+        run: uv sync --frozen --group dev
 
-      - name: Run tests
-        run: uv run pytest tests/ -v --tb=short --ignore=tests/test_experiments.py
+      - name: Run unit tests
+        run: uv run pytest tests/test_cett.py tests/test_cli.py tests/test_probe.py -v --tb=short
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Display system information
+        run: |
+          echo "OS Information:"
+          uname -a
+          echo ""
+          echo "CPU Information:"
+          nproc
+          echo "CPU Details:"
+          lscpu | head -10
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.11"
+
+      - name: Cache Hugging Face models
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-gpt2
+          restore-keys: |
+            ${{ runner.os }}-hf-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen --group dev
+          uv pip install .
+
+      - name: Run integration tests
+        run: uv run pytest tests/test_integration.py -v --tb=short
