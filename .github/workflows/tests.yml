@@ -5,8 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
 
 permissions:
   contents: read
@@ -17,10 +15,23 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: System info
+        run: |
+          echo "OS: $(uname -s)"
+          echo "Architecture: $(uname -m)"
+          echo "CPU cores: $(nproc)"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            echo "Memory: $(free -h | awk '/^Mem:/{print $2}')"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            echo "Memory: $(sysctl -n hw.memsize | awk '{printf "%.1f GB\n", $1/1e9}')"
+          fi
+          python3 --version
+          echo "Runner: $RUNNER_OS / $RUNNER_ARCH"
 
       - name: Free disk space (Linux)
         if: runner.os == 'Linux'
@@ -39,304 +50,41 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
-        run: uv sync --frozen --all-extras
+        run: uv sync --frozen --group dev
 
       - name: Run unit tests
-        run: uv run python -m pytest tests/ -v --tb=short
+        run: uv run pytest tests/test_cett.py tests/test_cli.py tests/test_probe.py -v --tb=short
 
-  vllm-metal:
-    runs-on: macos-latest
-    continue-on-error: true
+  integration-tests:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Print Apple Silicon info
+      - name: System info
         run: |
-          sysctl -n machdep.cpu.brand_string
-          uname -m
-
-      - name: Setup micromamba
-        uses: mamba-org/setup-micromamba@d7c9bd84e824b79d2af72a2d4196c7f4300d3476 # v3.0.0
-        with:
-          micromamba-version: "2.0.5-0"
-          environment-name: cotlab
-          create-args: >-
-            python=3.12
-            pip
-          init-shell: bash
-
-      - name: Install CoTLab
-        shell: bash -el {0}
-        run: |
-          pip install -e ".[dev]"
-
-      - name: Install vLLM 0.13.0 from source
-        shell: bash -el {0}
-        run: |
-          cd /tmp
-          curl -OL https://github.com/vllm-project/vllm/releases/download/v0.13.0/vllm-0.13.0.tar.gz
-          tar xf vllm-0.13.0.tar.gz && cd vllm-0.13.0
-          pip install -r requirements/cpu.txt
-          pip install .
-
-      - name: Pin transformers for vLLM
-        shell: bash -el {0}
-        run: pip install "transformers>=4.56.0,<5"
-
-      - name: Install vllm-metal plugin
-        shell: bash -el {0}
-        run: pip install vllm-metal
-
-      - name: Re-pin transformers (final)
-        shell: bash -el {0}
-        run: pip install "transformers>=4.56.0,<5"
-
-      - name: Show versions
-        shell: bash -el {0}
-        run: |
-          python - <<'PY'
-          import transformers, vllm
-          print("transformers:", transformers.__version__)
-          print("vllm:", vllm.__version__)
-          PY
-
-      - name: Test vllm-metal installation
-        shell: bash -el {0}
-        run: |
-          python -c "
-          from vllm import LLM
-          import vllm_metal
-          print(f'vLLM-Metal ready!')
-          print(f'vllm-metal version: {vllm_metal.__version__}')
-          "
-
-      - name: Test VLLMBackend platform detection
-        shell: bash -el {0}
-        run: |
-          python -c "
-          from cotlab.backends.vllm_backend import VLLMBackend, _detect_platform, _is_apple_silicon
-          assert _is_apple_silicon(), 'Should detect Apple Silicon'
-          assert _detect_platform() == 'metal', 'Should detect metal platform'
-          backend = VLLMBackend()
-          assert backend.platform == 'metal', 'Backend should use metal platform'
-          print('VLLMBackend metal platform detection works!')
-          "
-
-  integration:
-    runs-on: ${{ matrix.os }}
-    env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HUGGING_FACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Free disk space (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
-        with:
-          python-version: "3.11"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: "pyproject.toml"
-
-      - name: Install dependencies
-        run: uv sync --frozen --all-extras
-
-      - name: Check Hugging Face token
-        run: |
-          if [ -z "${HF_TOKEN}" ]; then
-            echo "HF_TOKEN secret is required for private dataset access."
-            exit 1
+          echo "OS: $(uname -s)"
+          echo "Architecture: $(uname -m)"
+          echo "CPU cores: $(nproc)"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            echo "Memory: $(free -h | awk '/^Mem:/{print $2}')"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            echo "Memory: $(sysctl -n hw.memsize | awk '{printf "%.1f GB\n", $1/1e9}')"
           fi
+          python3 --version
+          echo "Runner: $RUNNER_OS / $RUNNER_ARCH"
 
-      - name: Authenticate Hugging Face
-        run: |
-          uv run python - <<'PY'
-          import os
-          from huggingface_hub import login
-
-          login(token=os.environ["HF_TOKEN"], add_to_git_credential=False)
-          print("Authenticated to Hugging Face Hub.")
-          PY
-
-      - name: Test framework imports
-        run: |
-          uv run python -c "
-          from cotlab import __version__
-          from cotlab.backends import TransformersBackend
-          from cotlab.experiments import (
-              CoTFaithfulnessExperiment,
-              ClassificationExperiment,
-              CoTAblationExperiment,
-              ActivationPatchingExperiment,
-              ActivationCompareExperiment,
-              SycophancyHeadsExperiment,
-              MultiHeadPatchingExperiment,
-              FullLayerPatchingExperiment,
-              SteeringVectorsExperiment,
-              CoTHeadsExperiment,
-              LogitLensExperiment,
-              MultiHeadCoTExperiment,
-              ResidualNormOODExperiment,
-              CompositeShiftDetectorExperiment,
-          )
-          from cotlab.prompts import ChainOfThoughtStrategy, RadiologyPromptStrategy, CardiologyPromptStrategy, NeurologyPromptStrategy, OncologyPromptStrategy
-          from cotlab.datasets import RadiologyDataset, SyntheticMedicalDataset, CardiologyDataset, NeurologyDataset, OncologyDataset
-          from cotlab.analysis import CoTParser, FaithfulnessMetrics
-          from cotlab.patching import ActivationPatcher
-
-          print(f'CoTLab v{__version__} - All 15 experiments available!')
-          "
-
-      - name: Test prompt strategies
-        run: |
-          uv run python -c "
-          from cotlab.prompts import create_prompt_strategy
-
-          strategies = [
-              'simple', 'chain_of_thought', 'direct_answer', 'arrogance', 'no_instruction',
-              'adversarial', 'uncertainty', 'socratic', 'contrarian', 'expert_persona',
-              'sycophantic', 'few_shot'
-          ]
-          for name in strategies:
-              s = create_prompt_strategy(name)
-              prompt = s.build_prompt({'question': 'Test question?'})
-              print(f'{name}: {len(prompt)} chars')
-
-          print(f'All {len(strategies)} prompt strategies work!')
-          "
-
-      - name: Test dataset loading
-        run: |
-          uv run python -c "
-          from cotlab.datasets import SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset, PubHealthBenchDataset, MARCDataset, MedBulletsDataset, PLABDataset
-
-          for Dataset in [SyntheticMedicalDataset, RadiologyDataset, CardiologyDataset, NeurologyDataset, OncologyDataset, PubHealthBenchDataset, MARCDataset, MedBulletsDataset, PLABDataset]:
-              dataset = Dataset()
-              print(f'{Dataset.__name__}: {len(dataset)} samples')
-
-          print('All 9 datasets load correctly!')
-          "
-
-      - name: Test CoT parser
-        run: |
-          uv run python -c "
-          from cotlab.analysis import CoTParser
-
-          parser = CoTParser()
-          cot = '''
-          1. Patient has fever
-          2. Symptoms suggest infection
-          Therefore, likely viral URI.
-          '''
-
-          result = parser.analyze(cot)
-          print(f'Steps: {result[\"num_steps\"]}')
-          print(f'Conclusion: {result[\"conclusion\"]}')
-          print('CoT parser works!')
-          "
-
-      - name: Test new prompt features (answer_first, few_shot, contrarian)
-        run: |
-          uv run python -c "
-          from cotlab.prompts import RadiologyPromptStrategy, CardiologyPromptStrategy
-
-          answer_first = RadiologyPromptStrategy(answer_first=True)
-          af_prompt = answer_first.build_prompt({'report': 'Test'})
-          assert 'Initial' in af_prompt, 'answer_first prompt should contain Initial Assessment'
-          print('answer_first mode works')
-
-          with_examples = RadiologyPromptStrategy(few_shot=True)
-          without_examples = RadiologyPromptStrategy(few_shot=False)
-          text_with = with_examples.build_prompt({'report': 'Test'})
-          text_without = without_examples.build_prompt({'report': 'Test'})
-          assert 'Example 1:' in text_with, 'Should have examples when few_shot=true'
-          assert 'Example 1:' not in text_without, 'Should not have examples when few_shot=false'
-          assert len(text_without) < len(text_with), 'Prompt without examples should be shorter'
-          print('few_shot parameter works')
-
-          standard = RadiologyPromptStrategy(contrarian=False)
-          contrarian = RadiologyPromptStrategy(contrarian=True)
-          std_prompt = standard.build_prompt({'report': 'Test'})
-          con_prompt = contrarian.build_prompt({'report': 'Test'})
-          assert std_prompt != con_prompt, 'Contrarian prompt should differ from standard'
-          print('contrarian mode works')
-
-          for Strategy in [RadiologyPromptStrategy, CardiologyPromptStrategy]:
-              s = Strategy(answer_first=True, few_shot=False)
-              prompt = s.build_prompt({'report': 'Test'})
-              assert 'Initial' in prompt and 'Example 1:' not in prompt
-          print('Parameter combinations work across specialties')
-          "
-
-      - name: Test histopathology dataset and prompt
-        run: |
-          uv run python -c "
-          from cotlab.datasets import HistopathologyDataset
-          from cotlab.prompts import HistopathologyPromptStrategy
-
-          print('Testing HistopathologyPromptStrategy...')
-
-          p = HistopathologyPromptStrategy()
-          prompt = p.build_prompt({'text': 'Test histopathology report'})
-          assert 'quality' in prompt.lower(), 'Prompt should mention quality'
-          assert 'Example 1' in prompt, 'Should have few-shot examples by default'
-          print('Standard prompt works')
-
-          p_no_fs = HistopathologyPromptStrategy(few_shot=False)
-          prompt_no_fs = p_no_fs.build_prompt({'text': 'Test'})
-          assert 'Example 1' not in prompt_no_fs, 'Should not have examples when few_shot=false'
-          print('few_shot=False works')
-
-          p_con = HistopathologyPromptStrategy(contrarian=True)
-          prompt_con = p_con.build_prompt({'text': 'Test'})
-          assert 'skeptical' in prompt_con.lower() or 'critical' in prompt_con.lower(), 'Contrarian should be skeptical'
-          assert 'skeptical' in p_con.get_system_message().lower(), 'System message should be skeptical'
-          print('contrarian mode works')
-
-          p_af = HistopathologyPromptStrategy(answer_first=True)
-          prompt_af = p_af.build_prompt({'text': 'Test'})
-          assert 'First' in prompt_af, 'Answer-first should ask for rating first'
-          print('answer_first mode works')
-
-          result = p.parse_response('{\"quality_score\": 2, \"reasoning\": \"Good report\"}')
-          assert result['quality_score'] == 2, 'Should parse quality_score'
-          assert result['parse_success'], 'Should mark as success'
-          print('parse_response works')
-
-          print('All histopathology tests passed!')
-          "
-
-  notebook-test:
-    runs-on: ${{ matrix.os }}
-    env:
-      HF_TOKEN: ${{ secrets.HF_TOKEN }}
-      HUGGING_FACE_HUB_TOKEN: ${{ secrets.HF_TOKEN }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Free disk space (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-
-      - name: Set up Python
+      - name: Set up Python 3.11
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.11"
+
+      - name: Cache Hugging Face models
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-gpt2
+          restore-keys: |
+            ${{ runner.os }}-hf-
 
       - name: Install uv
         uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
@@ -346,30 +94,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --frozen --all-extras
-          uv pip install --system papermill ipykernel
-          uv run python -m ipykernel install --user --name cotlab --display-name "CoTLab"
+          uv sync --frozen --group dev
+          uv pip install .
 
-      - name: Check Hugging Face token
-        run: |
-          if [ -z "${HF_TOKEN}" ]; then
-            echo "HF_TOKEN secret is required for private dataset access."
-            exit 1
-          fi
-
-      - name: Authenticate Hugging Face
-        run: |
-          uv run python - <<'PY'
-          import os
-          from huggingface_hub import login
-
-          login(token=os.environ["HF_TOKEN"], add_to_git_credential=False)
-          print("Authenticated to Hugging Hub.")
-          PY
-
-      - name: Execute tutorial notebook
-        run: |
-          echo "Running notebook: cotlab_tutorial.ipynb (CI mode: 5 samples, 64 max_tokens)"
-          cd notebooks
-          uv run papermill cotlab_tutorial.ipynb cotlab_tutorial_executed.ipynb -k cotlab --progress-bar -p NUM_SAMPLES 5 -p MAX_TOKENS 64
-          echo "Notebook executed successfully on ${{ matrix.os }}!"
+      - name: Run integration tests
+        run: uv run pytest tests/test_integration.py -v --tb=short

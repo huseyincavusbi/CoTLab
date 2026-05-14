@@ -13,7 +13,20 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: System info
+        run: |
+          echo "OS: $(uname -s)"
+          echo "Architecture: $(uname -m)"
+          echo "CPU cores: $(nproc)"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            echo "Memory: $(free -h | awk '/^Mem:/{print $2}')"
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            echo "Memory: $(sysctl -n hw.memsize | awk '{printf "%.1f GB\n", $1/1e9}')"
+          fi
+          python3 --version
+          echo "Runner: $RUNNER_OS / $RUNNER_ARCH"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd
@@ -38,7 +51,7 @@ jobs:
           context: .
           file: ./Containerfile
           push: true
-          tags: ghcr.io/huseyincavusbi/cotlab:latest
+          tags: ghcr.io/${{ github.repository }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -48,6 +61,6 @@ jobs:
           context: .
           file: ./Containerfile
           push: true
-          tags: docker.io/huseyincavus/cotlab:latest
+          tags: docker.io/huseyincavus/hprobes:latest
           cache-from: type=gha
         continue-on-error: true
