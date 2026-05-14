@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     environment: release
     permissions:
       contents: write
@@ -26,6 +26,7 @@ jobs:
 
       - name: Publish to PyPI
         run: uv publish
+        # Uses OIDC trusted publishing — no token needed if configured on PyPI
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v2
