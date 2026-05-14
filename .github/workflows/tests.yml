@@ -59,7 +59,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Install dependencies
-        run: uv sync --frozen --group dev
+        run: uv sync --frozen --extra dev
 
       - name: Run unit tests
         run: uv run pytest tests/test_cett.py tests/test_cli.py tests/test_probe.py -v --tb=short
@@ -112,7 +112,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --frozen --group dev
+          uv sync --frozen --extra dev
           uv pip install .
 
       - name: Run integration tests
