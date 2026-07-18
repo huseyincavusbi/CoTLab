@@ -1,0 +1,36 @@
+# Jacobian Lens Experiment
+# Based on: Gurnee et al., "Verbalizable Representations Form a Global
+# Workspace in Language Models", Transformer Circuits Thread, 2026.
+_target_: cotlab.experiments.JacobianLensExperiment
+
+name: jacobian_lens
+description: "Jacobian lens for causal concept readout from residuals"
+
+# Mode: "fit", "apply", or "compare"
+#   fit     — compute J_ℓ matrices over a corpus (GPU, one-time per model)
+#   apply   — load pre-fitted lens, run on dataset
+#   compare — detailed side-by-side with logit lens on a few samples
+mode: apply
+
+# Path for fitted lens matrices (required for apply/compare; used as save dir for fit)
+lens_path: null
+
+# Corpus for fitting (optional; auto-generated if not provided)
+corpus_path: null
+n_corpus_prompts: 100    # prompts for fitting (paper uses 1000)
+
+# Layer selection
+source_layers: null       # null = all layers < target_layer
+target_layer: null        # null = final layer (num_layers - 1)
+layer_stride: 1
+
+# Fitting parameters
+dim_batch: 8              # output dims per backward pass (higher = more VRAM)
+skip_first_n: 16          # positions to skip (attention sinks)
+
+# Application parameters
+top_k: 10                 # top-k tokens to track
+num_samples: 100          # samples from dataset
+max_input_tokens: 512
+answer_cue: "\n\nAnswer:"
+seed: 42

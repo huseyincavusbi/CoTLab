@@ -13,6 +13,7 @@ from .entropy_neuron_overlap import EntropyNeuronOverlapExperiment
 from .full_layer_cot import FullLayerCoTExperiment
 from .full_layer_patching import FullLayerPatchingExperiment
 from .h_neuron_analysis import HNeuronAnalysisExperiment
+from .jacobian_lens import JacobianLensExperiment
 from .logit_lens import LogitLensExperiment
 from .multi_head_cot import MultiHeadCoTExperiment
 from .multi_head_patching import MultiHeadPatchingExperiment
@@ -44,6 +45,7 @@ __all__ = [
     "SteeringVectorsExperiment",
     "CoTHeadsExperiment",
     "LogitLensExperiment",
+    "JacobianLensExperiment",
     "MultiHeadCoTExperiment",
     "FullLayerCoTExperiment",
 ]
