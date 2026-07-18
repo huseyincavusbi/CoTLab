@@ -767,6 +767,31 @@ class TestJacobianLensExperiment:
         assert exp.skip_first_n == 8
         assert exp.top_k == 20
         assert exp.num_samples == 200
+        assert exp.steer_token == ""
+        assert exp.steer_alpha == 1.0
+        assert exp.swap_source == ""
+        assert exp.swap_target == ""
+        assert exp.ablate_top_n == 5
+        assert exp.intervention_layers is None
+
+    def test_init_intervention_params(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        exp = JacobianLensExperiment(
+            mode="steer",
+            steer_token="Paris",
+            steer_alpha=2.5,
+            swap_source="Soccer",
+            swap_target="Rugby",
+            ablate_top_n=10,
+            intervention_layers=[5, 10, 15],
+        )
+        assert exp.steer_token == "Paris"
+        assert exp.steer_alpha == 2.5
+        assert exp.swap_source == "Soccer"
+        assert exp.swap_target == "Rugby"
+        assert exp.ablate_top_n == 10
+        assert exp.intervention_layers == [5, 10, 15]
 
     def test_invalid_mode_rejected(self):
         from cotlab.experiments.jacobian_lens import JacobianLensExperiment

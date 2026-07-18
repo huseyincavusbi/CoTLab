@@ -316,7 +316,7 @@ def _hook_layer_outputs(
     for h in handles:
         h.remove()
 
-    return {l: captured[l] for layer in source_layers}, captured[target_layer]
+    return {layer: captured[layer] for layer in source_layers}, captured[target_layer]
 
 
 def jacobian_for_prompt(
@@ -341,7 +341,7 @@ def jacobian_for_prompt(
 
     replicated = input_ids.expand(dim_batch, -1).contiguous()
     source_acts, target_act = _hook_layer_outputs(model, replicated, source_layers, target_layer)
-    J = {l: torch.zeros(d_model, d_model) for layer in source_layers}
+    J = {layer: torch.zeros(d_model, d_model) for layer in source_layers}
 
     for dim_start in range(0, d_model, dim_batch):
         n_dims = min(dim_batch, d_model - dim_start)
@@ -350,7 +350,7 @@ def jacobian_for_prompt(
             cotangent[i, valid_positions, dim_start + i] = 1.0
         grads = torch.autograd.grad(
             outputs=target_act,
-            inputs=[source_acts[l] for layer in source_layers],
+            inputs=[source_acts[layer] for layer in source_layers],
             grad_outputs=cotangent,
             retain_graph=True,
             allow_unused=False,
@@ -434,7 +434,7 @@ def fit_jacobian_lens(
         source_layers = list(range(num_layers))
     if target_layer is None:
         target_layer = num_layers - 1
-    source_layers = [l for layer in source_layers if l < target_layer]
+    source_layers = [layer for layer in source_layers if layer < target_layer]
     if not source_layers:
         raise ValueError(f"No source layers < target_layer ({target_layer})")
 
@@ -447,7 +447,7 @@ def fit_jacobian_lens(
     if not valid_prompts:
         raise ValueError(f"No valid prompts (need > {skip_first_n + 1} tokens)")
 
-    jacobian_sum = {l: torch.zeros(d_model, d_model) for layer in source_layers}
+    jacobian_sum = {layer: torch.zeros(d_model, d_model) for layer in source_layers}
     n_done = 0
     next_idx = 0
 
@@ -460,7 +460,7 @@ def fit_jacobian_lens(
             and ckpt.get("target_layer") == target_layer
             and ckpt.get("skip_first_n", SKIP_FIRST_N_POSITIONS) == skip_first_n
         ):
-            jacobian_sum = {l: ckpt["jacobian_sum"][l].clone() for layer in source_layers}
+            jacobian_sum = {layer: ckpt["jacobian_sum"][layer].clone() for layer in source_layers}
             n_done = ckpt["n_done"]
             next_idx = ckpt.get("next_idx", n_done)
             print(f"Resumed from checkpoint: {n_done} prompts done, starting at index {next_idx}")
@@ -487,7 +487,7 @@ def fit_jacobian_lens(
                 skip_first_n=skip_first_n,
             )
             for layer in source_layers:
-                jacobian_sum[l] += J[l]
+                jacobian_sum[layer] += J[layer]
             n_done += 1
             next_idx = idx + 1
             if checkpoint_path and n_done % checkpoint_every == 0 and n_done > 0:
@@ -495,7 +495,9 @@ def fit_jacobian_lens(
                 tmp = os.path.join(checkpoint_path, "checkpoint.tmp")
                 torch.save(
                     {
-                        "jacobian_sum": {l: jacobian_sum[l].clone() for layer in source_layers},
+                        "jacobian_sum": {
+                            layer: jacobian_sum[layer].clone() for layer in source_layers
+                        },
                         "n_done": n_done,
                         "next_idx": next_idx,
                         "source_layers": source_layers,
@@ -511,14 +513,14 @@ def fit_jacobian_lens(
             next_idx = idx + 1
             continue
 
-    jacobians = {l: jacobian_sum[l] / n_done for layer in source_layers}
+    jacobians = {layer: jacobian_sum[layer] / n_done for layer in source_layers}
 
     if checkpoint_path:
         os.makedirs(checkpoint_path, exist_ok=True)
         tmp = os.path.join(checkpoint_path, "checkpoint.tmp")
         torch.save(
             {
-                "jacobian_sum": {l: jacobian_sum[l].clone() for layer in source_layers},
+                "jacobian_sum": {layer: jacobian_sum[layer].clone() for layer in source_layers},
                 "n_done": n_done,
                 "next_idx": next_idx,
                 "source_layers": source_layers,
@@ -548,12 +550,16 @@ def fit_jacobian_lens(
 
 @Registry.register_experiment("jacobian_lens")
 class JacobianLensExperiment(BaseExperiment):
-    """Jacobian Lens: causal concept readout from intermediate activations.
+    """Jacobian Lens: causal concept readout and J-space interventions.
 
-    Three modes:
-        fit     — compute and save J_ℓ matrices (GPU, one-time per model)
-        apply   — load saved matrices, run on a dataset
-        compare — run both J-lens and logit lens side-by-side
+    Modes:
+        fit       — compute and save J_ℓ matrices (GPU, one-time per model)
+        apply     — load saved matrices, run on a dataset
+        compare   — run both J-lens and logit lens side-by-side
+        steer     — inject a concept J-lens vector, measure output shift
+        swap      — lens-coordinate swap between two concepts
+        ablate    — suppress J-space component, measure accuracy loss
+        decompose — split activation into J-space vs non-J-space components
     """
 
     def __init__(
@@ -574,6 +580,14 @@ class JacobianLensExperiment(BaseExperiment):
         max_input_tokens: int = 512,
         seed: int = 42,
         answer_cue: str = "\n\nAnswer:",
+        # intervention mode parameters
+        steer_token: str = "",
+        steer_alpha: float = 1.0,
+        steer_positions: Optional[List[int]] = None,
+        swap_source: str = "",
+        swap_target: str = "",
+        ablate_top_n: int = 5,
+        intervention_layers: Optional[List[int]] = None,
         **kwargs,
     ):
         self._name = name
@@ -592,6 +606,13 @@ class JacobianLensExperiment(BaseExperiment):
         self.max_input_tokens = max_input_tokens
         self.seed = seed
         self.answer_cue = answer_cue
+        self.steer_token = steer_token
+        self.steer_alpha = steer_alpha
+        self.steer_positions = steer_positions
+        self.swap_source = swap_source
+        self.swap_target = swap_target
+        self.ablate_top_n = ablate_top_n
+        self.intervention_layers = intervention_layers
 
     @property
     def name(self) -> str:
@@ -958,6 +979,404 @@ class JacobianLensExperiment(BaseExperiment):
             },
         )
 
+    # ==================================================================
+    # Steer mode: inject a concept along a J-lens vector
+    # ==================================================================
+
+    def _run_steer(
+        self,
+        backend: InferenceBackend,
+        dataset: BaseDataset,
+        prompt_strategy: Any,
+        lens: JacobianLens,
+    ) -> ExperimentResult:
+        """Inject steer_token into residual stream, measure output shift."""
+        model = backend._model
+        tokenizer = backend._tokenizer
+        device = backend.device
+        lm_head = self._get_lm_head(model)
+        target_id = tokenizer.encode(self.steer_token, add_special_tokens=False)[0]
+        layers = self.intervention_layers or sorted(lens.jacobians.keys())[-3:]
+
+        samples = (
+            dataset.sample(self.num_samples, seed=self.seed)
+            if self.num_samples is not None
+            else list(dataset)[:5]
+        )
+
+        results = []
+        for sample in samples:
+            prompt = prompt_strategy.build_prompt(
+                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+            )
+            prompt_full = prompt + self.answer_cue
+            tokens = tokenizer.encode(
+                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
+            ).to(device)
+
+            for layer in layers:
+                if layer not in lens.jacobians:
+                    continue
+                J = lens.jacobians[layer].to(device, dtype=torch.float32)
+                v_t = (lm_head.weight[target_id].float() @ J).unsqueeze(0)  # [1, d_model]
+
+                def make_steer_hook(vec):
+                    def hook(module, inp, output):
+                        if isinstance(output, tuple):
+                            t, rest = output[0], output[1:]
+                        else:
+                            t, rest = output, ()
+                        t[0, -1, :] = t[0, -1, :] + self.steer_alpha * vec.squeeze(0)
+                        return (t,) + rest if rest else t
+
+                    return hook
+
+                block = backend.hook_manager.get_layer_module(layer)
+                handle = block.register_forward_hook(make_steer_hook(v_t))
+                with torch.no_grad():
+                    out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+                handle.remove()
+
+                logits = out.logits[0, -1, :]
+                probs = torch.softmax(logits, dim=-1)
+                top_tokens = torch.topk(probs, 5)
+                target_rank = (
+                    (probs.sort(descending=True).indices == target_id)
+                    .nonzero(as_tuple=True)[0]
+                    .item()
+                )
+
+                results.append(
+                    {
+                        "sample": sample.idx,
+                        "layer": layer,
+                        "steer_token": self.steer_token,
+                        "alpha": self.steer_alpha,
+                        "target_rank": target_rank + 1,
+                        "top_tokens": [tokenizer.decode([t.item()]) for t in top_tokens.indices],
+                    }
+                )
+
+        for r in results:
+            print(
+                f"  L{r['layer']:>3} sample={r['sample']}  rank({r['steer_token']})={r['target_rank']}  top={r['top_tokens'][:3]}"
+            )
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
+            metrics={"mode": "steer", "n_trials": len(results)},
+            raw_outputs=results,
+            metadata={
+                "steer_token": self.steer_token,
+                "steer_alpha": self.steer_alpha,
+                "intervention_layers": layers,
+            },
+        )
+
+    # ==================================================================
+    # Swap mode: lens-coordinate concept swap
+    # ==================================================================
+
+    def _run_swap(
+        self,
+        backend: InferenceBackend,
+        dataset: BaseDataset,
+        prompt_strategy: Any,
+        lens: JacobianLens,
+    ) -> ExperimentResult:
+        """Swap v_src → v_tgt in J-space, measure output flip rate."""
+        model = backend._model
+        tokenizer = backend._tokenizer
+        device = backend.device
+        lm_head = self._get_lm_head(model)
+        src_id = tokenizer.encode(self.swap_source, add_special_tokens=False)[0]
+        tgt_id = tokenizer.encode(self.swap_target, add_special_tokens=False)[0]
+        layers = self.intervention_layers or sorted(lens.jacobians.keys())[-3:]
+
+        samples = (
+            dataset.sample(self.num_samples, seed=self.seed)
+            if self.num_samples is not None
+            else list(dataset)[:10]
+        )
+
+        flips = 0
+        for sample in samples:
+            prompt = prompt_strategy.build_prompt(
+                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+            )
+            prompt_full = prompt + self.answer_cue
+            tokens = tokenizer.encode(
+                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
+            ).to(device)
+
+            # Baseline: model output without swap
+            with torch.no_grad():
+                base_out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+            base_probs = torch.softmax(base_out.logits[0, -1, :], dim=-1)
+            base_top1 = torch.argmax(base_probs).item()
+
+            # With swap at each layer
+            for layer in layers:
+                if layer not in lens.jacobians:
+                    continue
+
+                J = lens.jacobians[layer].to(device, dtype=torch.float32)
+                v_src = (lm_head.weight[src_id].float() @ J).unsqueeze(1)  # [d_model, 1]
+                v_tgt = (lm_head.weight[tgt_id].float() @ J).unsqueeze(1)  # [d_model, 1]
+                V = torch.cat([v_src, v_tgt], dim=1)  # [d_model, 2]
+                V_pinv = (
+                    torch.linalg.pinv(V.T @ V + 1e-6 * torch.eye(2, device=device)) @ V.T
+                )  # [2, d_model]
+
+                def make_swap_hook():
+                    def hook(module, inp, output):
+                        if isinstance(output, tuple):
+                            t, rest = output[0], output[1:]
+                        else:
+                            t, rest = output, ()
+                        h = t[0, -1, :].unsqueeze(1)  # [d_model, 1]
+                        c = V_pinv @ h  # [2, 1]
+                        c_swapped = c.clone()
+                        c_swapped[0], c_swapped[1] = c[1].clone(), c[0].clone()
+                        h_new = h + V @ (c_swapped - c)
+                        t[0, -1, :] = h_new.squeeze(1)
+                        return (t,) + rest if rest else t
+
+                    return hook
+
+                block = backend.hook_manager.get_layer_module(layer)
+                handle = block.register_forward_hook(make_swap_hook())
+                with torch.no_grad():
+                    swap_out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+                handle.remove()
+
+                swap_probs = torch.softmax(swap_out.logits[0, -1, :], dim=-1)
+                swap_top1 = torch.argmax(swap_probs).item()
+                flipped = swap_top1 != base_top1
+                if flipped:
+                    flips += 1
+                print(
+                    f"  L{layer:>3} sample={sample.idx}  base={tokenizer.decode([base_top1])}"
+                    f"  swap={tokenizer.decode([swap_top1])}  flipped={flipped}"
+                )
+
+        n_trials = len(samples) * len([layer for layer in layers if layer in lens.jacobians])
+        flip_rate = flips / n_trials if n_trials else 0
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
+            metrics={
+                "mode": "swap",
+                "swap_source": self.swap_source,
+                "swap_target": self.swap_target,
+                "n_trials": n_trials,
+                "flips": flips,
+                "flip_rate": round(flip_rate, 4),
+            },
+            metadata={"intervention_layers": layers},
+        )
+
+    # ==================================================================
+    # Ablate mode: suppress top-k J-space directions, measure accuracy
+    # ==================================================================
+
+    def _run_ablate(
+        self,
+        backend: InferenceBackend,
+        dataset: BaseDataset,
+        prompt_strategy: Any,
+        lens: JacobianLens,
+    ) -> ExperimentResult:
+        """Zero out top-k J-space components at each intervention layer."""
+        model = backend._model
+        tokenizer = backend._tokenizer
+        device = backend.device
+        lm_head = self._get_lm_head(model)
+        norm = self._get_final_norm(model)
+        layers = self.intervention_layers or sorted(lens.jacobians.keys())[:3]
+
+        samples = (
+            dataset.sample(self.num_samples, seed=self.seed)
+            if self.num_samples is not None
+            else list(dataset)[:20]
+        )
+        n = len(samples)
+
+        baseline_correct = 0
+        ablate_correct = 0
+
+        for sample in samples:
+            prompt = prompt_strategy.build_prompt(
+                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+            )
+            prompt_full = prompt + self.answer_cue
+            tokens = tokenizer.encode(
+                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
+            ).to(device)
+
+            # Baseline
+            with torch.no_grad():
+                base_out = model(input_ids=tokens, output_hidden_states=True, use_cache=False)
+            final_h = base_out.hidden_states[-1][0, -1, :]
+            if norm is not None:
+                final_h = norm(final_h)
+            base_id = torch.argmax(lm_head(final_h)).item()
+            correct_ids = self._correct_token_ids(tokenizer, sample.label)
+            if base_id in correct_ids:
+                baseline_correct += 1
+
+            # Ablate: at each intervention layer, project out top-k J-space directions
+            def make_ablate_hook(layer_idx: int):
+                J = lens.jacobians[layer_idx].to(device, dtype=torch.float32)
+
+                def hook(module, inp, output):
+                    if isinstance(output, tuple):
+                        t, rest = output[0], output[1:]
+                    else:
+                        t, rest = output, ()
+                    h = t[0, -1, :]  # [d_model]
+                    # Project onto top-k J-lens directions and remove
+                    # J-lens vectors for the full vocabulary at this layer:
+                    # W_U · J_ℓ → take top-k by inner product with h
+                    all_scores = h.float() @ (lm_head.weight.float() @ J).T  # [vocab]
+                    top_k_ids = torch.topk(all_scores, self.ablate_top_n).indices
+                    for tid in top_k_ids:
+                        v = lm_head.weight[tid].float() @ J  # [d_model]
+                        v_norm = v / (torch.norm(v) + 1e-8)
+                        h = h.float() - torch.dot(h.float(), v_norm) * v_norm
+                    t[0, -1, :] = h.to(t.dtype)
+                    return (t,) + rest if rest else t
+
+                return hook
+
+            handles = []
+            for layer in layers:
+                if layer in lens.jacobians:
+                    block = backend.hook_manager.get_layer_module(layer)
+                    handles.append(block.register_forward_hook(make_ablate_hook(layer)))
+
+            with torch.no_grad():
+                ablate_out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+            for h in handles:
+                h.remove()
+
+            ablate_id = torch.argmax(ablate_out.logits[0, -1, :]).item()
+            if ablate_id in correct_ids:
+                ablate_correct += 1
+
+        base_acc = baseline_correct / n
+        abl_acc = ablate_correct / n
+        print(
+            f"\nBaseline acc: {base_acc:.1%}  |  Ablate (top-{self.ablate_top_n}) acc: {abl_acc:.1%}  |  delta: {(abl_acc - base_acc):.1%}"
+        )
+        print(f"  Correct: {baseline_correct}/{n} → {ablate_correct}/{n}")
+        print(f"  Ablated at layers: {layers}")
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
+            metrics={
+                "mode": "ablate",
+                "baseline_accuracy": round(base_acc, 4),
+                "ablate_accuracy": round(abl_acc, 4),
+                "accuracy_delta": round(abl_acc - base_acc, 4),
+                "ablate_top_n": self.ablate_top_n,
+            },
+            metadata={"intervention_layers": layers},
+        )
+
+    # ==================================================================
+    # Decompose mode: J-space vs non-J-space components
+    # ==================================================================
+
+    def _run_decompose(
+        self,
+        backend: InferenceBackend,
+        dataset: BaseDataset,
+        prompt_strategy: Any,
+        lens: JacobianLens,
+    ) -> ExperimentResult:
+        """Decompose activations into J-space and non-J-space components."""
+        model = backend._model
+        tokenizer = backend._tokenizer
+        device = backend.device
+        lm_head = self._get_lm_head(model)
+        layers = self.intervention_layers or sorted(lens.jacobians.keys())[-3:]
+
+        samples = (
+            dataset.sample(self.num_samples, seed=self.seed)
+            if self.num_samples is not None
+            else list(dataset)[:5]
+        )
+
+        decompositions = []
+        for sample in samples:
+            prompt = prompt_strategy.build_prompt(
+                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+            )
+            prompt_full = prompt + self.answer_cue
+            tokens = tokenizer.encode(
+                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
+            ).to(device)
+
+            with torch.no_grad():
+                out = model(input_ids=tokens, output_hidden_states=True, use_cache=False)
+            hidden_states = out.hidden_states
+
+            for layer in layers:
+                if layer not in lens.jacobians or layer + 1 >= len(hidden_states):
+                    continue
+                h = hidden_states[layer + 1][0, -1, :].float()  # [d_model]
+                J = lens.jacobians[layer].to(device, dtype=torch.float32)
+                vocab = lm_head.weight.float()  # [vocab, d_model]
+
+                # J-space: top-k J-lens directions via inner product
+                all_scores = h @ (vocab @ J).T  # [vocab]
+                top_k_vals, top_k_ids = torch.topk(all_scores, self.top_k)
+                j_tokens = [tokenizer.decode([t.item()]) for t in top_k_ids]
+
+                # Non-J-space: project out top-k directions
+                h_nonj = h.clone()
+                for tid in top_k_ids:
+                    v = vocab[tid] @ J  # [d_model]
+                    v_norm = v / (torch.norm(v) + 1e-8)
+                    h_nonj = h_nonj - torch.dot(h_nonj, v_norm) * v_norm
+
+                # Total variance, J-variance, non-J-variance
+                total_var = torch.var(h).item()
+                j_component = h - h_nonj
+                j_var = torch.var(j_component).item() if total_var > 1e-8 else 0
+                j_var_frac = j_var / total_var if total_var > 1e-8 else 0
+
+                print(
+                    f"  L{layer:>3} sample={sample.idx}  J-space({self.top_k}): {j_tokens[:5]}"
+                    f"  J-var={j_var_frac:.1%}"
+                )
+
+                decompositions.append(
+                    {
+                        "sample": sample.idx,
+                        "layer": layer,
+                        "j_space_tokens": j_tokens,
+                        "j_variance_fraction": round(j_var_frac, 4),
+                        "total_variance": round(total_var, 6),
+                    }
+                )
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
+            metrics={"mode": "decompose", "n_results": len(decompositions)},
+            raw_outputs=decompositions,
+            metadata={"intervention_layers": layers, "top_k": self.top_k},
+        )
+
     # -- main -------------------------------------------------------------
 
     def run(
@@ -969,11 +1388,22 @@ class JacobianLensExperiment(BaseExperiment):
     ) -> ExperimentResult:
         if self.mode == "fit":
             return self._run_fit(backend)
-        if self.mode in ("apply", "compare"):
+        if self.mode in ("apply", "compare", "steer", "swap", "ablate", "decompose"):
             if not self.lens_path:
-                raise ValueError("lens_path is required for apply/compare mode")
+                raise ValueError("lens_path is required for apply/compare/intervention modes")
             lens = JacobianLens.load(self.lens_path)
             if self.mode == "apply":
                 return self._run_apply(backend, dataset, prompt_strategy, lens)
-            return self._run_compare(backend, dataset, prompt_strategy, lens)
-        raise ValueError(f"Unknown mode: {self.mode}. Use 'fit', 'apply', or 'compare'.")
+            if self.mode == "compare":
+                return self._run_compare(backend, dataset, prompt_strategy, lens)
+            if self.mode == "steer":
+                return self._run_steer(backend, dataset, prompt_strategy, lens)
+            if self.mode == "swap":
+                return self._run_swap(backend, dataset, prompt_strategy, lens)
+            if self.mode == "ablate":
+                return self._run_ablate(backend, dataset, prompt_strategy, lens)
+            return self._run_decompose(backend, dataset, prompt_strategy, lens)
+        raise ValueError(
+            f"Unknown mode: {self.mode}. "
+            "Use 'fit', 'apply', 'compare', 'steer', 'swap', 'ablate', or 'decompose'."
+        )

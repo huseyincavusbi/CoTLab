@@ -6,10 +6,14 @@ _target_: cotlab.experiments.JacobianLensExperiment
 name: jacobian_lens
 description: "Jacobian lens for causal concept readout from residuals"
 
-# Mode: "fit", "apply", or "compare"
-#   fit     — compute J_ℓ matrices over a corpus (GPU, one-time per model)
-#   apply   — load pre-fitted lens, run on dataset
-#   compare — detailed side-by-side with logit lens on a few samples
+# Mode: "fit", "apply", "compare", "steer", "swap", "ablate", "decompose"
+#   fit       — compute J_ℓ matrices over a corpus (GPU, one-time per model)
+#   apply     — load pre-fitted lens, run on dataset
+#   compare   — detailed side-by-side with logit lens on a few samples
+#   steer     — inject a J-lens vector α·v_t, measure output shift
+#   swap      — lens-coordinate swap between source and target concepts
+#   ablate    — suppress top-k J-space components, measure accuracy loss
+#   decompose — split activation into J-space vs non-J-space directions
 mode: apply
 
 # Path for fitted lens matrices (required for apply/compare; used as save dir for fit)
@@ -34,3 +38,12 @@ num_samples: 100          # samples from dataset
 max_input_tokens: 512
 answer_cue: "\n\nAnswer:"
 seed: 42
+
+# Intervention parameters (for steer, swap, ablate, decompose modes)
+steer_token: ""            # concept token to inject
+steer_alpha: 1.0           # injection strength
+steer_positions: null      # positions to inject (null = last token)
+swap_source: ""            # source concept for lens-coordinate swap
+swap_target: ""            # target concept for swap
+ablate_top_n: 5            # number of J-space directions to suppress
+intervention_layers: null  # layers to intervene on (null = auto-select 3)
