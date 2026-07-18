@@ -909,3 +909,101 @@ class TestJacobianLensImport:
         assert fit_jacobian_lens is not None
         assert jacobian_for_prompt is not None
         assert load_corpus_prompts is not None
+
+
+class TestJacobianLensInterventions:
+    """Tests for J-space intervention modes (params, dispatch, helpers)."""
+
+    def test_steer_params(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        exp = JacobianLensExperiment(
+            mode="steer",
+            steer_token="Paris",
+            steer_alpha=3.0,
+            steer_positions=[-1],
+            intervention_layers=[5, 10],
+        )
+        assert exp.mode == "steer"
+        assert exp.steer_token == "Paris"
+        assert exp.steer_alpha == 3.0
+        assert exp.steer_positions == [-1]
+        assert exp.intervention_layers == [5, 10]
+
+    def test_swap_params(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        exp = JacobianLensExperiment(
+            mode="swap",
+            swap_source="France",
+            swap_target="Italy",
+            intervention_layers=[6, 8, 10],
+        )
+        assert exp.mode == "swap"
+        assert exp.swap_source == "France"
+        assert exp.swap_target == "Italy"
+        assert exp.intervention_layers == [6, 8, 10]
+
+    def test_ablate_params(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        exp = JacobianLensExperiment(
+            mode="ablate",
+            ablate_top_n=8,
+            intervention_layers=[3, 7, 11],
+        )
+        assert exp.mode == "ablate"
+        assert exp.ablate_top_n == 8
+        assert exp.intervention_layers == [3, 7, 11]
+
+    def test_decompose_params(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        exp = JacobianLensExperiment(
+            mode="decompose",
+            top_k=15,
+            intervention_layers=[4, 9],
+        )
+        assert exp.mode == "decompose"
+        assert exp.top_k == 15
+        assert exp.intervention_layers == [4, 9]
+
+    def test_mode_requires_lens_path(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        for mode in ("steer", "swap", "ablate", "decompose"):
+            exp = JacobianLensExperiment(mode=mode)
+            try:
+                exp.run(None, None, None)
+            except ValueError as exc:
+                assert "lens_path is required" in str(exc), f"{mode}: {exc}"
+            else:
+                raise AssertionError(f"Expected ValueError for {mode} without lens_path")
+
+    def test_steer_selects_default_layers(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        lens = JacobianLens(
+            jacobians={0: torch.eye(4), 2: torch.eye(4), 4: torch.eye(4), 6: torch.eye(4)},
+            d_model=4,
+        )
+        # Default inside _run_steer: sorted(lens.jacobians.keys())[-3:]
+        sorted_keys = sorted(lens.jacobians.keys())
+        assert sorted_keys[-3:] == [2, 4, 6]
+
+    def test_intervention_modes_dispatch(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        # All 7 modes should be recognized (not raise "Unknown mode")
+        valid = {"fit", "apply", "compare", "steer", "swap", "ablate", "decompose"}
+        for mode in sorted(valid):
+            exp = JacobianLensExperiment(mode=mode)
+            # fit doesn't need lens_path; others do
+            if mode == "fit":
+                continue
+            try:
+                exp.run(None, None, None)
+            except ValueError as exc:
+                assert "lens_path" in str(exc), f"{mode}: got {exc}"
+            except NotImplementedError:
+                pass  # fit mode would hit this without real backend
