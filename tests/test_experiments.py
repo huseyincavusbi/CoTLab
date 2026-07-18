@@ -602,3 +602,262 @@ class TestSAEFeatureNeuronOverlapExperiment:
         assert overlap_metrics["overlap_pct_of_h"] == 1.0 / 3.0
         assert overlap_metrics["overlap_pct_of_sae"] == 1.0 / 3.0
         assert overlap_metrics["overlap_neurons"] == [(9, 20)]
+
+
+# ============================================================================
+# Jacobian Lens tests
+# ============================================================================
+
+class TestJacobianLensDataclass:
+    """Tests for the JacobianLens dataclass."""
+
+    def test_init_defaults(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        J = {0: torch.eye(4), 1: torch.eye(4) * 0.5}
+        lens = JacobianLens(jacobians=J, d_model=4)
+        assert lens.d_model == 4
+        assert lens.n_prompts == 0
+        assert lens.source_layers is None
+        assert lens.target_layer is None
+        assert lens.skip_first_n == 16
+        assert lens.model_name == ""
+
+        assert len(lens.jacobians) == 2
+        assert torch.equal(lens.jacobians[0], torch.eye(4))
+        assert torch.equal(lens.jacobians[1], torch.eye(4) * 0.5)
+
+    def test_save_load_roundtrip(self, tmp_path):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        J = {0: torch.randn(4, 4), 2: torch.randn(4, 4)}
+        lens = JacobianLens(
+            jacobians=J, d_model=4, n_prompts=10,
+            source_layers=[0, 2], target_layer=3,
+            skip_first_n=8, model_name="test-model",
+        )
+        lens.save(str(tmp_path))
+        loaded = JacobianLens.load(str(tmp_path))
+
+        assert loaded.d_model == 4
+        assert loaded.n_prompts == 10
+        assert loaded.source_layers == [0, 2]
+        assert loaded.target_layer == 3
+        assert loaded.skip_first_n == 8
+        assert loaded.model_name == "test-model"
+        for k in J:
+            assert torch.allclose(loaded.jacobians[k], J[k]), f"Layer {k} mismatch"
+
+    def test_transport_identity(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        J = {0: torch.eye(4)}
+        lens = JacobianLens(jacobians=J, d_model=4)
+        x = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+        result = lens.transport(x, 0)
+        assert torch.allclose(result, x)
+
+    def test_transport_scaling(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        J = {0: torch.eye(4) * 2.0}
+        lens = JacobianLens(jacobians=J, d_model=4)
+        x = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+        result = lens.transport(x, 0)
+        assert torch.allclose(result, x * 2.0)
+
+    def test_transport_missing_layer(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        lens = JacobianLens(jacobians={}, d_model=4)
+        try:
+            lens.transport(torch.randn(4), 5)
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("Expected KeyError for missing layer")
+
+    def test_decode_shape(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        J = {0: torch.eye(4)}
+        lens = JacobianLens(jacobians=J, d_model=4)
+        # Simple linear layer as mock unembedding
+        lm_head = torch.nn.Linear(4, 10, bias=False)
+        x = torch.randn(1, 4)
+        logits = lens.decode(x, 0, lm_head)
+        assert logits.shape == (1, 10)
+
+    def test_merge_weighted_average(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        a = JacobianLens(jacobians={0: torch.ones(4, 4)}, d_model=4, n_prompts=3)
+        b = JacobianLens(jacobians={0: torch.eye(4) * 3}, d_model=4, n_prompts=1)
+        merged = JacobianLens.merge([a, b])
+
+        expected = (torch.ones(4, 4) * 3 + torch.eye(4) * 3) / 4
+        assert torch.allclose(merged.jacobians[0], expected)
+        assert merged.n_prompts == 4
+
+    def test_merge_multiple_layers(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        a = JacobianLens(jacobians={0: torch.zeros(2, 2), 1: torch.ones(2, 2)}, d_model=2, n_prompts=2)
+        b = JacobianLens(jacobians={0: torch.ones(2, 2) * 4, 1: torch.zeros(2, 2)}, d_model=2, n_prompts=2)
+        merged = JacobianLens.merge([a, b])
+
+        assert torch.allclose(merged.jacobians[0], torch.ones(2, 2) * 2)
+        assert torch.allclose(merged.jacobians[1], torch.ones(2, 2) * 0.5)
+
+
+class TestJacobianLensExperiment:
+    """Tests for JacobianLensExperiment."""
+
+    def test_init_defaults(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        exp = JacobianLensExperiment()
+        assert exp.name == "jacobian_lens"
+        assert exp.mode == "apply"
+        assert exp.lens_path is None
+        assert exp.corpus_path is None
+        assert exp.n_corpus_prompts == 100
+        assert exp.source_layers is None
+        assert exp.target_layer is None
+        assert exp.dim_batch == 8
+        assert exp.skip_first_n == 16
+        assert exp.layer_stride == 1
+        assert exp.top_k == 10
+        assert exp.num_samples is None
+        assert exp.max_input_tokens == 512
+        assert exp.seed == 42
+        assert exp.answer_cue == "\n\nAnswer:"
+
+    def test_init_custom(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        exp = JacobianLensExperiment(
+            name="my_jlens", mode="fit", lens_path="/tmp/lens",
+            n_corpus_prompts=50, source_layers=[0, 5, 10], target_layer=11,
+            dim_batch=4, skip_first_n=8, top_k=20, num_samples=200,
+        )
+        assert exp.name == "my_jlens"
+        assert exp.mode == "fit"
+        assert exp.lens_path == "/tmp/lens"
+        assert exp.n_corpus_prompts == 50
+        assert exp.source_layers == [0, 5, 10]
+        assert exp.target_layer == 11
+        assert exp.dim_batch == 4
+        assert exp.skip_first_n == 8
+        assert exp.top_k == 20
+        assert exp.num_samples == 200
+
+    def test_invalid_mode_rejected(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        exp = JacobianLensExperiment(mode="invalid")
+        try:
+            exp.run(None, None, None)
+        except ValueError as exc:
+            assert "Unknown mode" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError for invalid mode")
+
+    def test_apply_and_compare_require_lens_path(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        exp = JacobianLensExperiment(mode="apply")
+        try:
+            exp.run(None, None, None)
+        except ValueError as exc:
+            assert "lens_path is required" in str(exc)
+        else:
+            raise AssertionError("Expected ValueError for missing lens_path")
+
+    def test_import(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        assert JacobianLensExperiment is not None
+
+
+class TestJacobianLensHelpers:
+    """Tests for J-lens helper/utility functions."""
+
+    def test_validate_prompt_too_short(self):
+        from cotlab.experiments.jacobian_lens import _validate_prompt
+
+        class FakeTokenizer:
+            def encode(self, text, **kw):
+                return [0] * 5
+
+        assert not _validate_prompt(FakeTokenizer(), "hi", min_tokens=10, max_seq_len=128)
+
+    def test_validate_prompt_long_enough(self):
+        from cotlab.experiments.jacobian_lens import _validate_prompt
+
+        class FakeTokenizer:
+            def encode(self, text, **kw):
+                return list(range(20))
+
+        assert _validate_prompt(FakeTokenizer(), "hello world", min_tokens=10, max_seq_len=128)
+
+    def test_freeze_thaw_params(self):
+        from cotlab.experiments.jacobian_lens import _freeze_params, _thaw_params
+
+        m = torch.nn.Linear(4, 2)
+        m.weight.requires_grad_(True)
+        m.bias.requires_grad_(False)
+        orig = _freeze_params(m)
+        assert all(p.requires_grad is False for p in m.parameters())
+        _thaw_params(m, orig)
+        assert m.weight.requires_grad is True
+        assert m.bias.requires_grad is False
+
+    def test_resolve_apply_layers(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens, JacobianLensExperiment
+
+        lens = JacobianLens(jacobians={0: torch.eye(4), 2: torch.eye(4), 4: torch.eye(4)}, d_model=4)
+        exp = JacobianLensExperiment(source_layers=[0, 2])
+        layers = exp._resolve_apply_layers(lens)
+        assert layers == [0, 2]
+
+    def test_resolve_apply_layers_all(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens, JacobianLensExperiment
+
+        lens = JacobianLens(jacobians={0: torch.eye(4), 2: torch.eye(4), 4: torch.eye(4)}, d_model=4)
+        exp = JacobianLensExperiment(source_layers=None, layer_stride=1)
+        layers = exp._resolve_apply_layers(lens)
+        assert layers == [0, 2, 4]
+
+    def test_resolve_apply_layers_with_stride(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens, JacobianLensExperiment
+
+        lens = JacobianLens(jacobians={0: torch.eye(4), 1: torch.eye(4), 2: torch.eye(4), 3: torch.eye(4)}, d_model=4)
+        exp = JacobianLensExperiment(source_layers=None, layer_stride=2)
+        layers = exp._resolve_apply_layers(lens)
+        assert layers == [0, 2]
+
+
+class TestJacobianLensImport:
+    """Smoke test that Jacobian lens is importable."""
+
+    def test_import_jacobian_lens_experiment(self):
+        from cotlab.experiments.jacobian_lens import JacobianLensExperiment
+
+        assert JacobianLensExperiment is not None
+
+    def test_import_jacobian_lens_dataclass(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        assert JacobianLens is not None
+
+    def test_import_fit_jacobian_lens(self):
+        from cotlab.experiments.jacobian_lens import (
+            fit_jacobian_lens,
+            jacobian_for_prompt,
+            load_corpus_prompts,
+        )
+
+        assert fit_jacobian_lens is not None
+        assert jacobian_for_prompt is not None
+        assert load_corpus_prompts is not None
