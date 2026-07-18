@@ -608,6 +608,7 @@ class TestSAEFeatureNeuronOverlapExperiment:
 # Jacobian Lens tests
 # ============================================================================
 
+
 class TestJacobianLensDataclass:
     """Tests for the JacobianLens dataclass."""
 
@@ -632,9 +633,13 @@ class TestJacobianLensDataclass:
 
         J = {0: torch.randn(4, 4), 2: torch.randn(4, 4)}
         lens = JacobianLens(
-            jacobians=J, d_model=4, n_prompts=10,
-            source_layers=[0, 2], target_layer=3,
-            skip_first_n=8, model_name="test-model",
+            jacobians=J,
+            d_model=4,
+            n_prompts=10,
+            source_layers=[0, 2],
+            target_layer=3,
+            skip_first_n=8,
+            model_name="test-model",
         )
         lens.save(str(tmp_path))
         loaded = JacobianLens.load(str(tmp_path))
@@ -702,8 +707,12 @@ class TestJacobianLensDataclass:
     def test_merge_multiple_layers(self):
         from cotlab.experiments.jacobian_lens import JacobianLens
 
-        a = JacobianLens(jacobians={0: torch.zeros(2, 2), 1: torch.ones(2, 2)}, d_model=2, n_prompts=2)
-        b = JacobianLens(jacobians={0: torch.ones(2, 2) * 4, 1: torch.zeros(2, 2)}, d_model=2, n_prompts=2)
+        a = JacobianLens(
+            jacobians={0: torch.zeros(2, 2), 1: torch.ones(2, 2)}, d_model=2, n_prompts=2
+        )
+        b = JacobianLens(
+            jacobians={0: torch.ones(2, 2) * 4, 1: torch.zeros(2, 2)}, d_model=2, n_prompts=2
+        )
         merged = JacobianLens.merge([a, b])
 
         assert torch.allclose(merged.jacobians[0], torch.ones(2, 2) * 2)
@@ -737,9 +746,16 @@ class TestJacobianLensExperiment:
         from cotlab.experiments.jacobian_lens import JacobianLensExperiment
 
         exp = JacobianLensExperiment(
-            name="my_jlens", mode="fit", lens_path="/tmp/lens",
-            n_corpus_prompts=50, source_layers=[0, 5, 10], target_layer=11,
-            dim_batch=4, skip_first_n=8, top_k=20, num_samples=200,
+            name="my_jlens",
+            mode="fit",
+            lens_path="/tmp/lens",
+            n_corpus_prompts=50,
+            source_layers=[0, 5, 10],
+            target_layer=11,
+            dim_batch=4,
+            skip_first_n=8,
+            top_k=20,
+            num_samples=200,
         )
         assert exp.name == "my_jlens"
         assert exp.mode == "fit"
@@ -816,7 +832,9 @@ class TestJacobianLensHelpers:
     def test_resolve_apply_layers(self):
         from cotlab.experiments.jacobian_lens import JacobianLens, JacobianLensExperiment
 
-        lens = JacobianLens(jacobians={0: torch.eye(4), 2: torch.eye(4), 4: torch.eye(4)}, d_model=4)
+        lens = JacobianLens(
+            jacobians={0: torch.eye(4), 2: torch.eye(4), 4: torch.eye(4)}, d_model=4
+        )
         exp = JacobianLensExperiment(source_layers=[0, 2])
         layers = exp._resolve_apply_layers(lens)
         assert layers == [0, 2]
@@ -824,7 +842,9 @@ class TestJacobianLensHelpers:
     def test_resolve_apply_layers_all(self):
         from cotlab.experiments.jacobian_lens import JacobianLens, JacobianLensExperiment
 
-        lens = JacobianLens(jacobians={0: torch.eye(4), 2: torch.eye(4), 4: torch.eye(4)}, d_model=4)
+        lens = JacobianLens(
+            jacobians={0: torch.eye(4), 2: torch.eye(4), 4: torch.eye(4)}, d_model=4
+        )
         exp = JacobianLensExperiment(source_layers=None, layer_stride=1)
         layers = exp._resolve_apply_layers(lens)
         assert layers == [0, 2, 4]
@@ -832,7 +852,10 @@ class TestJacobianLensHelpers:
     def test_resolve_apply_layers_with_stride(self):
         from cotlab.experiments.jacobian_lens import JacobianLens, JacobianLensExperiment
 
-        lens = JacobianLens(jacobians={0: torch.eye(4), 1: torch.eye(4), 2: torch.eye(4), 3: torch.eye(4)}, d_model=4)
+        lens = JacobianLens(
+            jacobians={0: torch.eye(4), 1: torch.eye(4), 2: torch.eye(4), 3: torch.eye(4)},
+            d_model=4,
+        )
         exp = JacobianLensExperiment(source_layers=None, layer_stride=2)
         layers = exp._resolve_apply_layers(lens)
         assert layers == [0, 2]

@@ -32,10 +32,10 @@ from ..core.registry import Registry
 from ..datasets.loaders import BaseDataset
 from ..logging import ExperimentLogger
 
-
 # ---------------------------------------------------------------------------
 # JacobianLens dataclass
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class JacobianLens:
@@ -59,7 +59,7 @@ class JacobianLens:
     def save(self, path: str) -> None:
         os.makedirs(path, exist_ok=True)
         jacobians_flat = torch.cat(
-            [self.jacobians[l].flatten().cpu() for l in sorted(self.jacobians.keys())]
+            [self.jacobians[k].flatten().cpu() for k in sorted(self.jacobians.keys())]
         )
         torch.save(
             {
@@ -177,19 +177,23 @@ class JacobianLens:
         if norm is not None:
             final_h = norm(final_h)
         model_scores = lm_head(final_h).cpu()
-        return {"lens_scores": lens_scores, "model_scores": model_scores, "input_ids": input_ids.cpu()}
+        return {
+            "lens_scores": lens_scores,
+            "model_scores": model_scores,
+            "input_ids": input_ids.cpu(),
+        }
 
     @classmethod
     def merge(cls, lenses: List[JacobianLens]) -> JacobianLens:
         """Prompt-weighted average of multiple lenses fitted on different subsets."""
-        total_prompts = sum(l.n_prompts for l in lenses)
+        total_prompts = sum(lens.n_prompts for lens in lenses)
         d_model = lenses[0].d_model
         layer_keys = sorted(lenses[0].jacobians.keys())
         merged_jacobians = {}
         for k in layer_keys:
             weighted_sum = torch.zeros(d_model, d_model)
-            for l in lenses:
-                weighted_sum += l.jacobians[k] * l.n_prompts
+            for lens in lenses:
+                weighted_sum += lens.jacobians[k] * lens.n_prompts
             merged_jacobians[k] = weighted_sum / total_prompts
         return cls(
             jacobians=merged_jacobians,
@@ -299,6 +303,7 @@ def _hook_layer_outputs(
                 t = t.detach().requires_grad_(True)
             captured[layer_idx] = t
             return (t,) + rest if is_tuple else t
+
         return hook
 
     for layer_idx in sorted(all_capture):
@@ -311,7 +316,7 @@ def _hook_layer_outputs(
     for h in handles:
         h.remove()
 
-    return {l: captured[l] for l in source_layers}, captured[target_layer]
+    return {l: captured[l] for layer in source_layers}, captured[target_layer]
 
 
 def jacobian_for_prompt(
@@ -336,7 +341,7 @@ def jacobian_for_prompt(
 
     replicated = input_ids.expand(dim_batch, -1).contiguous()
     source_acts, target_act = _hook_layer_outputs(model, replicated, source_layers, target_layer)
-    J = {l: torch.zeros(d_model, d_model) for l in source_layers}
+    J = {l: torch.zeros(d_model, d_model) for layer in source_layers}
 
     for dim_start in range(0, d_model, dim_batch):
         n_dims = min(dim_batch, d_model - dim_start)
@@ -345,7 +350,7 @@ def jacobian_for_prompt(
             cotangent[i, valid_positions, dim_start + i] = 1.0
         grads = torch.autograd.grad(
             outputs=target_act,
-            inputs=[source_acts[l] for l in source_layers],
+            inputs=[source_acts[l] for layer in source_layers],
             grad_outputs=cotangent,
             retain_graph=True,
             allow_unused=False,
@@ -375,6 +380,7 @@ def load_corpus_prompts(
         return [p for p in prompts if len(p.split()) >= min_tokens][:n_prompts]
 
     import random
+
     random.seed(seed)
     templates = [
         "The following is a detailed analysis of the topic. {context} Let us examine this carefully.",
@@ -428,18 +434,20 @@ def fit_jacobian_lens(
         source_layers = list(range(num_layers))
     if target_layer is None:
         target_layer = num_layers - 1
-    source_layers = [l for l in source_layers if l < target_layer]
+    source_layers = [l for layer in source_layers if l < target_layer]
     if not source_layers:
         raise ValueError(f"No source layers < target_layer ({target_layer})")
 
     orig_grad = _freeze_params(model)
     model.eval()
 
-    valid_prompts = [p for p in prompts if _validate_prompt(tokenizer, p, skip_first_n + 1, max_seq_len)]
+    valid_prompts = [
+        p for p in prompts if _validate_prompt(tokenizer, p, skip_first_n + 1, max_seq_len)
+    ]
     if not valid_prompts:
         raise ValueError(f"No valid prompts (need > {skip_first_n + 1} tokens)")
 
-    jacobian_sum = {l: torch.zeros(d_model, d_model) for l in source_layers}
+    jacobian_sum = {l: torch.zeros(d_model, d_model) for layer in source_layers}
     n_done = 0
     next_idx = 0
 
@@ -452,7 +460,7 @@ def fit_jacobian_lens(
             and ckpt.get("target_layer") == target_layer
             and ckpt.get("skip_first_n", SKIP_FIRST_N_POSITIONS) == skip_first_n
         ):
-            jacobian_sum = {l: ckpt["jacobian_sum"][l].clone() for l in source_layers}
+            jacobian_sum = {l: ckpt["jacobian_sum"][l].clone() for layer in source_layers}
             n_done = ckpt["n_done"]
             next_idx = ckpt.get("next_idx", n_done)
             print(f"Resumed from checkpoint: {n_done} prompts done, starting at index {next_idx}")
@@ -471,10 +479,14 @@ def fit_jacobian_lens(
             if input_ids.shape[1] <= skip_first_n + 1:
                 continue
             J = jacobian_for_prompt(
-                model, input_ids, source_layers, target_layer,
-                dim_batch=dim_batch, skip_first_n=skip_first_n,
+                model,
+                input_ids,
+                source_layers,
+                target_layer,
+                dim_batch=dim_batch,
+                skip_first_n=skip_first_n,
             )
-            for l in source_layers:
+            for layer in source_layers:
                 jacobian_sum[l] += J[l]
             n_done += 1
             next_idx = idx + 1
@@ -483,7 +495,7 @@ def fit_jacobian_lens(
                 tmp = os.path.join(checkpoint_path, "checkpoint.tmp")
                 torch.save(
                     {
-                        "jacobian_sum": {l: jacobian_sum[l].clone() for l in source_layers},
+                        "jacobian_sum": {l: jacobian_sum[l].clone() for layer in source_layers},
                         "n_done": n_done,
                         "next_idx": next_idx,
                         "source_layers": source_layers,
@@ -499,16 +511,18 @@ def fit_jacobian_lens(
             next_idx = idx + 1
             continue
 
-    jacobians = {l: jacobian_sum[l] / n_done for l in source_layers}
+    jacobians = {l: jacobian_sum[l] / n_done for layer in source_layers}
 
     if checkpoint_path:
         os.makedirs(checkpoint_path, exist_ok=True)
         tmp = os.path.join(checkpoint_path, "checkpoint.tmp")
         torch.save(
             {
-                "jacobian_sum": {l: jacobian_sum[l].clone() for l in source_layers},
-                "n_done": n_done, "next_idx": next_idx,
-                "source_layers": source_layers, "target_layer": target_layer,
+                "jacobian_sum": {l: jacobian_sum[l].clone() for layer in source_layers},
+                "n_done": n_done,
+                "next_idx": next_idx,
+                "source_layers": source_layers,
+                "target_layer": target_layer,
                 "skip_first_n": skip_first_n,
             },
             tmp,
@@ -517,8 +531,11 @@ def fit_jacobian_lens(
 
     _thaw_params(model, orig_grad)
     return JacobianLens(
-        jacobians=jacobians, d_model=d_model, n_prompts=n_done,
-        source_layers=source_layers, target_layer=target_layer,
+        jacobians=jacobians,
+        d_model=d_model,
+        n_prompts=n_done,
+        source_layers=source_layers,
+        target_layer=target_layer,
         skip_first_n=skip_first_n,
         model_name=getattr(model.config, "_name_or_path", "unknown"),
     )
@@ -527,6 +544,7 @@ def fit_jacobian_lens(
 # ---------------------------------------------------------------------------
 # Experiment class
 # ---------------------------------------------------------------------------
+
 
 @Registry.register_experiment("jacobian_lens")
 class JacobianLensExperiment(BaseExperiment):
@@ -623,7 +641,7 @@ class JacobianLensExperiment(BaseExperiment):
 
     def _resolve_apply_layers(self, lens: JacobianLens) -> List[int]:
         if self.source_layers is not None:
-            return [l for l in self.source_layers if l in lens.jacobians]
+            return [layer for layer in self.source_layers if layer in lens.jacobians]
         return sorted(lens.jacobians.keys())[:: self.layer_stride]
 
     # -- fit mode ---------------------------------------------------------
@@ -641,17 +659,25 @@ class JacobianLensExperiment(BaseExperiment):
         print(f"Corpus prompts: {self.n_corpus_prompts}")
 
         prompts = load_corpus_prompts(
-            path=self.corpus_path, n_prompts=self.n_corpus_prompts,
-            max_seq_len=self.max_input_tokens, seed=self.seed,
+            path=self.corpus_path,
+            n_prompts=self.n_corpus_prompts,
+            max_seq_len=self.max_input_tokens,
+            seed=self.seed,
         )
         print(f"Valid prompts: {len(prompts)}")
 
         lens = fit_jacobian_lens(
-            model=model, tokenizer=tokenizer, prompts=prompts,
-            source_layers=source_layers, target_layer=target_layer,
-            dim_batch=self.dim_batch, skip_first_n=self.skip_first_n,
-            max_seq_len=self.max_input_tokens, device=backend.device,
-            checkpoint_path=self.lens_path, checkpoint_every=50,
+            model=model,
+            tokenizer=tokenizer,
+            prompts=prompts,
+            source_layers=source_layers,
+            target_layer=target_layer,
+            dim_batch=self.dim_batch,
+            skip_first_n=self.skip_first_n,
+            max_seq_len=self.max_input_tokens,
+            device=backend.device,
+            checkpoint_path=self.lens_path,
+            checkpoint_every=50,
         )
         if self.lens_path:
             lens.save(self.lens_path)
@@ -662,8 +688,11 @@ class JacobianLensExperiment(BaseExperiment):
             model_name=backend.model_name,
             prompt_strategy="corpus",
             metrics={
-                "mode": "fit", "n_prompts": lens.n_prompts, "d_model": lens.d_model,
-                "source_layers": lens.source_layers, "target_layer": lens.target_layer,
+                "mode": "fit",
+                "n_prompts": lens.n_prompts,
+                "d_model": lens.d_model,
+                "source_layers": lens.source_layers,
+                "target_layer": lens.target_layer,
                 "skip_first_n": lens.skip_first_n,
             },
             metadata={"lens_path": self.lens_path, "corpus_path": self.corpus_path},
@@ -696,24 +725,28 @@ class JacobianLensExperiment(BaseExperiment):
         n = len(samples)
         print(f"Samples: {n}")
 
-        jl_top1: Dict[int, List[bool]] = {l: [] for l in apply_layers}
-        jl_topk: Dict[int, List[bool]] = {l: [] for l in apply_layers}
-        ll_top1: Dict[int, List[bool]] = {l: [] for l in apply_layers}
-        ll_topk: Dict[int, List[bool]] = {l: [] for l in apply_layers}
+        jl_top1: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
+        jl_topk: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
+        ll_top1: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
+        ll_topk: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
         jl_emergence: List[Optional[int]] = []
         ll_emergence: List[Optional[int]] = []
         jl_never = ll_never = final_correct = jl_disagree = 0
 
         for sample in tqdm(samples, desc="J-lens apply"):
             prompt_input = {
-                "text": sample.text, "question": sample.text,
-                "report": sample.text, "metadata": sample.metadata or {},
+                "text": sample.text,
+                "question": sample.text,
+                "report": sample.text,
+                "metadata": sample.metadata or {},
             }
             prompt_str = prompt_strategy.build_prompt(prompt_input) + self.answer_cue
             try:
                 prompt_tokens = tokenizer.encode(
-                    prompt_str, return_tensors="pt",
-                    truncation=True, max_length=self.max_input_tokens,
+                    prompt_str,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=self.max_input_tokens,
                 ).to(device)
                 with torch.no_grad():
                     out = model(input_ids=prompt_tokens, output_hidden_states=True, use_cache=False)
@@ -767,50 +800,68 @@ class JacobianLensExperiment(BaseExperiment):
                     jl_disagree += 1
 
             if not jl_ok:
-                jl_emergence.append(None); jl_never += 1
+                jl_emergence.append(None)
+                jl_never += 1
             if not ll_ok:
-                ll_emergence.append(None); ll_never += 1
+                ll_emergence.append(None)
+                ll_never += 1
 
-        def _rate(v): return round(sum(v) / len(v), 4) if v else 0.0
-        def _mean_emergence(em): return (
-            round(sum(e for e in em if e is not None) / sum(1 for e in em if e is not None), 2)
-            if any(e is not None for e in em) else None
-        )
+        def _rate(v):
+            return round(sum(v) / len(v), 4) if v else 0.0
 
-        jl_t1 = {l: _rate(jl_top1[l]) for l in apply_layers}
-        jl_tk = {l: _rate(jl_topk[l]) for l in apply_layers}
-        ll_t1 = {l: _rate(ll_top1[l]) for l in apply_layers}
-        ll_tk = {l: _rate(ll_topk[l]) for l in apply_layers}
+        def _mean_emergence(em):
+            return (
+                round(sum(e for e in em if e is not None) / sum(1 for e in em if e is not None), 2)
+                if any(e is not None for e in em)
+                else None
+            )
 
-        print(f"\n{'='*80}")
+        jl_t1 = {l: _rate(jl_top1[l]) for layer in apply_layers}
+        jl_tk = {l: _rate(jl_topk[l]) for layer in apply_layers}
+        ll_t1 = {l: _rate(ll_top1[l]) for layer in apply_layers}
+        ll_tk = {l: _rate(ll_topk[l]) for layer in apply_layers}
+
+        print(f"\n{'=' * 80}")
         print("JACOBIAN LENS vs LOGIT LENS")
-        print(f"{'='*80}")
-        print(f"Samples: {n} | Final accuracy: {final_correct / n:.1%} | Top-1 disagreements: {jl_disagree}")
-        print(f"\n{'Layer':>6}  {'JL Top-1':>10}  {'JL Top-K':>10}  {'LL Top-1':>10}  {'LL Top-K':>10}")
+        print(f"{'=' * 80}")
+        print(
+            f"Samples: {n} | Final accuracy: {final_correct / n:.1%} | Top-1 disagreements: {jl_disagree}"
+        )
+        print(
+            f"\n{'Layer':>6}  {'JL Top-1':>10}  {'JL Top-K':>10}  {'LL Top-1':>10}  {'LL Top-K':>10}"
+        )
         print("-" * 56)
         for layer in apply_layers:
-            print(f"{layer:>6}  {jl_t1[layer]:>10.1%}  {jl_tk[layer]:>10.1%}  {ll_t1[layer]:>10.1%}  {ll_tk[layer]:>10.1%}")
-        print(f"{'='*80}\n")
+            print(
+                f"{layer:>6}  {jl_t1[layer]:>10.1%}  {jl_tk[layer]:>10.1%}  {ll_t1[layer]:>10.1%}  {ll_tk[layer]:>10.1%}"
+            )
+        print(f"{'=' * 80}\n")
 
         return ExperimentResult(
             experiment_name=self.name,
             model_name=backend.model_name,
             prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
             metrics={
-                "mode": "apply", "num_samples": n,
+                "mode": "apply",
+                "num_samples": n,
                 "final_accuracy": round(final_correct / n, 4) if n else 0,
                 "jl_mean_emergence": _mean_emergence(jl_emergence),
                 "jl_never_emerged_rate": round(jl_never / n, 4) if n else 0,
                 "ll_mean_emergence": _mean_emergence(ll_emergence),
                 "ll_never_emerged_rate": round(ll_never / n, 4) if n else 0,
-                "jl_top1_rates": jl_t1, "jl_topk_rates": jl_tk,
-                "ll_top1_rates": ll_t1, "ll_topk_rates": ll_tk,
+                "jl_top1_rates": jl_t1,
+                "jl_topk_rates": jl_tk,
+                "ll_top1_rates": ll_t1,
+                "ll_topk_rates": ll_tk,
                 "top1_disagreements": jl_disagree,
             },
             metadata={
-                "apply_layers": apply_layers, "top_k": self.top_k,
-                "lens_path": self.lens_path, "lens_n_prompts": lens.n_prompts,
-                "num_samples": n, "seed": self.seed,
+                "apply_layers": apply_layers,
+                "top_k": self.top_k,
+                "lens_path": self.lens_path,
+                "lens_n_prompts": lens.n_prompts,
+                "num_samples": n,
+                "seed": self.seed,
             },
         )
 
@@ -834,12 +885,19 @@ class JacobianLensExperiment(BaseExperiment):
 
         comparisons = []
         for sample in samples:
-            prompt_input = {"text": sample.text, "question": sample.text, "report": sample.text, "metadata": sample.metadata or {}}
+            prompt_input = {
+                "text": sample.text,
+                "question": sample.text,
+                "report": sample.text,
+                "metadata": sample.metadata or {},
+            }
             prompt_str = prompt_strategy.build_prompt(prompt_input) + self.answer_cue
             try:
                 prompt_tokens = tokenizer.encode(
-                    prompt_str, return_tensors="pt",
-                    truncation=True, max_length=self.max_input_tokens,
+                    prompt_str,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=self.max_input_tokens,
                 ).to(device)
                 with torch.no_grad():
                     out = model(input_ids=prompt_tokens, output_hidden_states=True, use_cache=False)
@@ -863,12 +921,18 @@ class JacobianLensExperiment(BaseExperiment):
                 ll_top = torch.topk(lm_head(ll_h.unsqueeze(0))[0], self.top_k)
                 ll_tokens = [tokenizer.decode([t.item()]) for t in ll_top.indices]
                 overlap = len(set(jl_top.indices.tolist()) & set(ll_top.indices.tolist()))
-                layer_comparisons.append({
-                    "layer": layer, "jl_top_tokens": jl_tokens, "ll_top_tokens": ll_tokens,
-                    "topk_overlap": overlap,
-                    "topk_overlap_rate": round(overlap / self.top_k, 2) if self.top_k else 0,
-                })
-            comparisons.append({"text": sample.text[:200], "label": sample.label, "layers": layer_comparisons})
+                layer_comparisons.append(
+                    {
+                        "layer": layer,
+                        "jl_top_tokens": jl_tokens,
+                        "ll_top_tokens": ll_tokens,
+                        "topk_overlap": overlap,
+                        "topk_overlap_rate": round(overlap / self.top_k, 2) if self.top_k else 0,
+                    }
+                )
+            comparisons.append(
+                {"text": sample.text[:200], "label": sample.label, "layers": layer_comparisons}
+            )
 
         print(f"\nJ-lens vs Logit Lens comparison on {len(comparisons)} samples")
         for ci, comp in enumerate(comparisons):
@@ -877,7 +941,9 @@ class JacobianLensExperiment(BaseExperiment):
             print(f"\n--- Sample {ci}: label={comp['label']} ---")
             print(f"  {comp['text'][:100]}...")
             for lc in comp["layers"][:5]:
-                print(f"  L{lc['layer']:>3} JL: {lc['jl_top_tokens'][:5]}  |  LL: {lc['ll_top_tokens'][:5]}  overlap={lc['topk_overlap']}/{self.top_k}")
+                print(
+                    f"  L{lc['layer']:>3} JL: {lc['jl_top_tokens'][:5]}  |  LL: {lc['ll_top_tokens'][:5]}  overlap={lc['topk_overlap']}/{self.top_k}"
+                )
 
         return ExperimentResult(
             experiment_name=self.name,
@@ -885,7 +951,11 @@ class JacobianLensExperiment(BaseExperiment):
             prompt_strategy=prompt_strategy.name if hasattr(prompt_strategy, "name") else "custom",
             metrics={"mode": "compare", "n_samples": len(comparisons)},
             raw_outputs=comparisons,
-            metadata={"apply_layers": apply_layers, "top_k": self.top_k, "lens_path": self.lens_path},
+            metadata={
+                "apply_layers": apply_layers,
+                "top_k": self.top_k,
+                "lens_path": self.lens_path,
+            },
         )
 
     # -- main -------------------------------------------------------------
