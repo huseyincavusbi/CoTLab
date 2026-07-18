@@ -1,5 +1,8 @@
 # H-Neuron Analysis — CETT-based hallucination neuron identification.
 #
+# DEPRECATED — See https://github.com/huseyincavusbi/hprobes
+# Install: pip install hprobes
+#
 # Phase 1: Extract per-neuron CETT features across all FFN layers
 # Phase 2: L1 logistic regression → sparse H-Neuron set
 # Phase 3: Causal validation (suppress/amplify H-Neurons, measure accuracy)
