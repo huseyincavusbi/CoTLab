@@ -113,6 +113,33 @@ class TestLRPForwardIdentity:
                 y_lrp = model(x.clone())
         assert torch.allclose(y_lrp, y_plain, atol=1e-6)
 
+    def test_real_transformers_norms_detected(self):
+        """Real Gemma3/Qwen3 RMSNorm classes must both be detected and patched."""
+        import pytest
+
+        torch.manual_seed(0)
+        try:
+            from transformers.models.gemma3.modeling_gemma3 import Gemma3RMSNorm
+            from transformers.models.qwen3.modeling_qwen3 import Qwen3RMSNorm
+        except ImportError:
+            pytest.skip("transformers version lacks these classes")
+
+        from cotlab.experiments.lrp import _is_rms_norm
+
+        gemma = Gemma3RMSNorm(8)
+        qwen = Qwen3RMSNorm(8)
+        assert _is_rms_norm(gemma), "Gemma3RMSNorm not detected"
+        assert _is_rms_norm(qwen), "Qwen3RMSNorm not detected"
+
+        x = torch.randn(2, 4, 8)
+        with torch.no_grad():
+            yg = gemma(x)
+            yq = qwen(x)
+            with LRPContext(gemma):
+                assert torch.allclose(gemma(x.clone()), yg, atol=1e-6), "Gemma LN-rule changed fwd"
+            with LRPContext(qwen):
+                assert torch.allclose(qwen(x.clone()), yq, atol=1e-6), "Qwen LN-rule changed fwd"
+
     def test_context_restores_modules(self):
         model = _TinyModel()
         orig_norm_fn = model.input_layernorm._norm.__func__

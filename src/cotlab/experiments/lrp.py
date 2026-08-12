@@ -64,15 +64,18 @@ def _rms_norm_eps(module: nn.Module) -> Optional[float]:
 
 
 def _is_rms_norm(module: nn.Module) -> bool:
-    """Heuristic: RMSNorm modules expose a _norm(x) method plus an eps attr.
+    """Heuristic: RMSNorm modules carry a norm weight + an epsilon attribute.
 
-    Covers both the `eps` naming (Gemma) and `variance_epsilon` (Qwen).
+    Covers both the `_norm`-method layout (Gemma) and the inline-forward
+    layout (Qwen, which has no `_norm` but a weight + variance_epsilon).
     """
-    return (
-        hasattr(module, "_norm")
-        and _rms_norm_eps(module) is not None
-        and not isinstance(module, nn.LayerNorm)
-    )
+    if isinstance(module, nn.LayerNorm):
+        return False
+    if _rms_norm_eps(module) is None:
+        return False
+    if not hasattr(module, "weight"):
+        return False
+    return hasattr(module, "_norm") or "rmsnorm" in type(module).__name__.lower()
 
 
 def _is_layer_norm(module: nn.Module) -> bool:
@@ -100,16 +103,31 @@ def _is_residual_norm(module: nn.Module, name: str) -> bool:
 
 
 def _rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor) -> torch.Tensor:
-    """LN-rule for RMSNorm: detach the rsqrt scale factor.
+    """LN-rule for RMSNorm with a `_norm`-method layout (Gemma-style).
 
-    Matches the standard RMSNorm._norm pattern (Gemma / Qwen) with the rsqrt
-    detached; reads the epsilon from either naming convention.
+    Detaches the rsqrt scale factor; reads epsilon from either naming
+    convention.
     """
     eps = _rms_norm_eps(module)
     if eps is None:
         raise AttributeError(f"RMSNorm module {type(module).__name__} has no epsilon attribute")
     scale = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
     return x * scale.detach()
+
+
+def _qwen_rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor) -> torch.Tensor:
+    """LN-rule for inline-forward RMSNorm (Qwen-style, no `_norm` method).
+
+    Mirrors Qwen3RMSNorm.forward with the rsqrt scale detached.
+    """
+    eps = _rms_norm_eps(module)
+    if eps is None:
+        raise AttributeError(f"RMSNorm module {type(module).__name__} has no epsilon attribute")
+    input_dtype = x.dtype
+    hidden = x.float()
+    variance = hidden.pow(2).mean(-1, keepdim=True)
+    hidden = hidden * torch.rsqrt(variance + eps).detach()
+    return (module.weight * hidden).to(input_dtype)
 
 
 def _layer_norm_lrp_forward(module: nn.LayerNorm, x: torch.Tensor) -> torch.Tensor:
@@ -186,9 +204,12 @@ class LRPContext:
         for name, module in self.model.named_modules():
             if not _is_residual_norm(module, name):
                 continue
-            if _is_rms_norm(module):
+            if _is_rms_norm(module) and hasattr(module, "_norm"):
                 self._norm_handles.append((module, "_norm", module._norm))
                 module._norm = _rms_norm_lrp_forward.__get__(module, type(module))
+            elif _is_rms_norm(module):
+                self._norm_handles.append((module, "forward", module.forward))
+                module.forward = _qwen_rms_norm_lrp_forward.__get__(module, type(module))
             elif _is_layer_norm(module):
                 self._norm_handles.append((module, "forward", module.forward))
                 module.forward = _layer_norm_lrp_forward.__get__(module, type(module))
