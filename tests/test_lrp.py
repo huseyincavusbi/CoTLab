@@ -33,6 +33,18 @@ class _QwenRMSNorm(_RMSNorm):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.variance_epsilon)
 
 
+class _GatedRMSNorm(_QwenRMSNorm):
+    """Qwen3.5-style gated norm: multiplies the output by silu(gate)."""
+
+    def forward(self, hidden_states, gate=None):
+        input_dtype = hidden_states.dtype
+        out = self._norm(hidden_states.float()) * (1.0 + self.weight.float())
+        out = out.to(input_dtype)
+        if gate is not None:
+            out = out * torch.nn.functional.silu(gate.to(torch.float32))
+        return out.to(input_dtype)
+
+
 class _GatedMLP(nn.Module):
     """SwiGLU-style gated MLP: down_proj(act(gate_proj(x)) * up_proj(x))."""
 
@@ -128,6 +140,31 @@ class TestLRPForwardIdentity:
             y_plain = model(x.clone())
             with LRPContext(model):
                 y_lrp = model(x.clone())
+        assert torch.allclose(y_lrp, y_plain, atol=1e-6)
+
+    def test_gated_rms_norm_excluded(self):
+        """Qwen3.5 gated norms (attention path) must NOT be patched (LN-rule)."""
+        from cotlab.experiments.lrp import _is_rms_norm
+
+        gated = _GatedRMSNorm(8)
+        assert not _is_rms_norm(gated), "gated RMSNorm must be excluded from LN-rule"
+
+        # forward with a gate must be unaffected by LRPContext
+        class Wrap(nn.Module):
+            def __init__(self, norm):
+                super().__init__()
+                self.norm = norm
+
+            def forward(self, x, gate):
+                return self.norm(x, gate=gate)
+
+        model = Wrap(gated)
+        x = torch.randn(2, 4, 8)
+        gate = torch.randn(2, 4, 8)
+        with torch.no_grad():
+            y_plain = model(x.clone(), gate.clone())
+            with LRPContext(model):
+                y_lrp = model(x.clone(), gate.clone())
         assert torch.allclose(y_lrp, y_plain, atol=1e-6)
 
     def test_real_transformers_norms_detected(self):

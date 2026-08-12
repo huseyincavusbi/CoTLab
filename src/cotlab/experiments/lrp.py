@@ -104,12 +104,18 @@ def _is_rms_norm(module: nn.Module) -> bool:
 
     Covers both the `_norm`-method layout (Gemma) and the inline-forward
     layout (Qwen, which has no `_norm` but a weight + variance_epsilon).
+
+    Gated norms (e.g. Qwen3_5RMSNormGated) are excluded: they take an extra
+    `gate` argument that is multiplied into the output and live in the
+    attention path, which the R-lens protocol leaves unmodified.
     """
     if isinstance(module, nn.LayerNorm):
         return False
     if _rms_norm_eps(module) is None:
         return False
     if not hasattr(module, "weight"):
+        return False
+    if "gated" in type(module).__name__.lower():
         return False
     return hasattr(module, "_norm") or "rmsnorm" in type(module).__name__.lower()
 
