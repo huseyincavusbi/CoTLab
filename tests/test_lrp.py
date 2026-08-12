@@ -140,6 +140,34 @@ class TestLRPForwardIdentity:
             with LRPContext(qwen):
                 assert torch.allclose(qwen(x.clone()), yq, atol=1e-6), "Qwen LN-rule changed fwd"
 
+    def test_transformers_activation_detected(self):
+        """transformers SiLUActivation (not nn.SiLU) must be detected for identity-rule."""
+        import pytest
+
+        try:
+            from transformers.models.qwen3.configuration_qwen3 import Qwen3Config
+            from transformers.models.qwen3.modeling_qwen3 import Qwen3MLP
+        except ImportError:
+            pytest.skip("transformers version lacks Qwen3")
+
+        from cotlab.experiments.lrp import _is_activation
+
+        cfg = Qwen3Config(
+            hidden_size=16, intermediate_size=32, num_hidden_layers=1, num_attention_heads=2
+        )
+        mlp = Qwen3MLP(cfg)
+        assert _is_activation(mlp.act_fn), "SiLUActivation not detected for identity-rule"
+
+        # identity-rule must be installed (hook registered) and forward unchanged
+        x = torch.randn(2, 4, 16)
+        with LRPContext(mlp) as ctx:
+            assert len(ctx._hook_handles) >= 1, "no activation hook installed"
+            with torch.no_grad():
+                y_plain = mlp(x.clone())
+                y_lrp = mlp(x.clone())
+            assert torch.allclose(y_lrp, y_plain, atol=1e-5), "identity-rule changed forward"
+        assert len(ctx._hook_handles) == 0, "hooks not removed on exit"
+
     def test_context_restores_modules(self):
         model = _TinyModel()
         orig_norm_fn = model.input_layernorm._norm.__func__

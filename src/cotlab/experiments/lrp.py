@@ -51,7 +51,7 @@ def identity_rule_forward(
 # Module detection
 # ---------------------------------------------------------------------------
 
-_ACTIVATION_TYPES = (nn.SiLU, nn.GELU)
+_ACTIVATION_TYPES = (nn.SiLU, nn.GELU, nn.ReLU)
 _LAYERNORM_TYPES = (nn.LayerNorm,)
 
 
@@ -61,6 +61,21 @@ def _rms_norm_eps(module: nn.Module) -> Optional[float]:
         if hasattr(module, attr):
             return getattr(module, attr)
     return None
+
+
+def _is_activation(module: nn.Module) -> bool:
+    """Detect activation modules, incl. transformers SiLU/GELU wrappers.
+
+    Real HF models use transformers.activations.SiLUActivation /
+    GELUActivation rather than torch.nn.SiLU / GELU, so detection also matches
+    classes whose name ends in "activation" and contains the activation type.
+    """
+    if isinstance(module, _ACTIVATION_TYPES):
+        return True
+    name = type(module).__name__.lower()
+    if not name.endswith("activation"):
+        return False
+    return any(k in name for k in ("silu", "gelu", "relu", "sigmoid"))
 
 
 def _is_rms_norm(module: nn.Module) -> bool:
@@ -80,10 +95,6 @@ def _is_rms_norm(module: nn.Module) -> bool:
 
 def _is_layer_norm(module: nn.Module) -> bool:
     return isinstance(module, _LAYERNORM_TYPES)
-
-
-def _is_activation(module: nn.Module) -> bool:
-    return isinstance(module, _ACTIVATION_TYPES)
 
 
 def _is_gated_mlp(module: nn.Module) -> bool:
