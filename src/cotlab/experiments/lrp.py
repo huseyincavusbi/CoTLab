@@ -19,7 +19,7 @@ installs the rules on a model's modules and restores them on exit.
 from __future__ import annotations
 
 import contextlib
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -113,11 +113,11 @@ def _is_residual_norm(module: nn.Module, name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor) -> torch.Tensor:
+def _rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor, *args: Any) -> torch.Tensor:
     """LN-rule for RMSNorm with a `_norm`-method layout (Gemma-style).
 
     Detaches the rsqrt scale factor; reads epsilon from either naming
-    convention.
+    convention. Extra positional args (e.g. residual) are ignored.
     """
     eps = _rms_norm_eps(module)
     if eps is None:
@@ -126,10 +126,11 @@ def _rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor) -> torch.Tensor:
     return x * scale.detach()
 
 
-def _qwen_rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor) -> torch.Tensor:
+def _qwen_rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor, *args: Any) -> torch.Tensor:
     """LN-rule for inline-forward RMSNorm (Qwen-style, no `_norm` method).
 
-    Mirrors Qwen3RMSNorm.forward with the rsqrt scale detached.
+    Mirrors Qwen3RMSNorm.forward with the rsqrt scale detached. Extra
+    positional args (e.g. residual) are ignored.
     """
     eps = _rms_norm_eps(module)
     if eps is None:
@@ -141,7 +142,7 @@ def _qwen_rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor) -> torch.Tens
     return (module.weight * hidden).to(input_dtype)
 
 
-def _layer_norm_lrp_forward(module: nn.LayerNorm, x: torch.Tensor) -> torch.Tensor:
+def _layer_norm_lrp_forward(module: nn.LayerNorm, x: torch.Tensor, *args: Any) -> torch.Tensor:
     """LN-rule for LayerNorm: detach the normalisation scale (std)."""
     mean = x.mean(-1, keepdim=True)
     var = x.var(-1, keepdim=True, unbiased=False)
@@ -150,7 +151,7 @@ def _layer_norm_lrp_forward(module: nn.LayerNorm, x: torch.Tensor) -> torch.Tens
     return x_norm * module.weight + module.bias
 
 
-def _gated_mlp_lrp_forward(module: nn.Module, x: torch.Tensor) -> torch.Tensor:
+def _gated_mlp_lrp_forward(module: nn.Module, x: torch.Tensor, *args: Any) -> torch.Tensor:
     """Identity-rule (on the gate activation) + Half-rule (on the product).
 
     Assumes the SwiGLU pattern: out = down_proj(act_fn(gate_proj(x)) * up_proj(x)).

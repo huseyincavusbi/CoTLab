@@ -96,6 +96,23 @@ class TestLRPForwardIdentity:
 
         assert torch.allclose(y_lrp.detach(), y_plain.detach(), atol=1e-6)
 
+    def test_forward_tolerates_extra_args(self):
+        """Real decoders may call norms with extra positional args (residual)."""
+        from cotlab.experiments.lrp import (
+            _layer_norm_lrp_forward,
+            _qwen_rms_norm_lrp_forward,
+            _rms_norm_lrp_forward,
+        )
+
+        gemma = _RMSNorm(8)
+        qwen = _QwenRMSNorm(8)
+        ln = nn.LayerNorm(8)
+        x = torch.randn(2, 4, 8)
+        # extra arg (residual) must be tolerated, not raise TypeError
+        _rms_norm_lrp_forward(gemma, x, x)
+        _qwen_rms_norm_lrp_forward(qwen, x, x)
+        _layer_norm_lrp_forward(ln, x, x)
+
     def test_qwen_style_variance_epsilon_detected(self):
         """RMSNorm using variance_epsilon (Qwen) must be detected and patched."""
         from cotlab.experiments.lrp import _is_rms_norm, _rms_norm_eps
