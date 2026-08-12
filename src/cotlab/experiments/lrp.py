@@ -19,7 +19,7 @@ installs the rules on a model's modules and restores them on exit.
 from __future__ import annotations
 
 import contextlib
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -55,10 +55,23 @@ _ACTIVATION_TYPES = (nn.SiLU, nn.GELU)
 _LAYERNORM_TYPES = (nn.LayerNorm,)
 
 
+def _rms_norm_eps(module: nn.Module) -> Optional[float]:
+    """Read the epsilon from an RMSNorm module across naming conventions."""
+    for attr in ("eps", "variance_epsilon", "epsilon"):
+        if hasattr(module, attr):
+            return getattr(module, attr)
+    return None
+
+
 def _is_rms_norm(module: nn.Module) -> bool:
-    """Heuristic: RMSNorm modules expose a _norm(x) method plus an eps attr."""
+    """Heuristic: RMSNorm modules expose a _norm(x) method plus an eps attr.
+
+    Covers both the `eps` naming (Gemma) and `variance_epsilon` (Qwen).
+    """
     return (
-        hasattr(module, "_norm") and hasattr(module, "eps") and not isinstance(module, nn.LayerNorm)
+        hasattr(module, "_norm")
+        and _rms_norm_eps(module) is not None
+        and not isinstance(module, nn.LayerNorm)
     )
 
 
@@ -89,9 +102,13 @@ def _is_residual_norm(module: nn.Module, name: str) -> bool:
 def _rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor) -> torch.Tensor:
     """LN-rule for RMSNorm: detach the rsqrt scale factor.
 
-    Matches Gemma3RMSNorm._norm with the rsqrt detached.
+    Matches the standard RMSNorm._norm pattern (Gemma / Qwen) with the rsqrt
+    detached; reads the epsilon from either naming convention.
     """
-    scale = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + module.eps)
+    eps = _rms_norm_eps(module)
+    if eps is None:
+        raise AttributeError(f"RMSNorm module {type(module).__name__} has no epsilon attribute")
+    scale = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
     return x * scale.detach()
 
 

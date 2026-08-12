@@ -21,6 +21,18 @@ class _RMSNorm(nn.Module):
         return self._norm(x.float()) * (1.0 + self.weight.float())
 
 
+class _QwenRMSNorm(_RMSNorm):
+    """Qwen-style RMSNorm: uses variance_epsilon instead of eps."""
+
+    def __init__(self, dim, eps=1e-6):
+        super().__init__(dim, eps=eps)
+        self.variance_epsilon = eps
+        del self.eps
+
+    def _norm(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.variance_epsilon)
+
+
 class _GatedMLP(nn.Module):
     """SwiGLU-style gated MLP: down_proj(act(gate_proj(x)) * up_proj(x))."""
 
@@ -83,6 +95,23 @@ class TestLRPForwardIdentity:
                 y_lrp = model(x.clone())
 
         assert torch.allclose(y_lrp.detach(), y_plain.detach(), atol=1e-6)
+
+    def test_qwen_style_variance_epsilon_detected(self):
+        """RMSNorm using variance_epsilon (Qwen) must be detected and patched."""
+        from cotlab.experiments.lrp import _is_rms_norm, _rms_norm_eps
+
+        qwen_norm = _QwenRMSNorm(8)
+        assert _is_rms_norm(qwen_norm)
+        assert _rms_norm_eps(qwen_norm) == qwen_norm.variance_epsilon
+
+        # forward identity must hold with the Qwen-style norm installed
+        model = nn.Sequential(qwen_norm)
+        x = _make_inputs(d=8)
+        with torch.no_grad():
+            y_plain = model(x.clone())
+            with LRPContext(model):
+                y_lrp = model(x.clone())
+        assert torch.allclose(y_lrp, y_plain, atol=1e-6)
 
     def test_context_restores_modules(self):
         model = _TinyModel()
