@@ -34,17 +34,38 @@ def stabilize(z: torch.Tensor) -> torch.Tensor:
     return z + ((z == 0.0).to(z) + z.sign()) * 1e-6
 
 
+class _IdentityRuleFn(torch.autograd.Function):
+    """Identity-rule for activations with an exactly-preserved forward pass.
+
+    The RelP identity rule replaces act(x) by x * (act(x)/x).detach(). In
+    fp32 that round-trips to act(x); in bf16 (8-bit mantissa) it does not, and
+    the forward pass would be corrupted. This autograd Function keeps the
+    forward value exactly equal to act(x) while making the backward pass the
+    per-element linear map act(x)/x.
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
+        ctx.save_for_backward(x, out)
+        return out.detach()
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> Tuple[torch.Tensor, None]:
+        x, out = ctx.saved_tensors
+        factor = (out / stabilize(x)).detach()
+        return grad_output * factor, None
+
+
 def identity_rule_forward(
     module: nn.Module, inp: Tuple[torch.Tensor, ...], out: torch.Tensor
 ) -> torch.Tensor:
-    """Identity-rule for activation modules: x * (act(x)/x).detach().
+    """Identity-rule forward hook for activation modules.
 
-    Forward value equals act(x); backward passes the constant factor
-    act(x)/x, i.e. a per-element linear map.
+    Forward value equals act(x) exactly (no precision loss in bf16); the
+    backward pass passes the constant factor act(x)/x, a per-element linear map.
     """
     x = inp[0]
-    x_s = stabilize(x)
-    return x_s * (out / x_s).detach()
+    return _IdentityRuleFn.apply(x, out)
 
 
 # ---------------------------------------------------------------------------

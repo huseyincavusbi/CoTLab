@@ -247,6 +247,18 @@ class TestLRPRulesBehavior:
         # and it must differ from the plain (non-linear) derivative
         assert not torch.allclose(grad_lrp, grad_plain, atol=1e-3)
 
+    def test_identity_rule_forward_exact_in_bf16(self):
+        # The forward value must be exactly act(x) even in bf16 (the ratio
+        # round-trip x*(act(x)/x) is lossy in bf16 and must not be used).
+        act = nn.SiLU()
+        x = torch.randn(4, 8).to(torch.bfloat16).requires_grad_(True)
+        with torch.no_grad():
+            y_plain = act(x)
+            from cotlab.experiments.lrp import identity_rule_forward
+
+            y_lrp = identity_rule_forward(act, (x,), act(x))
+        assert torch.equal(y_lrp, y_plain), "identity-rule changed forward value in bf16"
+
     def test_half_rule_splits_gradient(self):
         # Half-rule: (g/2) + (g/2).detach() means the gradient is half of the
         # plain product gradient (relevance split across the two branches).
