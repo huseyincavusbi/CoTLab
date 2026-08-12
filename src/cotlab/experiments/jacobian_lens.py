@@ -55,6 +55,7 @@ class JacobianLens:
     target_layer: Optional[int] = None
     skip_first_n: int = 16
     model_name: str = ""
+    lens_type: str = "jlens"
 
     def save(self, path: str) -> None:
         os.makedirs(path, exist_ok=True)
@@ -77,6 +78,7 @@ class JacobianLens:
             "target_layer": self.target_layer,
             "skip_first_n": self.skip_first_n,
             "model_name": self.model_name,
+            "lens_type": self.lens_type,
         }
         with open(os.path.join(path, "metadata.json"), "w") as f:
             json.dump(metadata, f, indent=2)
@@ -107,6 +109,7 @@ class JacobianLens:
             target_layer=metadata.get("target_layer"),
             skip_first_n=metadata.get("skip_first_n", 16),
             model_name=metadata.get("model_name", ""),
+            lens_type=metadata.get("lens_type", "jlens"),
         )
 
     def transport(self, residual: torch.Tensor, layer: int) -> torch.Tensor:
@@ -203,6 +206,7 @@ class JacobianLens:
             target_layer=lenses[0].target_layer,
             skip_first_n=lenses[0].skip_first_n,
             model_name=lenses[0].model_name,
+            lens_type=lenses[0].lens_type,
         )
 
 
@@ -326,8 +330,12 @@ def jacobian_for_prompt(
     target_layer: int,
     dim_batch: int = DIM_BATCH,
     skip_first_n: int = SKIP_FIRST_N_POSITIONS,
+    lrp: bool = False,
 ) -> Dict[int, torch.Tensor]:
     """Compute per-layer Jacobian matrices J_ℓ = 𝔼[∂h_T/∂h_ℓ] for one prompt.
+
+    If lrp=True, the LRP rules are installed on the model so the backward pass
+    computes relevance coefficients instead of raw gradients (R-lens / RelP).
 
     Requires all model params to have requires_grad=False.
     """
@@ -340,7 +348,17 @@ def jacobian_for_prompt(
         raise ValueError(f"Prompt too short: {seq_len} tokens, need > {skip_first_n + 1}")
 
     replicated = input_ids.expand(dim_batch, -1).contiguous()
-    source_acts, target_act = _hook_layer_outputs(model, replicated, source_layers, target_layer)
+    if lrp:
+        from .lrp import lrp_context
+
+        with lrp_context(model):
+            source_acts, target_act = _hook_layer_outputs(
+                model, replicated, source_layers, target_layer
+            )
+    else:
+        source_acts, target_act = _hook_layer_outputs(
+            model, replicated, source_layers, target_layer
+        )
     J = {layer: torch.zeros(d_model, d_model) for layer in source_layers}
 
     for dim_start in range(0, d_model, dim_batch):
@@ -426,8 +444,14 @@ def fit_jacobian_lens(
     checkpoint_path: Optional[str] = None,
     checkpoint_every: int = 50,
     progress: bool = True,
+    lrp: bool = False,
 ) -> JacobianLens:
-    """Fit the Jacobian lens on a corpus of text prompts."""
+    """Fit the Jacobian lens on a corpus of text prompts.
+
+    If lrp=True, the LRP rules (RelP) are installed during fitting so the
+    resulting matrices are R-lens relevance coefficients rather than raw
+    Jacobians. Forward values are identical; only the backward graph differs.
+    """
     num_layers = model.config.num_hidden_layers
     d_model = model.config.hidden_size
     if source_layers is None:
@@ -485,6 +509,7 @@ def fit_jacobian_lens(
                 target_layer,
                 dim_batch=dim_batch,
                 skip_first_n=skip_first_n,
+                lrp=lrp,
             )
             for layer in source_layers:
                 jacobian_sum[layer] += J[layer]
@@ -540,6 +565,7 @@ def fit_jacobian_lens(
         target_layer=target_layer,
         skip_first_n=skip_first_n,
         model_name=getattr(model.config, "_name_or_path", "unknown"),
+        lens_type="rlens" if lrp else "jlens",
     )
 
 
@@ -580,6 +606,7 @@ class JacobianLensExperiment(BaseExperiment):
         max_input_tokens: int = 512,
         seed: int = 42,
         answer_cue: str = "\n\nAnswer:",
+        lrp: bool = False,
         # intervention mode parameters
         steer_token: str = "",
         steer_alpha: float = 1.0,
@@ -606,6 +633,7 @@ class JacobianLensExperiment(BaseExperiment):
         self.max_input_tokens = max_input_tokens
         self.seed = seed
         self.answer_cue = answer_cue
+        self.lrp = lrp
         self.steer_token = steer_token
         self.steer_alpha = steer_alpha
         self.steer_positions = steer_positions
@@ -678,6 +706,7 @@ class JacobianLensExperiment(BaseExperiment):
         print(f"Mode: fit | Model: {backend.model_name}")
         print(f"Target layer: {target_layer} | Source layers: {source_layers}")
         print(f"Corpus prompts: {self.n_corpus_prompts}")
+        print(f"Lens type: {'R-lens (LRP)' if self.lrp else 'J-lens'}")
 
         prompts = load_corpus_prompts(
             path=self.corpus_path,
@@ -699,6 +728,7 @@ class JacobianLensExperiment(BaseExperiment):
             device=backend.device,
             checkpoint_path=self.lens_path,
             checkpoint_every=50,
+            lrp=self.lrp,
         )
         if self.lens_path:
             lens.save(self.lens_path)
@@ -710,6 +740,7 @@ class JacobianLensExperiment(BaseExperiment):
             prompt_strategy="corpus",
             metrics={
                 "mode": "fit",
+                "lens_type": lens.lens_type,
                 "n_prompts": lens.n_prompts,
                 "d_model": lens.d_model,
                 "source_layers": lens.source_layers,
