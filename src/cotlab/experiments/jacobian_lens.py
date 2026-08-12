@@ -423,9 +423,12 @@ def jacobian_for_prompt(
         )
     J = {layer: torch.zeros(d_model, d_model) for layer in source_layers}
 
+    # With device_map='auto' (multi-GPU), the target activation may live on a
+    # different device than the inputs; the cotangent must match its device.
+    device = target_act.device
     for dim_start in range(0, d_model, dim_batch):
         n_dims = min(dim_batch, d_model - dim_start)
-        cotangent = torch.zeros(dim_batch, seq_len, d_model, device=input_ids.device)
+        cotangent = torch.zeros(dim_batch, seq_len, d_model, device=device)
         for i in range(n_dims):
             cotangent[i, valid_positions, dim_start + i] = 1.0
         grads = torch.autograd.grad(
