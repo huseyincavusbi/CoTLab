@@ -6,12 +6,10 @@ _target_: cotlab.experiments.JacobianLensExperiment
 name: jacobian_lens
 description: "Jacobian lens for causal concept readout from residuals"
 
-# Mode: "fit", "apply", "compare", "pass10", "steer", "swap", "ablate", "decompose"
+# Mode: "fit", "apply", "compare", "steer", "swap", "ablate", "decompose"
 #   fit       — compute J_ℓ matrices over a corpus (GPU, one-time per model)
 #   apply     — load pre-fitted lens, run on dataset
 #   compare   — detailed side-by-side with logit lens on a few samples
-#   pass10    — pass@10 eval across 5 categories (Multihop/Multilingual/
-#               Association/Typo/Poetry); compares R-lens vs J-lens readouts
 #   steer     — inject a J-lens vector α·v_t, measure output shift
 #   swap      — lens-coordinate swap between source and target concepts
 #   ablate    — suppress top-k J-space components, measure accuracy loss

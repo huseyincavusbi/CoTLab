@@ -310,34 +310,3 @@ class TestLRPRulesBehavior:
             lrp_out = model(x.clone())
 
         assert torch.allclose(lrp_out.detach(), plain.detach(), atol=1e-6)
-
-
-class TestPass10EvalData:
-    """Tests for the pass@10 eval harness data and probe-location logic."""
-
-    def test_categories_well_formed(self):
-        from cotlab.experiments.jacobian_lens import PASS10_CATEGORIES
-
-        assert set(PASS10_CATEGORIES) == {
-            "multihop",
-            "multilingual",
-            "association",
-            "typo",
-            "poetry",
-        }
-        for cat, probes in PASS10_CATEGORIES.items():
-            assert len(probes) >= 3, f"{cat} has too few probes"
-            for prompt, probe, intermediate in probes:
-                assert isinstance(prompt, str) and prompt
-                assert isinstance(probe, str) and probe
-                assert isinstance(intermediate, str) and intermediate
-                assert probe in prompt, f"probe {probe!r} not in prompt: {prompt!r}"
-
-    def test_probe_locate_finds_token(self):
-        # Verify _locate_probe logic against the tokenizer-independent shape:
-        # the probe string must appear as a substring of the prompt.
-        from cotlab.experiments.jacobian_lens import PASS10_CATEGORIES
-
-        for probes in PASS10_CATEGORIES.values():
-            for prompt, probe, _ in probes:
-                assert probe in prompt

@@ -218,68 +218,6 @@ SKIP_FIRST_N_POSITIONS = 16
 DIM_BATCH = 8
 
 
-# R-lens pass@10 eval categories (Blank, Bhatia, Nanda 2026; J-lens paper App. A.6)
-# Each item: (prompt, probe_token, intermediate). The lens readout at the probe
-# token position is checked for whether `intermediate` appears in the top-10.
-PASS10_CATEGORIES: Dict[str, List[Tuple[str, str, str]]] = {
-    "multihop": [
-        ("The color of the planet fourth from the Sun is", "Sun", "Mars"),
-        ("The capital of the country where sushi originated is", "sushi", "Japan"),
-        ("The sport Michael Jordan plays is", "Jordan", "basketball"),
-        ("The currency of the country whose capital is Paris is", "Paris", "euro"),
-        ("The language spoken in the country whose capital is Tokyo is", "Tokyo", "Japanese"),
-    ],
-    "multilingual": [
-        ("lo opuesto de 'grande' es", "grande", "small"),
-        ("the French word for 'cat' is", "cat", "chat"),
-        ("the German word for 'dog' is", "dog", "Hund"),
-        ("the Spanish word for 'house' is", "house", "casa"),
-        ("the Italian word for 'water' is", "water", "acqua"),
-    ],
-    "association": [
-        (
-            "She couldn't buy groceries anymore without strangers whispering, pointing, and holding up their phones.",
-            "phones",
-            "fame",
-        ),
-        (
-            "The detective couldn't sleep, replaying every footprint and fingerprint from the case.",
-            "fingerprint",
-            "evidence",
-        ),
-        (
-            "Every time the professor finished the lecture, the students applauded and took photos.",
-            "applauded",
-            "teacher",
-        ),
-        (
-            "He packed his suitcase, passport, and boarding pass before heading to the airport.",
-            "passport",
-            "travel",
-        ),
-        (
-            "The chef tasted the soup, added salt, and stirred the pot once more.",
-            "stirred",
-            "cooking",
-        ),
-    ],
-    "typo": [
-        ("We made a reservation at our favorite resturant", "resturant", "restaurant"),
-        ("The dog chased the ball across the feild", "feild", "field"),
-        ("She recieved a letter in the mail", "recieved", "received"),
-        ("He wroked hard all week", "wroked", "worked"),
-        ("The principle of the school gave a speech", "principle", "principal"),
-    ],
-    "poetry": [
-        ("A wagging tail came bounding through the fog,", "fog,", "dog"),
-        ("The sun sank low beyond the hill,", "hill,", "still"),
-        ("The bird took flight into the air,", "air,", "there"),
-        ("The river flowed both deep and wide,", "wide,", "tide"),
-        ("The stars above began to gleam,", "gleam,", "dream"),
-    ],
-}
-
-
 def _freeze_params(model: nn.Module) -> List[bool]:
     orig = [p.requires_grad for p in model.parameters()]
     for p in model.parameters():
@@ -647,7 +585,6 @@ class JacobianLensExperiment(BaseExperiment):
         fit       — compute and save J_ℓ matrices (GPU, one-time per model)
         apply     — load saved matrices, run on a dataset
         compare   — run both J-lens and logit lens side-by-side
-        pass10    — pass@10 eval across 5 categories (R-lens vs J-lens)
         steer     — inject a concept J-lens vector, measure output shift
         swap      — lens-coordinate swap between two concepts
         ablate    — suppress J-space component, measure accuracy loss
@@ -1474,132 +1411,6 @@ class JacobianLensExperiment(BaseExperiment):
             metadata={"intervention_layers": layers, "top_k": self.top_k},
         )
 
-    # ==================================================================
-    # Pass@10 mode: R-lens vs J-lens readout eval (Blank et al. 2026)
-    # ==================================================================
-
-    def _run_pass10(
-        self,
-        backend: InferenceBackend,
-        lens: JacobianLens,
-    ) -> ExperimentResult:
-        """Evaluate pass@10 per layer across the five eval categories.
-
-        For each probe, the lens readout at the probe token position is scored
-        and checked for whether the expected intermediate token appears in the
-        top-k. Results are reported per category and per layer.
-        """
-        model = backend._model
-        tokenizer = backend._tokenizer
-        device = backend.device
-        lm_head = self._get_lm_head(model)
-        norm = self._get_final_norm(model)
-        apply_layers = self._resolve_apply_layers(lens)
-        top_k = self.top_k or 10
-
-        def _locate_probe(prompt: str, probe: str) -> int:
-            """Find the 0-based token index where the probe token sits."""
-            toks = tokenizer.encode(prompt, add_special_tokens=False)
-            probe_id = tokenizer.encode(probe, add_special_tokens=False)
-            if not probe_id:
-                raise ValueError(f"Empty probe token: {probe!r}")
-            # search from the end (longest match last occurrence)
-            for i in range(len(toks) - len(probe_id), -1, -1):
-                if toks[i : i + len(probe_id)] == probe_id:
-                    return i
-            raise ValueError(f"Probe {probe!r} not found in {prompt!r}")
-
-        category_hits: Dict[str, Dict[int, List[bool]]] = {
-            cat: {layer: [] for layer in apply_layers} for cat in PASS10_CATEGORIES
-        }
-        category_any_emerge: Dict[str, Dict[int, int]] = {}
-        total_probes = 0
-        skipped = 0
-
-        for cat, probes in PASS10_CATEGORIES.items():
-            for prompt, probe, intermediate in probes:
-                try:
-                    pos = _locate_probe(prompt, probe)
-                except ValueError:
-                    skipped += 1
-                    continue
-                total_probes += 1
-                probe_ids = tokenizer.encode(
-                    prompt, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
-                ).to(device)
-                with torch.no_grad():
-                    out = model(input_ids=probe_ids, output_hidden_states=True, use_cache=False)
-                hidden_states = out.hidden_states
-                target_ids = self._correct_token_ids(tokenizer, intermediate)
-
-                emerged_at: Optional[int] = None
-                for layer in apply_layers:
-                    if layer + 1 >= len(hidden_states):
-                        continue
-                    h = hidden_states[layer + 1][0, pos, :]
-                    try:
-                        score = lens.decode(h.unsqueeze(0), layer, lm_head, norm)[0]
-                    except KeyError:
-                        continue
-                    top_ids = torch.topk(score, top_k).indices.tolist()
-                    hit = bool(target_ids) and bool(target_ids & set(top_ids))
-                    category_hits[cat][layer].append(hit)
-                    if hit and emerged_at is None:
-                        emerged_at = layer
-                if emerged_at is not None:
-                    category_any_emerge[cat] = category_any_emerge.get(cat, 0) + 1
-
-        def _rate(v: List[bool]) -> float:
-            return round(sum(v) / len(v), 4) if v else 0.0
-
-        # Per-category per-layer pass@10 + means
-        category_rates: Dict[str, Dict[int, float]] = {}
-        category_mean: Dict[str, Optional[float]] = {}
-        for cat, layer_hits in category_hits.items():
-            category_rates[cat] = {layer: _rate(v) for layer, v in layer_hits.items()}
-            all_hits = [b for v in layer_hits.values() for b in v]
-            category_mean[cat] = _rate(all_hits) if all_hits else None
-
-        print(f"\n{'=' * 70}")
-        print(
-            f"PASS@10 — lens_type={lens.lens_type} | top_k={top_k} | probes={total_probes} (skipped {skipped})"
-        )
-        print(f"{'=' * 70}")
-        for cat in PASS10_CATEGORIES:
-            mean = category_mean.get(cat)
-            emerged = category_any_emerge.get(cat, 0)
-            print(
-                f"\n[{cat}]  mean pass@10={mean:.1%}  |  probes with any-layer emergence: {emerged}/{len(PASS10_CATEGORIES[cat])}"
-            )
-            for layer in apply_layers:
-                rate = category_rates[cat].get(layer)
-                if rate is not None:
-                    print(f"  L{layer:>3}: {rate:.0%}")
-
-        all_hits = [b for v in category_hits.values() for lh in v.values() for b in lh]
-        overall = _rate(all_hits) if all_hits else 0.0
-
-        return ExperimentResult(
-            experiment_name=self.name,
-            model_name=backend.model_name,
-            prompt_strategy="pass10",
-            metrics={
-                "mode": "pass10",
-                "lens_type": lens.lens_type,
-                "top_k": top_k,
-                "n_probes": total_probes,
-                "overall_pass10": overall,
-                "category_mean_pass10": category_mean,
-                "category_rates": category_rates,
-                "category_emergence_counts": category_any_emerge,
-            },
-            metadata={
-                "apply_layers": apply_layers,
-                "lens_path": self.lens_path,
-                "skip_first_n": self.skip_first_n,
-            },
-        )
-
     # -- main -------------------------------------------------------------
 
     def run(
@@ -1611,11 +1422,6 @@ class JacobianLensExperiment(BaseExperiment):
     ) -> ExperimentResult:
         if self.mode == "fit":
             return self._run_fit(backend)
-        if self.mode == "pass10":
-            if not self.lens_path:
-                raise ValueError("lens_path is required for pass10 mode")
-            lens = JacobianLens.load(self.lens_path)
-            return self._run_pass10(backend, lens)
         if self.mode in ("apply", "compare", "steer", "swap", "ablate", "decompose"):
             if not self.lens_path:
                 raise ValueError("lens_path is required for apply/compare/intervention modes")
@@ -1633,5 +1439,5 @@ class JacobianLensExperiment(BaseExperiment):
             return self._run_decompose(backend, dataset, prompt_strategy, lens)
         raise ValueError(
             f"Unknown mode: {self.mode}. "
-            "Use 'fit', 'pass10', 'apply', 'compare', 'steer', 'swap', 'ablate', or 'decompose'."
+            "Use 'fit', 'apply', 'compare', 'steer', 'swap', 'ablate', or 'decompose'."
         )
