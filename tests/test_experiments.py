@@ -653,6 +653,22 @@ class TestJacobianLensDataclass:
         for k in J:
             assert torch.allclose(loaded.jacobians[k], J[k]), f"Layer {k} mismatch"
 
+    def test_save_load_roundtrip_lens_type(self, tmp_path):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        J = {0: torch.randn(4, 4)}
+        for lens_type in ("jlens", "rlens"):
+            lens = JacobianLens(jacobians=J, d_model=4, lens_type=lens_type)
+            lens.save(str(tmp_path))
+            loaded = JacobianLens.load(str(tmp_path))
+            assert loaded.lens_type == lens_type
+
+    def test_init_default_lens_type(self):
+        from cotlab.experiments.jacobian_lens import JacobianLens
+
+        lens = JacobianLens(jacobians={0: torch.eye(4)}, d_model=4)
+        assert lens.lens_type == "jlens"
+
     def test_transport_identity(self):
         from cotlab.experiments.jacobian_lens import JacobianLens
 

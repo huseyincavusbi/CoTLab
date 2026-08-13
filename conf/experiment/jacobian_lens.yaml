@@ -31,6 +31,7 @@ layer_stride: 1
 # Fitting parameters
 dim_batch: 8              # output dims per backward pass (higher = more VRAM)
 skip_first_n: 16          # positions to skip (attention sinks)
+lrp: false                # true = fit R-lens (LRP/RelP rules) instead of J-lens
 
 # Application parameters
 top_k: 10                 # top-k tokens to track

@@ -7,6 +7,7 @@ A research toolkit for investigating Chain of Thought (CoT) reasoning, faithfuln
 ## Features
 
 - Experiments for CoT faithfulness, patching, logit‑lens, steering, and probing
+- Jacobian lens (J-lens) with optional R-lens (LRP/RelP) backward pass for faithful early-layer readouts
 - Diverse prompt strategies (CoT, direct, adversarial, contrarian, few‑shot, etc.)
 - Configurable models, datasets, and backends (vLLM + Transformers)
 - Auto‑detect layers/heads at runtime

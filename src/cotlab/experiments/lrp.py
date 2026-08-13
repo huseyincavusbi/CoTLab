@@ -1,0 +1,275 @@
+"""LRP backward-pass rules for the R-lens (RelP).
+
+Implements the three Layer-wise Relevance Propagation rules used to fit an
+R-lens instead of a standard Jacobian lens, following RelP (arXiv:2508.21258)
+and the R-lens post (Blank, Bhatia, Nanda, 2026):
+
+  LN-rule       detach the RMSNorm/LayerNorm normalisation scale so the norm
+                becomes linear in its input, preventing relevance collapse.
+  Identity-rule detach the non-linear factor of GELU/SiLU so the activation's
+                backward pass becomes a per-element linear map.
+  Half-rule     split relevance evenly across the two branches of a SwiGLU
+                product instead of double-counting through it.
+
+All three rules are forward-pass detach() operations: the forward outputs are
+identical to the standard build, only the autograd graph changes. LRPContext
+installs the rules on a model's modules and restores them on exit.
+"""
+
+from __future__ import annotations
+
+import contextlib
+from typing import Any, List, Optional, Tuple
+
+import torch
+import torch.nn as nn
+
+# ---------------------------------------------------------------------------
+# Rule formulas
+# ---------------------------------------------------------------------------
+
+
+def stabilize(z: torch.Tensor) -> torch.Tensor:
+    """Add a tiny bias to avoid division-by-zero in ratio rules."""
+    return z + ((z == 0.0).to(z) + z.sign()) * 1e-6
+
+
+class _IdentityRuleFn(torch.autograd.Function):
+    """Identity-rule for activations with an exactly-preserved forward pass.
+
+    The RelP identity rule replaces act(x) by x * (act(x)/x).detach(). In
+    fp32 that round-trips to act(x); in bf16 (8-bit mantissa) it does not, and
+    the forward pass would be corrupted. This autograd Function keeps the
+    forward value exactly equal to act(x) while making the backward pass the
+    per-element linear map act(x)/x.
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
+        ctx.save_for_backward(x, out)
+        return out.detach()
+
+    @staticmethod
+    def backward(ctx, grad_output: torch.Tensor) -> Tuple[torch.Tensor, None]:
+        x, out = ctx.saved_tensors
+        factor = (out / stabilize(x)).detach()
+        return grad_output * factor, None
+
+
+def identity_rule_forward(
+    module: nn.Module, inp: Tuple[torch.Tensor, ...], out: torch.Tensor
+) -> torch.Tensor:
+    """Identity-rule forward hook for activation modules.
+
+    Forward value equals act(x) exactly (no precision loss in bf16); the
+    backward pass passes the constant factor act(x)/x, a per-element linear map.
+    """
+    x = inp[0]
+    return _IdentityRuleFn.apply(x, out)
+
+
+# ---------------------------------------------------------------------------
+# Module detection
+# ---------------------------------------------------------------------------
+
+_ACTIVATION_TYPES = (nn.SiLU, nn.GELU, nn.ReLU)
+_LAYERNORM_TYPES = (nn.LayerNorm,)
+
+
+def _rms_norm_eps(module: nn.Module) -> Optional[float]:
+    """Read the epsilon from an RMSNorm module across naming conventions."""
+    for attr in ("eps", "variance_epsilon", "epsilon"):
+        if hasattr(module, attr):
+            return getattr(module, attr)
+    return None
+
+
+def _is_activation(module: nn.Module) -> bool:
+    """Detect activation modules, incl. transformers SiLU/GELU wrappers.
+
+    Real HF models use transformers.activations.SiLUActivation /
+    GELUActivation rather than torch.nn.SiLU / GELU, so detection also matches
+    classes whose name ends in "activation" and contains the activation type.
+    """
+    if isinstance(module, _ACTIVATION_TYPES):
+        return True
+    name = type(module).__name__.lower()
+    if not name.endswith("activation"):
+        return False
+    return any(k in name for k in ("silu", "gelu", "relu", "sigmoid"))
+
+
+def _is_rms_norm(module: nn.Module) -> bool:
+    """Heuristic: RMSNorm modules carry a norm weight + an epsilon attribute.
+
+    Covers both the `_norm`-method layout (Gemma) and the inline-forward
+    layout (Qwen, which has no `_norm` but a weight + variance_epsilon).
+
+    Gated norms (e.g. Qwen3_5RMSNormGated) are excluded: they take an extra
+    `gate` argument that is multiplied into the output and live in the
+    attention path, which the R-lens protocol leaves unmodified.
+    """
+    if isinstance(module, nn.LayerNorm):
+        return False
+    if _rms_norm_eps(module) is None:
+        return False
+    if not hasattr(module, "weight"):
+        return False
+    if "gated" in type(module).__name__.lower():
+        return False
+    return hasattr(module, "_norm") or "rmsnorm" in type(module).__name__.lower()
+
+
+def _is_layer_norm(module: nn.Module) -> bool:
+    return isinstance(module, _LAYERNORM_TYPES)
+
+
+def _is_gated_mlp(module: nn.Module) -> bool:
+    return all(hasattr(module, attr) for attr in ("gate_proj", "up_proj", "down_proj", "act_fn"))
+
+
+def _is_residual_norm(module: nn.Module, name: str) -> bool:
+    """Residual-stream norms, excluding q/k norms which R-lens does not touch."""
+    if "q_norm" in name or "k_norm" in name or "qnorm" in name or "knorm" in name:
+        return False
+    return _is_rms_norm(module) or _is_layer_norm(module)
+
+
+# ---------------------------------------------------------------------------
+# Patched forward implementations
+# ---------------------------------------------------------------------------
+
+
+def _rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor, *args: Any) -> torch.Tensor:
+    """LN-rule for RMSNorm with a `_norm`-method layout (Gemma-style).
+
+    Detaches the rsqrt scale factor; reads epsilon from either naming
+    convention. Extra positional args (e.g. residual) are ignored.
+    """
+    eps = _rms_norm_eps(module)
+    if eps is None:
+        raise AttributeError(f"RMSNorm module {type(module).__name__} has no epsilon attribute")
+    scale = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+    return x * scale.detach()
+
+
+def _qwen_rms_norm_lrp_forward(module: nn.Module, x: torch.Tensor, *args: Any) -> torch.Tensor:
+    """LN-rule for inline-forward RMSNorm (Qwen-style, no `_norm` method).
+
+    Mirrors Qwen3RMSNorm.forward with the rsqrt scale detached. Extra
+    positional args (e.g. residual) are ignored.
+    """
+    eps = _rms_norm_eps(module)
+    if eps is None:
+        raise AttributeError(f"RMSNorm module {type(module).__name__} has no epsilon attribute")
+    input_dtype = x.dtype
+    hidden = x.float()
+    variance = hidden.pow(2).mean(-1, keepdim=True)
+    hidden = hidden * torch.rsqrt(variance + eps).detach()
+    return (module.weight * hidden).to(input_dtype)
+
+
+def _layer_norm_lrp_forward(module: nn.LayerNorm, x: torch.Tensor, *args: Any) -> torch.Tensor:
+    """LN-rule for LayerNorm: detach the normalisation scale (std)."""
+    mean = x.mean(-1, keepdim=True)
+    var = x.var(-1, keepdim=True, unbiased=False)
+    scale = torch.rsqrt(var + module.eps)
+    x_norm = (x - mean) * scale.detach()
+    return x_norm * module.weight + module.bias
+
+
+def _gated_mlp_lrp_forward(module: nn.Module, x: torch.Tensor, *args: Any) -> torch.Tensor:
+    """Identity-rule (on the gate activation) + Half-rule (on the product).
+
+    Assumes the SwiGLU pattern: out = down_proj(act_fn(gate_proj(x)) * up_proj(x)).
+    The gate activation's identity-rule is applied implicitly by the forward
+    hook registered on the activation module; here we only split the product.
+    """
+    gate_out = module.act_fn(module.gate_proj(x)) * module.up_proj(x)
+    gate_out = (gate_out / 2.0) + (gate_out / 2.0).detach()
+    return module.down_proj(gate_out)
+
+
+# ---------------------------------------------------------------------------
+# LRPContext: install / restore rules on a model
+# ---------------------------------------------------------------------------
+
+
+class LRPContext:
+    """Context manager that installs LRP backward-pass rules on a model.
+
+    Usage:
+        with LRPContext(model, rules=("LN-rule", "Identity-rule", "Half-rule")):
+            # forward passes here compute relevance instead of gradients
+
+    The forward values are identical to the standard build; only the autograd
+    graph changes. Modules are restored on exit.
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        rules: Tuple[str, ...] = ("LN-rule", "Identity-rule", "Half-rule"),
+    ):
+        self.model = model
+        self.rules = rules
+        self._norm_handles: List[Tuple[nn.Module, str, object]] = []  # (module, attr, original)
+        self._mlp_handles: List[Tuple[nn.Module, object]] = []  # (module, original_forward)
+        self._hook_handles: List[torch.utils.hooks.RemovableHandle] = []
+
+    def __enter__(self) -> "LRPContext":
+        if "LN-rule" in self.rules:
+            self._install_norm_rules()
+        if "Identity-rule" in self.rules:
+            self._install_activation_hooks()
+        if "Half-rule" in self.rules:
+            self._install_gated_mlp_rules()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        for handle in self._hook_handles:
+            handle.remove()
+        self._hook_handles.clear()
+        for module, attr, original in self._norm_handles:
+            setattr(module, attr, original)
+        self._norm_handles.clear()
+        for module, original_forward in self._mlp_handles:
+            module.forward = original_forward
+        self._mlp_handles.clear()
+
+    # -- installers --------------------------------------------------------
+
+    def _install_norm_rules(self) -> None:
+        for name, module in self.model.named_modules():
+            if not _is_residual_norm(module, name):
+                continue
+            if _is_rms_norm(module) and hasattr(module, "_norm"):
+                self._norm_handles.append((module, "_norm", module._norm))
+                module._norm = _rms_norm_lrp_forward.__get__(module, type(module))
+            elif _is_rms_norm(module):
+                self._norm_handles.append((module, "forward", module.forward))
+                module.forward = _qwen_rms_norm_lrp_forward.__get__(module, type(module))
+            elif _is_layer_norm(module):
+                self._norm_handles.append((module, "forward", module.forward))
+                module.forward = _layer_norm_lrp_forward.__get__(module, type(module))
+
+    def _install_activation_hooks(self) -> None:
+        for name, module in self.model.named_modules():
+            if _is_activation(module):
+                self._hook_handles.append(module.register_forward_hook(identity_rule_forward))
+
+    def _install_gated_mlp_rules(self) -> None:
+        for name, module in self.model.named_modules():
+            if _is_gated_mlp(module):
+                self._mlp_handles.append((module, module.forward))
+                module.forward = _gated_mlp_lrp_forward.__get__(module, type(module))
+
+
+@contextlib.contextmanager
+def lrp_context(
+    model: nn.Module, rules: Tuple[str, ...] = ("LN-rule", "Identity-rule", "Half-rule")
+):
+    """Convenience context manager wrapping LRPContext."""
+    ctx = LRPContext(model, rules=rules)
+    with ctx:
+        yield
