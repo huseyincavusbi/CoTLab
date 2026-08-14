@@ -5,6 +5,7 @@
 | Experiment | Technique | Purpose |
 |------------|-----------|---------|
 | `logit_lens` | Early decoding | Layer-by-layer predictions |
+| `jacobian_lens` | Jacobian lens | Causal concept readout from residuals; `lrp: true` fits R-lens (LRP/RelP) instead of J-lens |
 | `cot_ablation` | Token ablation | Zero CoT tokens, measure effect |
 | `cot_heads` | Head patching | Find heads encoding CoT |
 | `cot_faithfulness` | Comparison | Compare CoT vs direct answers |
