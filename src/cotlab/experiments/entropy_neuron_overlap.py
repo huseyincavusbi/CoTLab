@@ -84,13 +84,17 @@ class EntropyNeuronOverlapExperiment(BaseExperiment):
 
         all_norms = np.concatenate(layer_norms)
         layer_sizes = np.array([len(n) for n in layer_norms])
+        # Per-layer start offsets so the second tuple element is the
+        # idx WITHIN the layer (matching the original per-neuron build).
+        layer_starts = np.concatenate([np.array([0]), np.cumsum(layer_sizes)[:-1]])
         layer_ids = np.repeat(np.arange(num_layers), layer_sizes)
-        neuron_info = list(zip(layer_ids.tolist(), np.arange(len(all_norms)).tolist()))
+        per_pos_start = layer_starts[layer_ids]
 
         threshold = np.percentile(all_norms, percentile)
 
         entropy_neurons = [
-            (int(layer_ids[i]), int(i)) for i in np.nonzero(all_norms >= threshold)[0]
+            (int(layer_ids[i]), int(i - int(per_pos_start[i])))
+            for i in np.nonzero(all_norms >= threshold)[0]
         ]
 
         return entropy_neurons, all_norms

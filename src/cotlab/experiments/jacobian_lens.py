@@ -826,9 +826,9 @@ class JacobianLensExperiment(BaseExperiment):
         for layer in apply_layers:
             if layer in lens.jacobians:
                 j_preloaded[layer] = lens.jacobians[layer].to(device, dtype=torch.float32)
-        layers_with_J = [l for l in apply_layers if l in lens.jacobians]
+        layers_with_J = [layer for layer in apply_layers if layer in lens.jacobians]
         if layers_with_J:
-            J_stack = torch.stack([j_preloaded[l] for l in layers_with_J])  # [L, d, d]
+            J_stack = torch.stack([j_preloaded[layer] for layer in layers_with_J])  # [L, d, d]
 
         for sample in tqdm(samples, desc="J-lens apply"):
             prompt_input = {
@@ -868,11 +868,11 @@ class JacobianLensExperiment(BaseExperiment):
             # a per-row matmul, so the batched rows are identical to the
             # per-layer decode.
             jl_ok = ll_ok = False
-            valid_layers = [l for l in layers_with_J if l + 1 < len(hidden_states)]
+            valid_layers = [layer for layer in layers_with_J if layer + 1 < len(hidden_states)]
             if valid_layers:
-                h_stack = torch.stack([hidden_states[l + 1][0, -1, :] for l in valid_layers]).to(
-                    device
-                )  # [L, d]
+                h_stack = torch.stack(
+                    [hidden_states[layer + 1][0, -1, :] for layer in valid_layers]
+                ).to(device)  # [L, d]
 
                 # J-lens: transport J_ℓ @ h_ℓ for all layers, then norm + lm_head.
                 # Wrapped in inference_mode like the per-layer lens.decode was.
@@ -1352,7 +1352,6 @@ class JacobianLensExperiment(BaseExperiment):
             for s in samples
         ]
         batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
-        B = len(prompts_full)
 
         # Baseline
         with torch.inference_mode():

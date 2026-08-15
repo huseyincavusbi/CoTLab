@@ -213,9 +213,9 @@ def test_batched_ablate_matches_sequential(backend):
     lm_head = model.lm_head if hasattr(model, "lm_head") else model.get_output_embeddings()
     device = backend.device
     vocab = lm_head.weight.float().to(device)
-    jacobians = {l: torch.randn(d, d, generator=rng) for l in layers}
-    wu_j = {l: vocab @ jacobians[l].to(device, dtype=torch.float32) for l in layers}
-    j_dev = {l: jacobians[l].to(device, dtype=torch.float32) for l in layers}
+    jacobians = {layer: torch.randn(d, d, generator=rng) for layer in layers}
+    wu_j = {layer: vocab @ jacobians[layer].to(device, dtype=torch.float32) for layer in layers}
+    j_dev = {layer: jacobians[layer].to(device, dtype=torch.float32) for layer in layers}
 
     # --- Sequential reference: one forward per prompt ---
     seq_logits = []
@@ -331,9 +331,9 @@ def test_batched_decompose_matches_sequential(backend):
     lm_head = model.lm_head if hasattr(model, "lm_head") else model.get_output_embeddings()
     device = backend.device
     vocab = lm_head.weight.float().to(device)
-    jacobians = {l: torch.randn(d, d, generator=rng) for l in layers}
-    wu_j = {l: vocab @ jacobians[l].to(device, dtype=torch.float32) for l in layers}
-    j_dev = {l: jacobians[l].to(device, dtype=torch.float32) for l in layers}
+    jacobians = {layer: torch.randn(d, d, generator=rng) for layer in layers}
+    wu_j = {layer: vocab @ jacobians[layer].to(device, dtype=torch.float32) for layer in layers}
+    j_dev = {layer: jacobians[layer].to(device, dtype=torch.float32) for layer in layers}
 
     # --- Sequential reference: one forward per prompt, per-layer metrics ---
     seq_results = []
@@ -406,7 +406,7 @@ def test_batched_apply_decode_matches_sequential(backend):
     lm_head = model.lm_head if hasattr(model, "lm_head") else model.get_output_embeddings()
     norm = model.transformer.ln_f if hasattr(model.transformer, "ln_f") else None
     device = backend.device
-    jacobians = {l: torch.randn(d, d, generator=rng) for l in layers}
+    jacobians = {layer: torch.randn(d, d, generator=rng) for layer in layers}
     lens = JacobianLens(jacobians=jacobians, d_model=d)
 
     prompt = "Question: Patient has chest pain. What is the diagnosis?\n\nAnswer:"
@@ -435,8 +435,8 @@ def test_batched_apply_decode_matches_sequential(backend):
         seq_ll.append(ll)
 
     # --- Batched: stack h, one norm + lm_head ---
-    J_stack = torch.stack([jacobians[l].to(device, dtype=torch.float32) for l in layers])
-    h_stack = torch.stack([hs[l + 1][0, -1, :] for l in layers]).to(device)
+    J_stack = torch.stack([jacobians[layer].to(device, dtype=torch.float32) for layer in layers])
+    h_stack = torch.stack([hs[layer + 1][0, -1, :] for layer in layers]).to(device)
     with torch.inference_mode():
         transported = torch.bmm(h_stack.unsqueeze(1), J_stack.transpose(-1, -2)).squeeze(1)
         if norm is not None:

@@ -440,7 +440,8 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
 
         # Batch the per-term forwards into chunks (left-pad + position_ids remap),
         # then SAE-encode each row at its own (ragged) term positions. The batched
-        # forward is bit-identical to N sequential forwards for each row.
+        # forward reproduces the sequential forwards per row within float32 kernel
+        # noise (~5e-7; the accumulation is documented APPROXIMATE at float level).
         batch_size = max(1, self.batch_size or 1)
         for start in tqdm(range(0, len(self.histo_vocab), batch_size), desc="Vocab probe"):
             chunk = self.histo_vocab[start : start + batch_size]

@@ -69,7 +69,6 @@ def test_phase1_batched_matches_sequential(backend):
     from cotlab.experiments.sae_feature_analysis import SAEFeatureAnalysisExperiment
 
     model = backend.model
-    tokenizer = backend.tokenizer
 
     exp = SAEFeatureAnalysisExperiment(batch_size=4, max_input_tokens=64)
     exp.histo_vocab = ["pneumonia", "fever", "cough", "rash", "arthritis"]

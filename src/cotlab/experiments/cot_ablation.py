@@ -295,13 +295,17 @@ class CoTAblationExperiment(BaseExperiment):
         valid = [p for p in positions_to_ablate if p < ablated_activation.shape[1]]
         if not valid:
             return ablated_activation
-        # Vectorized position writes. For noise, one randn_like over [P, d] draws
-        # the same RNG stream in the same order as the per-position loop.
         if self.ablation_type == "zero":
             ablated_activation[:, valid, :] = 0
         elif self.ablation_type == "mean":
-            ablated_activation[:, valid, :] = ablated_activation.mean(dim=1)
+            # The reference recomputes the mean per position from the
+            # progressively-modified tensor (each write changes the mean).
+            # Must stay sequential to reproduce it exactly.
+            for pos in valid:
+                ablated_activation[:, pos, :] = ablated_activation.mean(dim=1)
         elif self.ablation_type == "noise":
+            # One randn_like over [P, d] draws the same RNG stream in the same
+            # order as the per-position loop (verified bit-identical).
             ablated_activation[:, valid, :] += torch.randn_like(ablated_activation[:, valid, :])
         return ablated_activation
 

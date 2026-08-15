@@ -872,13 +872,11 @@ class FewShotStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.contrarian = contrarian
         self.output_format = output_format
         self.json_cot = json_cot
-        self._examples_str = (
-            "\n".join(
-                f"Symptoms: {s} -> Diagnosis: {d}"
-                for s, d in self.MEDICAL_EXAMPLES[: self.num_examples]
-            )
-            if few_shot
-            else ""
+        # The examples content is constant; whether it is included depends on
+        # self.few_shot at build time (few_shot_contrast toggles it per sample).
+        self._examples_str = "\n".join(
+            f"Symptoms: {s} -> Diagnosis: {d}"
+            for s, d in self.MEDICAL_EXAMPLES[: self.num_examples]
         )
 
     @property
@@ -887,7 +885,7 @@ class FewShotStrategy(StructuredOutputMixin, BasePromptStrategy):
 
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         question = input_data.get("question", input_data.get("text", ""))
-        examples = self._examples_str
+        examples = self._examples_str if self.few_shot else ""
         header = "Here are some example diagnoses:\n\n" if examples else ""
         prompt = f"""{header}{examples}
 
