@@ -74,6 +74,7 @@ class ResidualNormOODExperiment(BaseExperiment):
         answer_cue: str = "\n\nAnswer:",
         mcq_letters: Optional[List[str]] = None,
         threshold_percentile_step: int = 5,  # granularity of τ search
+        batch_size: int = 8,
         **kwargs,
     ):
         self._name = name
@@ -85,6 +86,7 @@ class ResidualNormOODExperiment(BaseExperiment):
         self.answer_cue = answer_cue
         self.mcq_letters = mcq_letters or _MCQ_LETTERS
         self.threshold_percentile_step = threshold_percentile_step
+        self.batch_size = batch_size
 
     @property
     def name(self) -> str:
@@ -107,6 +109,29 @@ class ResidualNormOODExperiment(BaseExperiment):
             truncation=True,
             max_length=self.max_input_tokens,
         ).to(device)
+
+    def _tokenize_batch(self, tokenizer, texts: List[str], device: str) -> Dict[str, torch.Tensor]:
+        """Left-pad a batch with position_ids remap (logit_lens precedent)."""
+        orig_side = tokenizer.padding_side
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        try:
+            tokens = tokenizer(
+                texts,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.max_input_tokens,
+                padding=True,
+            ).to(device)
+        finally:
+            tokenizer.padding_side = orig_side
+
+        attention_mask = tokens["attention_mask"]
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+        tokens["position_ids"] = position_ids
+        return tokens
 
     def _answer_letter_token_ids(self, tokenizer) -> List[int]:
         """Collect all plausible token ids for MCQ answer letters."""
@@ -157,6 +182,36 @@ class ResidualNormOODExperiment(BaseExperiment):
             handle.remove()
 
         last_logits = out.logits[0, -1].detach().float().cpu()
+        return last_logits, last_hidden_store["h"]
+
+    def _forward_batch(
+        self,
+        backend: InferenceBackend,
+        tokens: Dict[str, torch.Tensor],
+        target_layer: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Batched forward over a left-padded batch (per-row last token).
+
+        Returns:
+            last_logits  : [B, vocab] float32 CPU
+            last_hidden  : [B, d_model] float32 CPU
+        """
+        last_hidden_store: Dict[str, torch.Tensor] = {}
+
+        def hook(module, inp, output):
+            tensor = output[0] if isinstance(output, tuple) else output
+            with torch.inference_mode():
+                last_hidden_store["h"] = tensor[:, -1, :].detach().float().cpu()  # [B, d]
+
+        mod = backend.hook_manager.get_residual_module(target_layer)
+        handle = mod.register_forward_hook(hook)
+        try:
+            with torch.inference_mode():
+                out = backend._model(**tokens)
+        finally:
+            handle.remove()
+
+        last_logits = out.logits[:, -1, :].detach().float().cpu()  # [B, vocab]
         return last_logits, last_hidden_store["h"]
 
     # ------------------------------------------------------------------
@@ -286,10 +341,10 @@ class ResidualNormOODExperiment(BaseExperiment):
         entropies: List[float] = []
         labels: List[bool] = []
 
-        for sample in tqdm(samples, desc="Residual norm"):
-            answer_tok_id = self._answer_token_id(tokenizer, sample.label)
+        batch_size = max(1, self.batch_size or 1)
 
-            prompt_str = (
+        def build_prompt_text(sample):
+            return (
                 prompt_strategy.build_prompt(
                     {
                         "text": sample.text,
@@ -299,28 +354,19 @@ class ResidualNormOODExperiment(BaseExperiment):
                 )
                 + self.answer_cue
             )
-            tokens = self._tokenize(tokenizer, prompt_str, device)
 
-            try:
-                logits, hidden = self._forward(backend, tokens, target_layer)
-            except Exception as exc:
-                tqdm.write(f"  [skip] sample {sample.idx}: {exc}")
-                torch.cuda.empty_cache() if torch.cuda.is_available() else None
-                continue
-
+        def process_one(sample, logits, hidden) -> None:
             norm = self._compute_norm(hidden)
             entropy = self._compute_logit_entropy(logits, letter_ids)
-
+            answer_tok_id = self._answer_token_id(tokenizer, sample.label)
             if answer_tok_id is not None and letter_ids:
                 best_letter_tok = max(letter_ids, key=lambda t: logits[t].item())
                 is_correct = best_letter_tok == answer_tok_id
             else:
                 is_correct = False
-
             norms.append(norm)
             entropies.append(entropy)
             labels.append(is_correct)
-
             per_sample.append(
                 {
                     "sample_idx": sample.idx,
@@ -330,7 +376,37 @@ class ResidualNormOODExperiment(BaseExperiment):
                 }
             )
 
-            del hidden, logits
+        chunks = [samples[i : i + batch_size] for i in range(0, len(samples), batch_size)]
+        for chunk in tqdm(chunks, desc="Residual norm"):
+            prompts = [build_prompt_text(s) for s in chunk]
+            B = len(prompts)
+
+            try:
+                if B == 1:
+                    tokens = self._tokenize(tokenizer, prompts[0], device)
+                    logits_b, hidden_b = self._forward(backend, tokens, target_layer)
+                    logits_b = logits_b.unsqueeze(0)
+                    hidden_b = hidden_b.unsqueeze(0)
+                else:
+                    tokens = self._tokenize_batch(tokenizer, prompts, device)
+                    logits_b, hidden_b = self._forward_batch(backend, tokens, target_layer)
+            except Exception as exc:
+                tqdm.write(f"  [skip] batch starting at {chunk[0].idx}: {exc}")
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                # Fall back to per-sample so one bad sample cannot drop the batch
+                for sample in chunk:
+                    try:
+                        tokens = self._tokenize(tokenizer, build_prompt_text(sample), device)
+                        lg, hd = self._forward(backend, tokens, target_layer)
+                        process_one(sample, lg, hd)
+                    except Exception as sexc:
+                        tqdm.write(f"  [skip] sample {sample.idx}: {sexc}")
+                continue
+
+            for idx, sample in enumerate(chunk):
+                process_one(sample, logits_b[idx], hidden_b[idx])
+
+        del hidden_b, logits_b
 
         # ── Aggregate ──────────────────────────────────────────────────
         n = len(labels)
