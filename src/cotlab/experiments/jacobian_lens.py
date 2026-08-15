@@ -1314,65 +1314,81 @@ class JacobianLensExperiment(BaseExperiment):
                 j_by_layer[layer] = J
                 wu_j_by_layer[layer] = vocab @ J
 
-        for sample in samples:
-            prompt = prompt_strategy.build_prompt(
-                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+        # Batched: one baseline + one ablated forward over all samples as rows
+        # (left-pad + position_ids remap; causal-mask row isolation). The ablate
+        # hook projects out top-k J-space directions per row.
+        prompts_full = [
+            prompt_strategy.build_prompt(
+                {"text": s.text, "question": s.text, "metadata": s.metadata or {}}
             )
-            prompt_full = prompt + self.answer_cue
-            tokens = tokenizer.encode(
-                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
-            ).to(device)
+            + self.answer_cue
+            for s in samples
+        ]
+        batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
+        B = len(prompts_full)
 
-            # Baseline
-            with torch.no_grad():
-                base_out = model(input_ids=tokens, output_hidden_states=True, use_cache=False)
-            final_h = base_out.hidden_states[-1][0, -1, :]
-            if norm is not None:
-                final_h = norm(final_h)
-            base_id = torch.argmax(lm_head(final_h)).item()
-            correct_ids = self._correct_token_ids(tokenizer, sample.label)
-            if base_id in correct_ids:
-                baseline_correct += 1
+        # Baseline
+        with torch.inference_mode():
+            base_out = model(
+                input_ids=batch_tokens["input_ids"],
+                attention_mask=batch_tokens["attention_mask"],
+                position_ids=batch_tokens["position_ids"],
+                output_hidden_states=True,
+                use_cache=False,
+            )
+        final_h = base_out.hidden_states[-1][:, -1, :]  # [B, d]
+        if norm is not None:
+            final_h = norm(final_h)
+        base_ids = torch.argmax(lm_head(final_h), dim=-1).tolist()
+        correct_sets = [self._correct_token_ids(tokenizer, s.label) for s in samples]
+        baseline_correct = sum(1 for i, cid in enumerate(base_ids) if cid in correct_sets[i])
 
-            # Ablate: at each intervention layer, project out top-k J-space directions
-            def make_ablate_hook(layer_idx: int):
-                wu_j = wu_j_by_layer[layer_idx]
-                J = j_by_layer[layer_idx]
+        # Ablate: at each intervention layer, project out top-k J-space directions
+        def make_ablate_hook(layer_idx: int):
+            wu_j = wu_j_by_layer[layer_idx]
+            J = j_by_layer[layer_idx]
 
-                def hook(module, inp, output):
-                    if isinstance(output, tuple):
-                        t, rest = output[0], output[1:]
-                    else:
-                        t, rest = output, ()
-                    h = t[0, -1, :]  # [d_model]
-                    # Project onto top-k J-lens directions and remove
-                    # J-lens vectors for the full vocabulary at this layer:
-                    # W_U · J_ℓ → take top-k by inner product with h
-                    all_scores = h.float() @ wu_j.T  # [vocab]
-                    top_k_ids = torch.topk(all_scores, self.ablate_top_n).indices
-                    for tid in top_k_ids:
-                        v = vocab[tid] @ J  # [d_model]
-                        v_norm = v / (torch.norm(v) + 1e-8)
-                        h = h.float() - torch.dot(h.float(), v_norm) * v_norm
-                    t[0, -1, :] = h.to(t.dtype)
-                    return (t,) + rest if rest else t
+            def hook(module, inp, output):
+                if isinstance(output, tuple):
+                    t, rest = output[0], output[1:]
+                else:
+                    t, rest = output, ()
+                h = t[:, -1, :].float()  # [B, d_model]
+                # Project onto top-k J-lens directions and remove J-lens vectors
+                # for the full vocabulary at this layer: W_U · J_ℓ → take top-k
+                # by inner product with h (per row).
+                all_scores = h @ wu_j.T  # [B, vocab]
+                top_k_ids = torch.topk(all_scores, self.ablate_top_n, dim=-1).indices  # [B, k]
+                for j in range(self.ablate_top_n):
+                    v = vocab[top_k_ids[:, j]] @ J  # [B, d_model]
+                    v_norm = v / (torch.norm(v, dim=-1, keepdim=True) + 1e-8)
+                    h = h - torch.bmm(v_norm.unsqueeze(1), h.unsqueeze(-1)).squeeze(-1) * v_norm
+                t[:, -1, :] = h.to(t.dtype)
+                return (t,) + rest if rest else t
 
-                return hook
+            return hook
 
-            handles = []
-            for layer in layers:
-                if layer in lens.jacobians:
-                    block = backend.hook_manager.get_layer_module(layer)
-                    handles.append(block.register_forward_hook(make_ablate_hook(layer)))
+        handles = []
+        for layer in layers:
+            if layer in lens.jacobians:
+                block = backend.hook_manager.get_layer_module(layer)
+                handles.append(block.register_forward_hook(make_ablate_hook(layer)))
 
-            with torch.no_grad():
-                ablate_out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+        try:
+            with torch.inference_mode():
+                ablate_out = model(
+                    input_ids=batch_tokens["input_ids"],
+                    attention_mask=batch_tokens["attention_mask"],
+                    position_ids=batch_tokens["position_ids"],
+                    output_hidden_states=False,
+                    use_cache=False,
+                )
+        finally:
             for h in handles:
                 h.remove()
 
-            ablate_id = torch.argmax(ablate_out.logits[0, -1, :]).item()
-            if ablate_id in correct_ids:
-                ablate_correct += 1
+        ablate_ids = torch.argmax(ablate_out.logits[:, -1, :], dim=-1).tolist()
+        ablate_correct = sum(1 for i, cid in enumerate(ablate_ids) if cid in correct_sets[i])
 
         base_acc = baseline_correct / n
         abl_acc = ablate_correct / n
@@ -1434,56 +1450,74 @@ class JacobianLensExperiment(BaseExperiment):
                 j_by_layer[layer] = J
                 wu_j_by_layer[layer] = vocab @ J
 
-        for sample in samples:
-            prompt = prompt_strategy.build_prompt(
-                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+        # Batched: one forward over all samples as rows (left-pad + position_ids
+        # remap; causal-mask row isolation), then per-layer computation on [B, d].
+        prompts_full = [
+            prompt_strategy.build_prompt(
+                {"text": s.text, "question": s.text, "metadata": s.metadata or {}}
             )
-            prompt_full = prompt + self.answer_cue
-            tokens = tokenizer.encode(
-                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
-            ).to(device)
+            + self.answer_cue
+            for s in samples
+        ]
+        batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
 
-            with torch.no_grad():
-                out = model(input_ids=tokens, output_hidden_states=True, use_cache=False)
-            hidden_states = out.hidden_states
+        with torch.no_grad():
+            out = model(
+                input_ids=batch_tokens["input_ids"],
+                attention_mask=batch_tokens["attention_mask"],
+                position_ids=batch_tokens["position_ids"],
+                output_hidden_states=True,
+                use_cache=False,
+            )
+        hidden_states = out.hidden_states
 
-            for layer in layers:
-                if layer not in lens.jacobians or layer + 1 >= len(hidden_states):
-                    continue
-                h = hidden_states[layer + 1][0, -1, :].float()  # [d_model]
-                wu_j = wu_j_by_layer[layer]
-                J = j_by_layer[layer]
+        for layer in layers:
+            if layer not in lens.jacobians or layer + 1 >= len(hidden_states):
+                continue
+            h = hidden_states[layer + 1][:, -1, :].float().detach()  # [B, d_model]
+            wu_j = wu_j_by_layer[layer]
+            J = j_by_layer[layer]
 
-                # J-space: top-k J-lens directions via inner product
-                all_scores = h @ wu_j.T  # [vocab]
-                top_k_vals, top_k_ids = torch.topk(all_scores, self.top_k)
-                j_tokens = [tokenizer.decode([t.item()]) for t in top_k_ids]
+            # J-space: top-k J-lens directions via inner product (per row)
+            all_scores = h @ wu_j.T  # [B, vocab]
+            top_k_vals, top_k_ids = torch.topk(all_scores, self.top_k, dim=-1)
+            j_tokens_by_row = [
+                [tokenizer.decode([t.item()]) for t in top_k_ids[row]]
+                for row in range(len(samples))
+            ]
 
-                # Non-J-space: project out top-k directions
-                h_nonj = h.clone()
-                for tid in top_k_ids:
-                    v = vocab[tid] @ J  # [d_model]
-                    v_norm = v / (torch.norm(v) + 1e-8)
-                    h_nonj = h_nonj - torch.dot(h_nonj, v_norm) * v_norm
+            # Non-J-space: project out top-k directions (per row, batched)
+            h_nonj = h.clone()
+            for j in range(self.top_k):
+                v = vocab[top_k_ids[:, j]] @ J  # [B, d_model]
+                v_norm = v / (torch.norm(v, dim=-1, keepdim=True) + 1e-8)
+                h_nonj = (
+                    h_nonj
+                    - torch.bmm(v_norm.unsqueeze(1), h_nonj.unsqueeze(-1)).squeeze(-1) * v_norm
+                )
 
-                # Total variance, J-variance, non-J-variance
-                total_var = torch.var(h).item()
-                j_component = h - h_nonj
-                j_var = torch.var(j_component).item() if total_var > 1e-8 else 0
-                j_var_frac = j_var / total_var if total_var > 1e-8 else 0
+            total_var = torch.var(h, dim=-1)
+            j_component = h - h_nonj
+            j_var = torch.where(
+                total_var > 1e-8, torch.var(j_component, dim=-1), torch.zeros_like(total_var)
+            )
+            j_var_frac = torch.where(
+                total_var > 1e-8, j_var / total_var, torch.zeros_like(total_var)
+            )
 
+            for row, sample in enumerate(samples):
                 print(
-                    f"  L{layer:>3} sample={sample.idx}  J-space({self.top_k}): {j_tokens[:5]}"
-                    f"  J-var={j_var_frac:.1%}"
+                    f"  L{layer:>3} sample={sample.idx}  J-space({self.top_k}): {j_tokens_by_row[row][:5]}"
+                    f"  J-var={float(j_var_frac[row].item()):.1%}"
                 )
 
                 decompositions.append(
                     {
                         "sample": sample.idx,
                         "layer": layer,
-                        "j_space_tokens": j_tokens,
-                        "j_variance_fraction": round(j_var_frac, 4),
-                        "total_variance": round(total_var, 6),
+                        "j_space_tokens": j_tokens_by_row[row],
+                        "j_variance_fraction": round(float(j_var_frac[row].item()), 4),
+                        "total_variance": round(float(total_var[row].item()), 6),
                     }
                 )
 
