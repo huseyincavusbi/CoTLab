@@ -63,7 +63,7 @@ jobs:
         run: uv sync --frozen --extra dev
 
       - name: Run unit tests
-        run: uv run pytest tests/test_core.py tests/test_backends.py tests/test_datasets.py tests/test_prompts.py tests/test_patching.py tests/test_analysis.py -v --tb=short
+        run: uv run pytest tests/test_core.py tests/test_backends.py tests/test_datasets.py tests/test_prompts.py tests/test_patching.py tests/test_analysis.py tests/test_equivalence_attention_entropy.py -v --tb=short
 
   integration-tests:
     runs-on: ubuntu-latest
