@@ -230,7 +230,6 @@ class ActivationCompareExperiment(BaseExperiment):
                     layer_counts[layer_idx] += 1
 
             del layer_vecs
-            torch.cuda.empty_cache()
             processed += B
 
         # --- Compute statistics -----------------------------------------

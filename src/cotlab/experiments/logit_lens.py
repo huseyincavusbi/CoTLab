@@ -374,8 +374,6 @@ class LogitLensExperiment(BaseExperiment):
                     emergence_layers.append(None)
                     never_emerged += 1
 
-            torch.cuda.empty_cache()
-
         # --- Aggregate --------------------------------------------------
         valid_emergence = [e for e in emergence_layers if e is not None]
         mean_emergence = (

@@ -410,7 +410,6 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
             )
 
             del logits
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
         # ── Build feature matrix ────────────────────────────────────────
         n = len(all_labels)

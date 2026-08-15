@@ -309,7 +309,6 @@ class AttentionAnalysisExperiment(BaseExperiment):
             del layer_attn
 
         del attentions
-        torch.cuda.empty_cache()
 
         # Generated-token analysis: run per-sample (auto-regressive, inherently sequential)
         if self.analyze_generated_tokens and not self._generated_analysis_disabled:

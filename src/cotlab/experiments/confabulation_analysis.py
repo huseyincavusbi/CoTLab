@@ -202,6 +202,73 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
 
         return np.array(features)
 
+    def _extract_prediction_and_cett(
+        self,
+        backend: InferenceBackend,
+        tokens: Dict[str, torch.Tensor],
+        neurons: List[Tuple[int, int]],
+    ) -> Tuple[str, float, float, np.ndarray]:
+        """Single forward pass computing prediction, confidence AND CETT features.
+
+        The CETT hooks return ``None`` so the model outputs are untouched,
+        making this exactly equivalent to running the two separate forwards in
+        ``_get_prediction_and_confidence`` and ``_extract_cett_features``.
+        """
+        cett_store = {}
+
+        layer_neurons = {}
+        for layer, idx in neurons:
+            layer_neurons.setdefault(layer, []).append(idx)
+
+        handles = []
+        for layer, indices in layer_neurons.items():
+
+            def make_hook(layer_id, neuron_indices):
+                def hook(module, inp, output):
+                    z = inp[0]
+                    h = output
+                    z_last = z[0, -1].detach().float()
+                    h_last = h[0, -1].detach().float()
+                    h_norm = h_last.norm(p=2).item()
+                    w_down = module.weight.data
+                    col_norms = w_down.norm(p=2, dim=0)
+                    for idx in neuron_indices:
+                        cett = (z_last[idx].abs() * col_norms[idx] / (h_norm + 1e-8)).item()
+                        cett_store[(layer_id, idx)] = cett
+
+                return hook
+
+            down_proj = backend.hook_manager.get_mlp_down_proj_module(layer)
+            handle = down_proj.register_forward_hook(make_hook(layer, indices))
+            handles.append(handle)
+
+        try:
+            with torch.inference_mode():
+                outputs = backend._model(**tokens)
+        finally:
+            for h in handles:
+                h.remove()
+
+        logits = outputs.logits[0, -1].float().cpu()
+
+        letter_ids = {}
+        for letter in self.mcq_letters:
+            ids = backend._tokenizer.encode(letter, add_special_tokens=False)
+            if ids:
+                letter_ids[letter] = ids[0]
+
+        letter_logits = {letter: logits[tid].item() for letter, tid in letter_ids.items()}
+        pred_letter = max(letter_logits.items(), key=lambda x: x[1])[0]
+        max_logit = letter_logits[pred_letter]
+
+        logit_vals = torch.tensor(list(letter_logits.values()))
+        probs = torch.softmax(logit_vals, dim=0)
+        entropy = -float((probs * (probs + 1e-10).log()).sum().item())
+
+        features = np.array([cett_store.get((layer, idx), 0.0) for layer, idx in neurons])
+
+        return pred_letter, max_logit, entropy, features
+
     def _compute_h_score(self, features: np.ndarray, weights: np.ndarray) -> float:
         """Compute H-Score = sigmoid(w · x)."""
         logit = np.dot(weights, features)
@@ -235,11 +302,10 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
 
             tokens = self._tokenize(backend, prompt)
 
-            # Get prediction and confidence
-            pred, max_logit, entropy = self._get_prediction_and_confidence(backend, tokens)
-
-            # Extract CETT features
-            features = self._extract_cett_features(backend, tokens, neurons)
+            # Get prediction, confidence and CETT features in a single forward.
+            pred, max_logit, entropy, features = self._extract_prediction_and_cett(
+                backend, tokens, neurons
+            )
             h_score = self._compute_h_score(features, weights)
 
             results.append(

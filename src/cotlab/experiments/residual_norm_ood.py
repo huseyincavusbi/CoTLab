@@ -331,7 +331,6 @@ class ResidualNormOODExperiment(BaseExperiment):
             )
 
             del hidden, logits
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
         # ── Aggregate ──────────────────────────────────────────────────
         n = len(labels)

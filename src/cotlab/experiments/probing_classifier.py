@@ -168,10 +168,6 @@ class ProbingClassifierExperiment(BaseExperiment):
             elif self.probe_target == "correctness":
                 labels.append(1 if is_correct else 0)
 
-            # Clear CUDA cache
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
         # Encode labels
         if self.probe_target in ["diagnosis", "category"]:
             le = LabelEncoder()

@@ -422,8 +422,6 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                         val = float(feat_acts[feat_idx].item())
                         contrast[layer_idx][feat_idx][condition].append(val)
 
-                torch.cuda.empty_cache() if torch.cuda.is_available() else None
-
         return contrast
 
     # ------------------------------------------------------------------

@@ -727,8 +727,6 @@ class ActivationPatchingExperiment(BaseExperiment):
                 except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                     tqdm.write(f"  [skip] sample {sample.idx} group '{group}': {exc}")
                     importance = 0.0
-                finally:
-                    torch.cuda.empty_cache()
 
                 sample_importances[group] = round(importance, 4)
                 group_importances[group].append(importance)
@@ -749,8 +747,6 @@ class ActivationPatchingExperiment(BaseExperiment):
                     entity_importance = round(abs(logit_base - lm_e), 4)
                 except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                     tqdm.write(f"  [skip] sample {sample.idx} (entity): {exc}")
-                finally:
-                    torch.cuda.empty_cache()
             if groups.get("stem"):
                 try:
                     lm_s = self._forward_attention_masked(
@@ -759,8 +755,6 @@ class ActivationPatchingExperiment(BaseExperiment):
                     stem_importance = round(abs(logit_base - lm_s), 4)
                 except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                     tqdm.write(f"  [skip] sample {sample.idx} (stem): {exc}")
-                finally:
-                    torch.cuda.empty_cache()
 
             per_sample_results.append(
                 {
@@ -1065,7 +1059,6 @@ class ActivationPatchingExperiment(BaseExperiment):
                 }
             )
             processed += 1
-            torch.cuda.empty_cache()
 
         # --- Aggregate --------------------------------------------------
         mean_effects: Dict[int, float] = {}
