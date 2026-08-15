@@ -39,7 +39,14 @@ class InferenceBackend(ABC):
 
     @abstractmethod
     def generate_batch(
-        self, prompts: List[str], max_new_tokens: int = 512, temperature: float = 0.7, **kwargs
+        self,
+        prompts: List[str],
+        max_new_tokens: int = 512,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        do_sample: bool = True,
+        batch_size: int = 1,
+        **kwargs,
     ) -> List[GenerationOutput]:
         """
         Generate text from multiple prompts.
@@ -48,6 +55,9 @@ class InferenceBackend(ABC):
             prompts: List of input prompts
             max_new_tokens: Maximum tokens to generate
             temperature: Sampling temperature
+            top_p: Nucleus sampling threshold
+            do_sample: Whether to sample (True) or decode greedily (False)
+            batch_size: Rows per batched model call; 1 = sequential per prompt
 
         Returns:
             List of GenerationOutput

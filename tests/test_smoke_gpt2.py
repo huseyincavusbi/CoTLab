@@ -46,6 +46,54 @@ def test_generate_batch_sequential_matches_generate(backend):
         assert batched[i].tokens == single.tokens, f"prompt {i} differs"
 
 
+def test_generate_batch_batched_greedy_matches_sequential(backend):
+    """Greedy batched generate (batch_size>1) equals sequential, token-exact.
+
+    Left-padding + position_ids remap guarantee each row sees identical
+    positional embeddings to its single-sample run (Layer 1 tensor + Layer 3
+    token equivalence). This is the scientific contract for batching.
+    """
+    prompts = [
+        "The capital of France is",
+        "1 + 1 =",
+        "The Eiffel Tower is in",
+        "Two plus two equals",
+    ]
+    kwargs = dict(max_new_tokens=MAX_NEW_TOKENS, temperature=0.0, do_sample=False)
+    sequential = backend.generate_batch(prompts, **kwargs)
+    batched = backend.generate_batch(prompts, batch_size=2, **kwargs)
+    assert len(sequential) == len(batched) == len(prompts)
+    for i, (s, b) in enumerate(zip(sequential, batched)):
+        assert s.tokens == b.tokens, f"prompt {i} batched != sequential"
+
+
+def test_generate_batch_prefill_logits_close(backend):
+    """Batched prefill logits match sequential prefill logits at unmasked positions."""
+    from equivalence_utils import TOL_CPU_FP32, assert_close_batched_vs_single
+
+    prompts = ["The capital of France is", "1 + 1 =", "The Eiffel Tower is in"]
+    orig_side = backend.tokenizer.padding_side
+    backend.tokenizer.padding_side = "left"
+    if backend.tokenizer.pad_token_id is None:
+        backend.tokenizer.pad_token_id = backend.tokenizer.eos_token_id
+    try:
+        tokens = backend.tokenizer(prompts, return_tensors="pt", padding=True)
+        masks = tokens["attention_mask"]
+        position_ids = masks.long().cumsum(-1) - 1
+        position_ids = position_ids.masked_fill(masks == 0, 0)
+        tokens["position_ids"] = position_ids
+        with torch.inference_mode():
+            batched_logits = backend.model(**tokens).logits
+            seq_logits = []
+            for p in prompts:
+                single = backend.tokenizer(p, return_tensors="pt")
+                seq_logits.append(backend.model(**single).logits[0])
+    finally:
+        backend.tokenizer.padding_side = orig_side
+    atol, rtol = TOL_CPU_FP32
+    assert_close_batched_vs_single(batched_logits, seq_logits, atol, rtol, masks=masks)
+
+
 def test_forward_with_cache_hooks_fire(backend):
     """forward_with_cache returns logits plus a per-layer activation cache."""
     logits, cache = backend.forward_with_cache("The Eiffel Tower is in", layers=[0, 2, 4])

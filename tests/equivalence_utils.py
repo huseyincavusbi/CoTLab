@@ -38,7 +38,8 @@ def assert_close_batched_vs_single(
     """Assert each batch row equals its sequential single-sample reference.
 
     Only unmasked positions are compared (NEXT.md tolerances require masking
-    padding out of the comparison).
+    padding out of the comparison). CoTLab batches use LEFT padding, so the
+    real tokens occupy the trailing ``seq_len`` positions of each row.
     """
     assert batch_out.shape[0] == len(single_outs), (
         f"batch rows ({batch_out.shape[0]}) != references ({len(single_outs)})"
@@ -48,8 +49,8 @@ def assert_close_batched_vs_single(
         row = batch_out[i]
         if masks is not None:
             seq_len = int(masks[i].sum())
-            row = row[:seq_len]
-            single = single[:seq_len]
+            row = row[-seq_len:]
+            single = single[-seq_len:]
         torch.testing.assert_close(row, single, atol=atol, rtol=rtol, check_stride=check_stride)
         passed += 1
     assert passed / len(single_outs) >= MIN_PASS_RATIO

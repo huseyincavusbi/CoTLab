@@ -189,20 +189,88 @@ class TransformersBackend(InferenceBackend):
         return GenerationOutput(text=text, tokens=generated_tokens.tolist(), logprobs=None)
 
     def generate_batch(
-        self, prompts: List[str], max_new_tokens: int = 512, temperature: float = 0.7, **kwargs
+        self,
+        prompts: List[str],
+        max_new_tokens: int = 512,
+        temperature: float = 0.7,
+        top_p: float = 0.9,
+        do_sample: bool = True,
+        batch_size: int = 1,
+        **kwargs,
     ) -> List[GenerationOutput]:
-        """Generate from multiple prompts (sequential for simplicity)."""
+        """Generate from multiple prompts.
+
+        ``batch_size == 1`` (default) keeps the exact sequential path, one
+        ``model.generate`` call per prompt. This preserves legacy numerics and
+        RNG draw order and MUST remain the default for publication runs
+        (sampling results depend on batch structure).
+
+        ``batch_size > 1`` runs a single batched ``model.generate`` over
+        left-padded prompts. For greedy decoding (``do_sample=False``) this is
+        equivalent to the sequential path per sample. For sampling
+        (``do_sample=True``) the batched call draws from one RNG stream across
+        all rows, so outputs differ from sequential runs; results are only
+        reproducible for the identical batch composition and seed.
+        """
         system_prompt = kwargs.pop("system_prompt", None)
-        return [
-            self.generate(
-                prompt,
-                max_new_tokens=max_new_tokens,
-                temperature=temperature,
-                system_prompt=system_prompt,
-                **kwargs,
-            )
-            for prompt in prompts
-        ]
+        if system_prompt:
+            prompts = [self._apply_system_prompt(p, system_prompt) for p in prompts]
+
+        if batch_size <= 1 or len(prompts) <= 1:
+            return [
+                self.generate(
+                    prompt,
+                    max_new_tokens=max_new_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    do_sample=do_sample,
+                    **kwargs,
+                )
+                for prompt in prompts
+            ]
+
+        if self._model is None or self._tokenizer is None:
+            raise RuntimeError("Model not loaded. Call load_model() first.")
+
+        # Batch in chunks of batch_size rows.
+        outputs: List[GenerationOutput] = []
+        orig_side = self._tokenizer.padding_side
+        self._tokenizer.padding_side = "left"
+        if self._tokenizer.pad_token_id is None:
+            self._tokenizer.pad_token_id = self._tokenizer.eos_token_id
+        try:
+            for start in range(0, len(prompts), batch_size):
+                chunk = prompts[start : start + batch_size]
+                inputs = self._tokenizer(chunk, return_tensors="pt", padding=True).to(self.device)
+                # Left-padded: re-derive position_ids so positional embeddings
+                # match the unpadded single-sample case (logit_lens precedent).
+                attention_mask = inputs["attention_mask"]
+                position_ids = attention_mask.long().cumsum(-1) - 1
+                position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+                inputs["position_ids"] = position_ids
+
+                with torch.inference_mode():
+                    gen = self._model.generate(
+                        **inputs,
+                        max_new_tokens=max_new_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
+                        do_sample=do_sample,
+                        pad_token_id=self._tokenizer.eos_token_id,
+                        **kwargs,
+                    )
+
+                prompt_lens = inputs["input_ids"].shape[1]
+                generated_tokens = gen[:, prompt_lens:]
+                decoded = self._tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)
+                for tokens_row, text in zip(generated_tokens, decoded):
+                    outputs.append(
+                        GenerationOutput(text=text, tokens=tokens_row.tolist(), logprobs=None)
+                    )
+        finally:
+            self._tokenizer.padding_side = orig_side
+
+        return outputs
 
     @staticmethod
     def _apply_system_prompt(prompt: str, system_prompt: Optional[str]) -> str:
