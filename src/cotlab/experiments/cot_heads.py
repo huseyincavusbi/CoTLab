@@ -134,30 +134,38 @@ class CoTHeadsExperiment(BaseExperiment):
         results = []
         changed_heads = []
 
+        # Batched sweep: for each layer, run ONE forward with num_heads identical
+        # rows, each row patching a different head slice of the last token.
+        # Attention rows are isolated by the causal mask (eval, no dropout), so
+        # each row reproduces the sequential (layer, head) forward exactly.
+        B = num_heads
+        batch_tokens = {k: v.expand(B, -1) for k, v in direct_tokens.items()}
+
         for layer_idx in self.search_layers:
-            for head_idx in range(num_heads):
-                cot_attn = cot_attn_cache[layer_idx]
-                head_start = head_idx * head_dim
-                head_end = (head_idx + 1) * head_dim
+            cot_attn = cot_attn_cache[layer_idx]
+            src = cot_attn[:, -1, :].unsqueeze(0).expand(B, -1, -1)  # [B, 1, hidden]
 
-                def make_patch_hook(src, h_start, h_end):
-                    def hook(module, input, output):
-                        patched = output.clone()
-                        patched[:, -1, h_start:h_end] = src[:, -1, h_start:h_end]
-                        return patched
+            def make_patch_hook(source):
+                def hook(module, input, output):
+                    patched = output.clone()
+                    for b in range(B):
+                        h_start = b * head_dim
+                        h_end = (b + 1) * head_dim
+                        patched[b, -1, h_start:h_end] = source[b, -1, h_start:h_end]
+                    return patched
 
-                    return hook
+                return hook
 
-                attn_module = backend.hook_manager.get_attention_output_module(layer_idx)
-                handle = attn_module.register_forward_hook(
-                    make_patch_hook(cot_attn, head_start, head_end)
-                )
+            attn_module = backend.hook_manager.get_attention_output_module(layer_idx)
+            handle = attn_module.register_forward_hook(make_patch_hook(src))
 
-                try:
-                    with torch.inference_mode():
-                        patched_logits = model(**direct_tokens).logits
+            try:
+                with torch.inference_mode():
+                    patched_logits = model(**batch_tokens).logits
 
-                    patched_top = torch.argmax(patched_logits[0, -1]).item()
+                patched_tops = torch.argmax(patched_logits[:, -1, :], dim=-1).cpu().tolist()
+                for head_idx in range(B):
+                    patched_top = patched_tops[head_idx]
                     patched_token = tokenizer.decode([patched_top])
                     changed = patched_top != direct_top
 
@@ -174,8 +182,8 @@ class CoTHeadsExperiment(BaseExperiment):
                         changed_heads.append((layer_idx, head_idx))
                         print(f"L{layer_idx:<5} | H{head_idx:<4} | YES      | {patched_token}")
 
-                finally:
-                    handle.remove()
+            finally:
+                handle.remove()
 
         print("-" * 60)
 
