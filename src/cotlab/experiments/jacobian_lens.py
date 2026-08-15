@@ -1177,64 +1177,82 @@ class JacobianLensExperiment(BaseExperiment):
         )
 
         flips = 0
-        for sample in samples:
-            prompt = prompt_strategy.build_prompt(
-                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+        # Batched: one forward per layer over all samples as rows (left-pad +
+        # position_ids remap; causal-mask row isolation, eval, no dropout), so
+        # each row reproduces the sequential swap forward exactly.
+        prompts_full = [
+            prompt_strategy.build_prompt(
+                {"text": s.text, "question": s.text, "metadata": s.metadata or {}}
             )
-            prompt_full = prompt + self.answer_cue
-            tokens = tokenizer.encode(
-                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
-            ).to(device)
+            + self.answer_cue
+            for s in samples
+        ]
+        batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
 
-            # Baseline: model output without swap
-            with torch.no_grad():
-                base_out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
-            base_probs = torch.softmax(base_out.logits[0, -1, :], dim=-1)
-            base_top1 = torch.argmax(base_probs).item()
+        # Baseline: model output without swap (batched over all samples).
+        with torch.inference_mode():
+            base_out = model(
+                input_ids=batch_tokens["input_ids"],
+                attention_mask=batch_tokens["attention_mask"],
+                position_ids=batch_tokens["position_ids"],
+                output_hidden_states=False,
+                use_cache=False,
+            )
+        base_probs = torch.softmax(base_out.logits[:, -1, :], dim=-1)  # [B, vocab]
+        base_top1 = torch.argmax(base_probs, dim=-1).tolist()
 
-            # With swap at each layer
-            for layer in layers:
-                if layer not in lens.jacobians:
-                    continue
+        for layer in layers:
+            if layer not in lens.jacobians:
+                continue
 
-                J = lens.jacobians[layer].to(device, dtype=torch.float32)
-                v_src = (lm_head.weight[src_id].float() @ J).unsqueeze(1)  # [d_model, 1]
-                v_tgt = (lm_head.weight[tgt_id].float() @ J).unsqueeze(1)  # [d_model, 1]
-                V = torch.cat([v_src, v_tgt], dim=1)  # [d_model, 2]
-                V_pinv = (
-                    torch.linalg.pinv(V.T @ V + 1e-6 * torch.eye(2, device=device)) @ V.T
-                )  # [2, d_model]
+            J = lens.jacobians[layer].to(device, dtype=torch.float32)
+            v_src = (lm_head.weight[src_id].float() @ J).unsqueeze(1)  # [d_model, 1]
+            v_tgt = (lm_head.weight[tgt_id].float() @ J).unsqueeze(1)  # [d_model, 1]
+            V = torch.cat([v_src, v_tgt], dim=1)  # [d_model, 2]
+            V_pinv = (
+                torch.linalg.pinv(V.T @ V + 1e-6 * torch.eye(2, device=device)) @ V.T
+            )  # [2, d_model]
 
-                def make_swap_hook():
-                    def hook(module, inp, output):
-                        if isinstance(output, tuple):
-                            t, rest = output[0], output[1:]
-                        else:
-                            t, rest = output, ()
-                        h = t[0, -1, :].unsqueeze(1)  # [d_model, 1]
-                        c = V_pinv @ h  # [2, 1]
-                        c_swapped = c.clone()
-                        c_swapped[0], c_swapped[1] = c[1].clone(), c[0].clone()
-                        h_new = h + V @ (c_swapped - c)
-                        t[0, -1, :] = h_new.squeeze(1)
-                        return (t,) + rest if rest else t
+            def make_swap_hook():
+                def hook(module, inp, output):
+                    if isinstance(output, tuple):
+                        t, rest = output[0], output[1:]
+                    else:
+                        t, rest = output, ()
+                    h = t[:, -1, :].unsqueeze(-1)  # [B, d_model, 1]
+                    c = torch.bmm(V_pinv.unsqueeze(0).expand(h.shape[0], -1, -1), h)  # [B, 2, 1]
+                    c_swapped = c.clone()
+                    c_swapped[:, 0], c_swapped[:, 1] = c[:, 1].clone(), c[:, 0].clone()
+                    h_new = h + torch.bmm(V.unsqueeze(0).expand(h.shape[0], -1, -1), c_swapped - c)
+                    t[:, -1, :] = h_new.squeeze(-1)
+                    return (t,) + rest if rest else t
 
-                    return hook
+                return hook
 
-                block = backend.hook_manager.get_layer_module(layer)
-                handle = block.register_forward_hook(make_swap_hook())
-                with torch.no_grad():
-                    swap_out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+            block = backend.hook_manager.get_layer_module(layer)
+            handle = block.register_forward_hook(make_swap_hook())
+            try:
+                with torch.inference_mode():
+                    swap_out = model(
+                        input_ids=batch_tokens["input_ids"],
+                        attention_mask=batch_tokens["attention_mask"],
+                        position_ids=batch_tokens["position_ids"],
+                        output_hidden_states=False,
+                        use_cache=False,
+                    )
+            finally:
                 handle.remove()
 
-                swap_probs = torch.softmax(swap_out.logits[0, -1, :], dim=-1)
-                swap_top1 = torch.argmax(swap_probs).item()
-                flipped = swap_top1 != base_top1
+            swap_probs = torch.softmax(swap_out.logits[:, -1, :], dim=-1)
+            swap_top1 = torch.argmax(swap_probs, dim=-1).tolist()
+
+            for row, sample in enumerate(samples):
+                flipped = swap_top1[row] != base_top1[row]
                 if flipped:
                     flips += 1
                 print(
-                    f"  L{layer:>3} sample={sample.idx}  base={tokenizer.decode([base_top1])}"
-                    f"  swap={tokenizer.decode([swap_top1])}  flipped={flipped}"
+                    f"  L{layer:>3} sample={sample.idx}  base={tokenizer.decode([base_top1[row]])}"
+                    f"  swap={tokenizer.decode([swap_top1[row]])}  flipped={flipped}"
                 )
 
         n_trials = len(samples) * len([layer for layer in layers if layer in lens.jacobians])
