@@ -72,25 +72,25 @@ class EntropyNeuronOverlapExperiment(BaseExperiment):
         self, backend: InferenceBackend, percentile: float
     ) -> Tuple[List[Tuple[int, int]], np.ndarray]:
         """Identify high-norm neurons across all layers."""
-        all_norms = []
-        neuron_info = []
-
         num_layers = backend.hook_manager.num_layers
 
+        # Vectorized: collect per-layer column norms, then build (layer, idx)
+        # pairs with np.repeat/np.arange instead of Python per-neuron appends.
+        layer_norms = []
         for layer in tqdm(range(num_layers), desc="Computing norms"):
             mlp_down_proj = backend.hook_manager.get_mlp_down_proj_module(layer)
             w_down = mlp_down_proj.weight.data.float()
-            col_norms = w_down.norm(p=2, dim=0).cpu().numpy()
+            layer_norms.append(w_down.norm(p=2, dim=0).cpu().numpy())
 
-            for idx, norm in enumerate(col_norms):
-                all_norms.append(norm)
-                neuron_info.append((layer, idx))
+        all_norms = np.concatenate(layer_norms)
+        layer_sizes = np.array([len(n) for n in layer_norms])
+        layer_ids = np.repeat(np.arange(num_layers), layer_sizes)
+        neuron_info = list(zip(layer_ids.tolist(), np.arange(len(all_norms)).tolist()))
 
-        all_norms = np.array(all_norms)
         threshold = np.percentile(all_norms, percentile)
 
         entropy_neurons = [
-            neuron_info[i] for i in range(len(all_norms)) if all_norms[i] >= threshold
+            (int(layer_ids[i]), int(i)) for i in np.nonzero(all_norms >= threshold)[0]
         ]
 
         return entropy_neurons, all_norms
