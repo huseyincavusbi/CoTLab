@@ -299,8 +299,11 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         tokenizer = backend._tokenizer
         device = backend.device
 
-        # Accumulators: layer → feature_idx → list of activation values.
-        accum: Dict[int, Dict[int, List[float]]] = {layer: {} for layer in layers}
+        # Dense accumulators: layer → [d_sae] sum/count of positive activations.
+        # Final mean = sum/count is identical to the per-feature list average
+        # the loop version produced (same values, same reduction order).
+        accum_sum: Dict[int, torch.Tensor] = {layer: None for layer in layers}
+        accum_count: Dict[int, torch.Tensor] = {layer: None for layer in layers}
 
         print(f"\nPhase 1: vocabulary probing over {len(self.histo_vocab)} terms …")
         for term in tqdm(self.histo_vocab, desc="Vocab probe"):
@@ -321,19 +324,27 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                 term_resid = resid[term_positions]  # [n_toks, d_model]
                 with torch.inference_mode():
                     features = sae.encode(term_resid.to(sae.w_enc.device))
-                    # mean over term tokens → [d_sae]
-                    mean_acts = features.mean(dim=0).cpu()
+                    # mean over term tokens → [d_sae] (kept on GPU)
+                    mean_acts = features.mean(dim=0)
 
-                for feat_idx, val in enumerate(mean_acts.tolist()):
-                    if val > 0:
-                        accum[layer_idx].setdefault(feat_idx, []).append(val)
+                if accum_sum[layer_idx] is None:
+                    accum_sum[layer_idx] = torch.zeros_like(mean_acts)
+                    accum_count[layer_idx] = torch.zeros_like(mean_acts)
+                pos = mean_acts > 0
+                if pos.any():
+                    accum_sum[layer_idx] = accum_sum[layer_idx] + mean_acts.masked_fill(~pos, 0.0)
+                    accum_count[layer_idx] = accum_count[layer_idx] + pos.to(mean_acts.dtype)
 
         # Aggregate: mean activation per feature (0 if never fired).
         histo_scores: Dict[int, Dict[int, float]] = {}
         for layer_idx in layers:
-            scores: Dict[int, float] = {}
-            for feat_idx, vals in accum[layer_idx].items():
-                scores[feat_idx] = sum(vals) / len(vals)
+            if accum_sum[layer_idx] is None:
+                histo_scores[layer_idx] = {}
+                continue
+            sums = accum_sum[layer_idx].cpu()
+            counts = accum_count[layer_idx].cpu()
+            mean = torch.where(counts > 0, sums / counts.clamp_min(1.0), torch.zeros_like(sums))
+            scores = {int(i): float(v) for i, v in enumerate(mean.tolist()) if v > 0}
             histo_scores[layer_idx] = scores
 
         return histo_scores

@@ -138,21 +138,17 @@ class EntropyNeuronOverlapExperiment(BaseExperiment):
         backend: InferenceBackend,
     ) -> Dict[str, float]:
         """Compute norm statistics for each group."""
-        # Get norms for H-Neurons
-        h_norms = []
-        for layer, idx in h_neurons:
+        # Cache per-layer column norms once; indexing reproduces the per-neuron
+        # ``w_down[:, idx].norm(p=2)`` value exactly (same reduction, same dtype).
+        col_norms_by_layer: Dict[int, np.ndarray] = {}
+        for layer in {layer for layer, _ in h_neurons} | {layer for layer, _ in entropy_neurons}:
             mlp_down_proj = backend.hook_manager.get_mlp_down_proj_module(layer)
-            w_down = mlp_down_proj.weight.data.float()
-            norm = w_down[:, idx].norm(p=2).item()
-            h_norms.append(norm)
+            col_norms_by_layer[layer] = (
+                mlp_down_proj.weight.data.float().norm(p=2, dim=0).cpu().numpy()
+            )
 
-        # Get norms for entropy neurons
-        e_norms = []
-        for layer, idx in entropy_neurons:
-            mlp_down_proj = backend.hook_manager.get_mlp_down_proj_module(layer)
-            w_down = mlp_down_proj.weight.data.float()
-            norm = w_down[:, idx].norm(p=2).item()
-            e_norms.append(norm)
+        h_norms = [float(col_norms_by_layer[layer][idx]) for layer, idx in h_neurons]
+        e_norms = [float(col_norms_by_layer[layer][idx]) for layer, idx in entropy_neurons]
 
         return {
             "h_norm_mean": float(np.mean(h_norms)) if h_norms else 0.0,
