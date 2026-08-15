@@ -95,7 +95,7 @@ class SteeringVectorsExperiment(BaseExperiment):
         corr_tokens = tokenizer(corr_prompt, return_tensors="pt").to(backend.device)
 
         # Get baseline logits
-        with torch.no_grad():
+        with torch.inference_mode():
             clean_logits = model(**clean_tokens).logits
         baseline_effect = (clean_logits[0, -1, token_you] - clean_logits[0, -1, token_acute]).item()
         print(f"Baseline (clean) effect: {baseline_effect:.4f}")
@@ -122,7 +122,7 @@ class SteeringVectorsExperiment(BaseExperiment):
             # Get clean activation
             clean_storage: List[torch.Tensor] = []
             handle = residual_module.register_forward_hook(make_cache_hook(clean_storage))
-            with torch.no_grad():
+            with torch.inference_mode():
                 _ = model(**clean_tokens).logits
             handle.remove()
             clean_act = clean_storage[0]
@@ -130,7 +130,7 @@ class SteeringVectorsExperiment(BaseExperiment):
             # Get corrupted activation
             corr_storage: List[torch.Tensor] = []
             handle = residual_module.register_forward_hook(make_cache_hook(corr_storage))
-            with torch.no_grad():
+            with torch.inference_mode():
                 _ = model(**corr_tokens).logits
             handle.remove()
             corr_act = corr_storage[0]
@@ -157,7 +157,7 @@ class SteeringVectorsExperiment(BaseExperiment):
                     make_steer_hook(steering_vector, strength)
                 )
                 try:
-                    with torch.no_grad():
+                    with torch.inference_mode():
                         steered_logits = model(**clean_tokens).logits
                     effect = (
                         steered_logits[0, -1, token_you] - steered_logits[0, -1, token_acute]

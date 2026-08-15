@@ -133,7 +133,7 @@ class ProbingClassifierExperiment(BaseExperiment):
             prompt_length = inputs.input_ids.shape[1]
 
             # Generate answer with hidden states
-            with torch.no_grad():
+            with torch.inference_mode():
                 outputs = model.generate(
                     **inputs,
                     max_new_tokens=self.max_new_tokens,
@@ -388,7 +388,7 @@ class ProbingClassifierExperiment(BaseExperiment):
             prev_loss = loss.item()
 
         # Evaluate
-        with torch.no_grad():
+        with torch.inference_mode():
             # Train accuracy
             train_outputs = model(X_train_t)
             train_preds = torch.argmax(train_outputs, dim=1)

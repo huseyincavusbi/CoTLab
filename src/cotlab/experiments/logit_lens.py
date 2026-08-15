@@ -166,7 +166,7 @@ class LogitLensExperiment(BaseExperiment):
             def hook(module, inp, output):
                 tensor = output[0] if isinstance(output, tuple) else output
                 # tensor: [B, seq_len, hidden]
-                with torch.no_grad():
+                with torch.inference_mode():
                     last_hidden = tensor[:, -1, :]  # [B, hidden]
                     logits = lm_head(last_hidden)  # [B, vocab]
                     probs = torch.softmax(logits, dim=-1)
@@ -194,7 +194,7 @@ class LogitLensExperiment(BaseExperiment):
                 handles.append(mod.register_forward_hook(make_hook(layer_idx)))
 
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 final_logits = backend._model(**tokens).logits
         finally:
             for h in handles:
@@ -249,7 +249,7 @@ class LogitLensExperiment(BaseExperiment):
                 tensor = output[0] if isinstance(output, tuple) else output
                 last_hidden = tensor[0, -1] if tensor.dim() == 3 else tensor[0]
                 # Project and move to CPU immediately — release GPU memory
-                with torch.no_grad():
+                with torch.inference_mode():
                     logits = lm_head(last_hidden.unsqueeze(0))
                     probs = torch.softmax(logits[0], dim=-1)
                     top_probs, top_ids = torch.topk(probs, self.top_k)
@@ -270,7 +270,7 @@ class LogitLensExperiment(BaseExperiment):
                 mod = backend.hook_manager.get_residual_module(layer_idx)
                 handles.append(mod.register_forward_hook(make_hook(layer_idx)))
 
-        with torch.no_grad():
+        with torch.inference_mode():
             final_logits = backend._model(**tokens).logits
 
         for h in handles:

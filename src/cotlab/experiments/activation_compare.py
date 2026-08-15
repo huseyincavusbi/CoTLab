@@ -186,7 +186,7 @@ class ActivationCompareExperiment(BaseExperiment):
             def make_hook(layer_idx: int):
                 def hook(module, inp, output):
                     tensor = output[0] if isinstance(output, tuple) else output
-                    with torch.no_grad():
+                    with torch.inference_mode():
                         if B == 1:
                             # tensor: [1, seq_len, hidden]
                             vec = self._pool(tensor[0]).unsqueeze(0).cpu().float()  # [1, hidden]
@@ -205,7 +205,7 @@ class ActivationCompareExperiment(BaseExperiment):
                     handles.append(mod.register_forward_hook(make_hook(layer_idx)))
 
             try:
-                with torch.no_grad():
+                with torch.inference_mode():
                     backend._model(**tokens)
             except Exception as e:
                 tqdm.write(f"  [skip] batch starting at {batch[0].idx}: {type(e).__name__}: {e}")

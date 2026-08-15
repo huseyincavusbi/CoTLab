@@ -243,7 +243,7 @@ class ActivationPatchingExperiment(BaseExperiment):
         def make_cache_hook(layer_idx: int):
             def hook(module, inp, output):
                 tensor = output[0] if isinstance(output, tuple) else output
-                with torch.no_grad():
+                with torch.inference_mode():
                     # keep bfloat16 so patching is dtype-compatible with the model
                     act_cache[layer_idx] = tensor[0, -1].detach().cpu()
                 return output
@@ -258,7 +258,7 @@ class ActivationPatchingExperiment(BaseExperiment):
             if layer_idx < backend.hook_manager.num_layers
         ]
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
         finally:
             for h in handles:
@@ -292,7 +292,7 @@ class ActivationPatchingExperiment(BaseExperiment):
         mod = backend.hook_manager.get_residual_module(patch_layer)
         handle = mod.register_forward_hook(patch_hook)
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
         finally:
             handle.remove()
@@ -431,7 +431,7 @@ class ActivationPatchingExperiment(BaseExperiment):
         Returns the logit (float32, CPU) for ``answer_tok_id`` at the last token.
         """
         if not zero_positions:
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
             return float(out.logits[0, -1, answer_tok_id].detach().cpu().item())
 
@@ -464,13 +464,13 @@ class ActivationPatchingExperiment(BaseExperiment):
             tqdm.write(
                 f"  [warn] token_group_contrast: no self_attn on layer {mask_layer}, skipping mask"
             )
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
             return float(out.logits[0, -1, answer_tok_id].detach().cpu().item())
 
         handle = attn_mod.register_forward_pre_hook(_pre_hook, with_kwargs=True)
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
         finally:
             handle.remove()
@@ -637,7 +637,7 @@ class ActivationPatchingExperiment(BaseExperiment):
 
             # Baseline forward (no masking) — also derive is_correct in one pass.
             try:
-                with torch.no_grad():
+                with torch.inference_mode():
                     out_base = backend._model(**tokens)
                 last_logits = out_base.logits[0, -1].detach().float().cpu()
                 logit_base = float(last_logits[answer_tok_id].item())

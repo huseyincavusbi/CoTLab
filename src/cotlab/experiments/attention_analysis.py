@@ -128,7 +128,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
             generate_kwargs["temperature"] = self.generated_temperature
             generate_kwargs["top_p"] = self.generated_top_p
 
-        with torch.no_grad():
+        with torch.inference_mode():
             gen_outputs = model.generate(**inputs, **generate_kwargs)
 
         gen_attentions = getattr(gen_outputs, "attentions", None)
@@ -218,7 +218,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
         seq_lengths = attention_mask.sum(dim=1).tolist()
         pad_left = getattr(tokenizer, "padding_side", "right") == "left"
 
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = model(**tokens, output_attentions=True, return_dict=True)
 
         attentions = outputs.attentions  # tuple[(B, heads, padded_seq, padded_seq)] * num_layers
@@ -392,7 +392,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
         tokens = tokenizer(prompt, **tokenizer_kwargs).to(device)
         input_ids = tokens["input_ids"]
 
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = model(**tokens, output_attentions=True, return_dict=True)
 
         attentions = outputs.attentions

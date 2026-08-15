@@ -147,13 +147,13 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
 
         def hook(module, inp, output):
             tensor = output[0] if isinstance(output, tuple) else output
-            with torch.no_grad():
+            with torch.inference_mode():
                 hidden_store["h"] = tensor[0, -1].detach().float().cpu()
 
         mod = backend.hook_manager.get_residual_module(norm_layer)
         handle = mod.register_forward_hook(hook)
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(
                     **tokens,
                     output_attentions=True,

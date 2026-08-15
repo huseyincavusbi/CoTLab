@@ -72,3 +72,33 @@ def test_inference_mode_bit_identical(backend):
     with torch.inference_mode():
         cand = backend.model(**tokens).logits
     assert torch.equal(ref, cand), "inference_mode must be bit-identical to no_grad"
+
+
+def test_inference_mode_cache_hooks_identical(backend):
+    """Residual-cache hooks fire under inference_mode and capture identical values."""
+    logits_ref, cache_ref = backend.forward_with_cache("The Eiffel Tower is in", layers=[0, 2, 4])
+    assert logits_ref.shape[0] == 1
+    assert set(cache_ref.layers) == {0, 2, 4}
+    # forward_with_cache runs under torch.inference_mode internally; verify the
+    # captured activations are the same values the no_grad path would produce.
+    tokens = backend.tokenizer("The Eiffel Tower is in", return_tensors="pt")
+    handles = []
+    captured = {}
+    with torch.no_grad():
+        for layer in [0, 2, 4]:
+            mod = backend.hook_manager.get_residual_module(layer)
+            handles.append(
+                mod.register_forward_hook(
+                    lambda m, i, o, _l=layer: captured.update(
+                        {_l: (o[0] if isinstance(o, tuple) else o).detach().clone()}
+                    )
+                )
+            )
+        backend.model(**tokens)
+    for h in handles:
+        h.remove()
+    assert set(captured) == set(cache_ref.layers)
+    for layer in cache_ref.layers:
+        assert torch.equal(cache_ref.get(layer), captured[layer]), (
+            f"layer {layer} cache differs between inference_mode and no_grad"
+        )

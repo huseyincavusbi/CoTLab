@@ -118,7 +118,7 @@ class SycophancyHeadsExperiment(BaseExperiment):
             handles.append(h)
 
         clean_tokens = tokenizer(clean_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             _ = model(**clean_tokens).logits
 
         for h in handles:
@@ -132,7 +132,7 @@ class SycophancyHeadsExperiment(BaseExperiment):
             handles.append(h)
 
         corr_tokens = tokenizer(corr_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             _ = model(**corr_tokens).logits
 
         for h in handles:
@@ -167,7 +167,7 @@ class SycophancyHeadsExperiment(BaseExperiment):
                 )
 
                 try:
-                    with torch.no_grad():
+                    with torch.inference_mode():
                         patched_logits = model(**clean_tokens).logits
 
                     last_logits = patched_logits[0, -1]

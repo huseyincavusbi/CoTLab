@@ -171,7 +171,7 @@ class TransformersBackend(InferenceBackend):
         prompt = self._apply_system_prompt(prompt, system_prompt)
         inputs = self._tokenizer(prompt, return_tensors="pt").to(self.device)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = self._model.generate(
                 **inputs,
                 max_new_tokens=max_new_tokens,
@@ -266,7 +266,7 @@ class TransformersBackend(InferenceBackend):
         inputs = self._tokenizer(prompt, return_tensors="pt").to(self.device)
 
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 outputs = self._model(**inputs)
         finally:
             self._hook_manager.remove_all_hooks()
@@ -295,7 +295,7 @@ class TransformersBackend(InferenceBackend):
         inputs = self._tokenizer(prompt, return_tensors="pt").to(self.device)
 
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 outputs = self._model(**inputs)
         finally:
             self._hook_manager.remove_all_hooks()

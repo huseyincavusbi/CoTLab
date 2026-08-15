@@ -206,7 +206,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         def make_hook(layer_idx: int):
             def hook(module, inp, output):
                 tensor = output[0] if isinstance(output, tuple) else output
-                with torch.no_grad():
+                with torch.inference_mode():
                     cache[layer_idx] = tensor[0].detach().float().cpu()
 
             return hook
@@ -218,7 +218,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                 handles.append(mod.register_forward_hook(make_hook(layer_idx)))
 
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 backend._model(**tokens)
         finally:
             for h in handles:
@@ -319,7 +319,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                 # resid: [seq_len, d_model]  (CPU float32)
                 sae = saes[layer_idx]
                 term_resid = resid[term_positions]  # [n_toks, d_model]
-                with torch.no_grad():
+                with torch.inference_mode():
                     features = sae.encode(term_resid.to(sae.w_enc.device))
                     # mean over term tokens → [d_sae]
                     mean_acts = features.mean(dim=0).cpu()
@@ -414,7 +414,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                     # Use last-token residual — position before the answer letter.
                     last_resid = resid[-1].unsqueeze(0)  # [1, d_model]
                     sae = saes[layer_idx]
-                    with torch.no_grad():
+                    with torch.inference_mode():
                         features = sae.encode(last_resid.to(sae.w_enc.device))
                         feat_acts = features[0].cpu()  # [d_sae]
 

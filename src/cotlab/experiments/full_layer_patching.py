@@ -78,7 +78,7 @@ class FullLayerPatchingExperiment(BaseExperiment):
 
         # 3. Get baseline
         clean_tokens = tokenizer(clean_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             clean_logits = model(**clean_tokens).logits
         baseline_effect = (clean_logits[0, -1, token_you] - clean_logits[0, -1, token_acute]).item()
         print(f"\nBaseline (clean) effect: {baseline_effect:.4f}")
@@ -101,7 +101,7 @@ class FullLayerPatchingExperiment(BaseExperiment):
             handles.append(h)
 
         corr_tokens = tokenizer(corr_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             corr_logits = model(**corr_tokens).logits
 
         corr_effect = (corr_logits[0, -1, token_you] - corr_logits[0, -1, token_acute]).item()
@@ -135,7 +135,7 @@ class FullLayerPatchingExperiment(BaseExperiment):
             handle = residual_module.register_forward_hook(make_patch_hook(source_act))
 
             try:
-                with torch.no_grad():
+                with torch.inference_mode():
                     patched_logits = model(**clean_tokens).logits
 
                 effect = (
@@ -184,7 +184,7 @@ class FullLayerPatchingExperiment(BaseExperiment):
                 handles.append(h)
 
             try:
-                with torch.no_grad():
+                with torch.inference_mode():
                     patched_logits = model(**clean_tokens).logits
 
                 effect = (

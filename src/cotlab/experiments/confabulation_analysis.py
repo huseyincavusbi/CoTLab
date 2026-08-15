@@ -122,7 +122,7 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
         self, backend: InferenceBackend, tokens: Dict[str, torch.Tensor]
     ) -> Tuple[str, float, float]:
         """Get model prediction, max logit, and entropy."""
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = backend._model(**tokens)
 
         logits = outputs.logits[0, -1].float().cpu()
@@ -190,7 +190,7 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
             handles.append(handle)
 
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 backend._model(**tokens)
         finally:
             for h in handles:

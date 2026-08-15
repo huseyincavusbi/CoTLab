@@ -96,7 +96,7 @@ class MultiHeadPatchingExperiment(BaseExperiment):
 
         # 3. Get baseline logit difference
         clean_tokens = tokenizer(clean_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             clean_logits = model(**clean_tokens).logits
         clean_effect = (clean_logits[0, -1, token_you] - clean_logits[0, -1, token_acute]).item()
         print(f"\nBaseline (clean) effect: {clean_effect:.4f}")
@@ -121,7 +121,7 @@ class MultiHeadPatchingExperiment(BaseExperiment):
             handles.append(h)
 
         corr_tokens = tokenizer(corr_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             _ = model(**corr_tokens).logits
 
         for h in handles:
@@ -157,7 +157,7 @@ class MultiHeadPatchingExperiment(BaseExperiment):
                 handles.append(h)
 
             try:
-                with torch.no_grad():
+                with torch.inference_mode():
                     patched_logits = model(**clean_tokens).logits
 
                 last_logits = patched_logits[0, -1]

@@ -74,7 +74,7 @@ class FullLayerCoTExperiment(BaseExperiment):
 
         # 2. Get baselines
         direct_tokens = tokenizer(direct_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             direct_logits = model(**direct_tokens).logits
         direct_top = torch.argmax(direct_logits[0, -1]).item()
         direct_token = tokenizer.decode([direct_top])
@@ -99,7 +99,7 @@ class FullLayerCoTExperiment(BaseExperiment):
                 handles.append(h)
 
         cot_tokens = tokenizer(cot_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             cot_logits = model(**cot_tokens).logits
 
         for h in handles:
@@ -133,7 +133,7 @@ class FullLayerCoTExperiment(BaseExperiment):
             handle = residual_module.register_forward_hook(make_patch_hook(source_act))
 
             try:
-                with torch.no_grad():
+                with torch.inference_mode():
                     patched_logits = model(**direct_tokens).logits
 
                 patched_top = torch.argmax(patched_logits[0, -1]).item()
@@ -181,7 +181,7 @@ class FullLayerCoTExperiment(BaseExperiment):
                 handles.append(h)
 
             try:
-                with torch.no_grad():
+                with torch.inference_mode():
                     patched_logits = model(**direct_tokens).logits
 
                 patched_top = torch.argmax(patched_logits[0, -1]).item()
