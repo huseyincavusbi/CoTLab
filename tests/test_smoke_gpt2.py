@@ -94,6 +94,34 @@ def test_generate_batch_prefill_logits_close(backend):
     assert_close_batched_vs_single(batched_logits, seq_logits, atol, rtol, masks=masks)
 
 
+def test_generate_batch_uneven_chunk(backend):
+    """Batched generate handles a trailing chunk (len % batch_size != 0)."""
+    prompts = ["The capital of France is", "1 + 1 =", "The Eiffel Tower is in"]
+    kwargs = dict(max_new_tokens=MAX_NEW_TOKENS, temperature=0.0, do_sample=False)
+    sequential = backend.generate_batch(prompts, **kwargs)
+    batched = backend.generate_batch(prompts, batch_size=4, **kwargs)
+    assert len(batched) == 3
+    for i, (s, b) in enumerate(zip(sequential, batched)):
+        assert s.tokens == b.tokens, f"prompt {i} differs (uneven chunk)"
+
+
+def test_generate_batch_sampled_reproducible(backend):
+    """Sampled batched generation is reproducible for a fixed seed and batch."""
+    prompts = ["The capital of France is", "1 + 1 =", "The Eiffel Tower is in"]
+    kwargs = dict(max_new_tokens=MAX_NEW_TOKENS, temperature=0.7, do_sample=True)
+    r1 = backend.generate_batch(prompts, batch_size=2, **kwargs)
+    r2 = backend.generate_batch(prompts, batch_size=2, **kwargs)
+    assert len(r1) == len(r2) == 3
+    # do_sample=True draws from the global torch RNG; resetting the seed before
+    # each call makes the batched stream reproducible for the identical batch.
+    torch.manual_seed(1234)
+    s1 = backend.generate_batch(prompts, batch_size=2, **kwargs)
+    torch.manual_seed(1234)
+    s2 = backend.generate_batch(prompts, batch_size=2, **kwargs)
+    for i, (a, b) in enumerate(zip(s1, s2)):
+        assert a.tokens == b.tokens, f"sampled batch {i} not reproducible under seed"
+
+
 def test_forward_with_cache_hooks_fire(backend):
     """forward_with_cache returns logits plus a per-layer activation cache."""
     logits, cache = backend.forward_with_cache("The Eiffel Tower is in", layers=[0, 2, 4])
