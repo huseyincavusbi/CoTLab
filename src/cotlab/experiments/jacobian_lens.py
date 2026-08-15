@@ -691,6 +691,36 @@ class JacobianLensExperiment(BaseExperiment):
                 candidates.add(ids[0])
         return candidates
 
+    def _tokenize_batch(self, tokenizer, texts: List[str], device: str) -> Dict[str, torch.Tensor]:
+        """Left-pad a batch with position_ids remap (logit_lens precedent).
+
+        Each row's positional embeddings then match its single-sample run, so a
+        per-row intervention in one batched forward reproduces the sequential
+        per-sample forwards exactly.
+        """
+        orig_side = tokenizer.padding_side
+        orig_pad = tokenizer.pad_token_id
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        try:
+            tokens = tokenizer(
+                texts,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.max_input_tokens,
+                padding=True,
+            ).to(device)
+        finally:
+            tokenizer.padding_side = orig_side
+            tokenizer.pad_token_id = orig_pad
+
+        attention_mask = tokens["attention_mask"]
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+        tokens["position_ids"] = position_ids
+        return tokens
+
     def _resolve_apply_layers(self, lens: JacobianLens) -> List[int]:
         if self.source_layers is not None:
             return [layer for layer in self.source_layers if layer in lens.jacobians]
@@ -1039,47 +1069,58 @@ class JacobianLensExperiment(BaseExperiment):
         )
 
         results = []
-        for sample in samples:
-            prompt = prompt_strategy.build_prompt(
-                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+        # Batched: one forward per layer over all samples as rows. Left-pad +
+        # position_ids remap keep each row's positional embeddings identical to
+        # its single-sample run, so each row reproduces the sequential steer
+        # forward exactly (causal-mask row isolation, eval, no dropout).
+        prompts_full = [
+            prompt_strategy.build_prompt(
+                {"text": s.text, "question": s.text, "metadata": s.metadata or {}}
             )
-            prompt_full = prompt + self.answer_cue
-            tokens = tokenizer.encode(
-                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
-            ).to(device)
+            + self.answer_cue
+            for s in samples
+        ]
+        batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
 
-            for layer in layers:
-                if layer not in lens.jacobians:
-                    continue
-                J = lens.jacobians[layer].to(device, dtype=torch.float32)
-                v_t = (lm_head.weight[target_id].float() @ J).unsqueeze(0)  # [1, d_model]
+        for layer in layers:
+            if layer not in lens.jacobians:
+                continue
+            J = lens.jacobians[layer].to(device, dtype=torch.float32)
+            v_t = lm_head.weight[target_id].float() @ J  # [d_model]
 
-                def make_steer_hook(vec):
-                    def hook(module, inp, output):
-                        if isinstance(output, tuple):
-                            t, rest = output[0], output[1:]
-                        else:
-                            t, rest = output, ()
-                        t[0, -1, :] = t[0, -1, :] + self.steer_alpha * vec.squeeze(0)
-                        return (t,) + rest if rest else t
+            def make_steer_hook(vec):
+                def hook(module, inp, output):
+                    if isinstance(output, tuple):
+                        t, rest = output[0], output[1:]
+                    else:
+                        t, rest = output, ()
+                    t[:, -1, :] = t[:, -1, :] + self.steer_alpha * vec
+                    return (t,) + rest if rest else t
 
-                    return hook
+                return hook
 
-                block = backend.hook_manager.get_layer_module(layer)
-                handle = block.register_forward_hook(make_steer_hook(v_t))
-                with torch.no_grad():
-                    out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+            block = backend.hook_manager.get_layer_module(layer)
+            handle = block.register_forward_hook(make_steer_hook(v_t))
+            try:
+                with torch.inference_mode():
+                    out = model(
+                        input_ids=batch_tokens["input_ids"],
+                        attention_mask=batch_tokens["attention_mask"],
+                        position_ids=batch_tokens["position_ids"],
+                        output_hidden_states=False,
+                        use_cache=False,
+                    )
+            finally:
                 handle.remove()
 
-                logits = out.logits[0, -1, :]
-                probs = torch.softmax(logits, dim=-1)
-                top_tokens = torch.topk(probs, 5)
-                target_rank = (
-                    (probs.sort(descending=True).indices == target_id)
-                    .nonzero(as_tuple=True)[0]
-                    .item()
-                )
+            logits = out.logits[:, -1, :]  # [B, vocab]
+            probs = torch.softmax(logits, dim=-1)
+            top_probs, top_ids = torch.topk(probs, 5, dim=-1)
+            sorted_probs, sorted_ids = probs.sort(descending=True, dim=-1)
+            ranks = (sorted_ids == target_id).nonzero(as_tuple=True)[1]
 
+            for row, sample in enumerate(samples):
+                target_rank = int(ranks[row].item())
                 results.append(
                     {
                         "sample": sample.idx,
@@ -1087,7 +1128,7 @@ class JacobianLensExperiment(BaseExperiment):
                         "steer_token": self.steer_token,
                         "alpha": self.steer_alpha,
                         "target_rank": target_rank + 1,
-                        "top_tokens": [tokenizer.decode([t.item()]) for t in top_tokens.indices],
+                        "top_tokens": [tokenizer.decode([t.item()]) for t in top_ids[row]],
                     }
                 )
 
