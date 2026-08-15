@@ -134,6 +134,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         seed: int = 42,
         max_input_tokens: int = 1024,
         answer_cue: str = "\n\nAnswer:",
+        batch_size: int = 8,
         **kwargs,
     ):
         self._name = name
@@ -151,6 +152,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         self.seed = seed
         self.max_input_tokens = max_input_tokens
         self.answer_cue = answer_cue
+        self.batch_size = batch_size
 
     @property
     def name(self) -> str:
@@ -208,6 +210,45 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                 tensor = output[0] if isinstance(output, tuple) else output
                 with torch.inference_mode():
                     cache[layer_idx] = tensor[0].detach().float().cpu()
+
+            return hook
+
+        handles = []
+        for layer_idx in layers:
+            if layer_idx < backend.hook_manager.num_layers:
+                mod = backend.hook_manager.get_residual_module(layer_idx)
+                handles.append(mod.register_forward_hook(make_hook(layer_idx)))
+
+        try:
+            with torch.inference_mode():
+                backend._model(**tokens)
+        finally:
+            for h in handles:
+                h.remove()
+
+        return cache
+
+    def _extract_residuals_batch(
+        self,
+        backend: InferenceBackend,
+        tokens: Dict[str, torch.Tensor],
+        layers: List[int],
+    ) -> Dict[int, torch.Tensor]:
+        """Batched forward capturing the full residual per layer, per row.
+
+        Left-padding + position_ids remap keep each row's activations identical
+        to its single-sample run (logit_lens precedent).
+
+        Returns:
+            dict: layer_idx → [B, seq_len, d_model] float32 CPU.
+        """
+        cache: Dict[int, torch.Tensor] = {}
+
+        def make_hook(layer_idx: int):
+            def hook(module, inp, output):
+                tensor = output[0] if isinstance(output, tuple) else output
+                with torch.inference_mode():
+                    cache[layer_idx] = tensor.detach().float().cpu()  # [B, seq, d]
 
             return hook
 
@@ -373,27 +414,22 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         accum_count: Dict[int, torch.Tensor] = {layer: None for layer in layers}
 
         print(f"\nPhase 1: vocabulary probing over {len(self.histo_vocab)} terms …")
-        for term in tqdm(self.histo_vocab, desc="Vocab probe"):
+
+        def process_term(term: str) -> None:
+            """Single-term accumulation (per-row SAE encode)."""
             prompt = f"{self.vocab_context_prefix} {term}{self.answer_cue}"
             tokens = self._tokenize(tokenizer, prompt, device)
             input_ids = tokens["input_ids"][0]
-
             term_positions = self._term_token_positions(input_ids, tokenizer, term)
             if not term_positions:
-                # Fallback: use all non-special token positions.
                 term_positions = list(range(len(input_ids)))
-
             residuals = self._extract_residuals(backend, tokens, layers)
-
             for layer_idx, resid in residuals.items():
-                # resid: [seq_len, d_model]  (CPU float32)
                 sae = saes[layer_idx]
                 term_resid = resid[term_positions]  # [n_toks, d_model]
                 with torch.inference_mode():
                     features = sae.encode(term_resid.to(sae.w_enc.device))
-                    # mean over term tokens → [d_sae] (kept on GPU)
                     mean_acts = features.mean(dim=0)
-
                 if accum_sum[layer_idx] is None:
                     accum_sum[layer_idx] = torch.zeros_like(mean_acts)
                     accum_count[layer_idx] = torch.zeros_like(mean_acts)
@@ -401,6 +437,45 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                 if pos.any():
                     accum_sum[layer_idx] = accum_sum[layer_idx] + mean_acts.masked_fill(~pos, 0.0)
                     accum_count[layer_idx] = accum_count[layer_idx] + pos.to(mean_acts.dtype)
+
+        # Batch the per-term forwards into chunks (left-pad + position_ids remap),
+        # then SAE-encode each row at its own (ragged) term positions. The batched
+        # forward is bit-identical to N sequential forwards for each row.
+        batch_size = max(1, self.batch_size or 1)
+        for start in tqdm(range(0, len(self.histo_vocab), batch_size), desc="Vocab probe"):
+            chunk = self.histo_vocab[start : start + batch_size]
+            if len(chunk) == 1:
+                process_term(chunk[0])
+                continue
+            prompts = [f"{self.vocab_context_prefix} {term}{self.answer_cue}" for term in chunk]
+            tokens = self._tokenize_batch(tokenizer, prompts, device)
+            try:
+                residuals = self._extract_residuals_batch(backend, tokens, layers)
+            except (ValueError, KeyError, RuntimeError, IndexError, TypeError):
+                # Fall back to per-term on batch failure (e.g. OOM).
+                for term in chunk:
+                    process_term(term)
+                continue
+            input_ids_b = tokens["input_ids"].cpu()
+            for row, term in enumerate(chunk):
+                term_positions = self._term_token_positions(input_ids_b[row], tokenizer, term)
+                if not term_positions:
+                    term_positions = list(range(len(input_ids_b[row])))
+                for layer_idx, resid_b in residuals.items():
+                    sae = saes[layer_idx]
+                    term_resid = resid_b[row][term_positions]  # [n_toks, d_model]
+                    with torch.inference_mode():
+                        features = sae.encode(term_resid.to(sae.w_enc.device))
+                        mean_acts = features.mean(dim=0)
+                    if accum_sum[layer_idx] is None:
+                        accum_sum[layer_idx] = torch.zeros_like(mean_acts)
+                        accum_count[layer_idx] = torch.zeros_like(mean_acts)
+                    pos = mean_acts > 0
+                    if pos.any():
+                        accum_sum[layer_idx] = accum_sum[layer_idx] + mean_acts.masked_fill(
+                            ~pos, 0.0
+                        )
+                        accum_count[layer_idx] = accum_count[layer_idx] + pos.to(mean_acts.dtype)
 
         # Aggregate: mean activation per feature (0 if never fired).
         histo_scores: Dict[int, Dict[int, float]] = {}
