@@ -226,6 +226,45 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
 
         return cache
 
+    def _extract_last_residuals_batch(
+        self,
+        backend: InferenceBackend,
+        tokens: Dict[str, torch.Tensor],
+        layers: List[int],
+    ) -> Dict[int, torch.Tensor]:
+        """Batched forward capturing the last-token residual per row.
+
+        Left-padding + position_ids remap keep each row's last-token residual
+        identical to its single-sample run (logit_lens precedent).
+
+        Returns:
+            dict: layer_idx → [B, d_model] float32 CPU (per-row last token).
+        """
+        cache: Dict[int, torch.Tensor] = {}
+
+        def make_hook(layer_idx: int):
+            def hook(module, inp, output):
+                tensor = output[0] if isinstance(output, tuple) else output
+                with torch.inference_mode():
+                    cache[layer_idx] = tensor[:, -1, :].detach().float().cpu()  # [B, d]
+
+            return hook
+
+        handles = []
+        for layer_idx in layers:
+            if layer_idx < backend.hook_manager.num_layers:
+                mod = backend.hook_manager.get_residual_module(layer_idx)
+                handles.append(mod.register_forward_hook(make_hook(layer_idx)))
+
+        try:
+            with torch.inference_mode():
+                backend._model(**tokens)
+        finally:
+            for h in handles:
+                h.remove()
+
+        return cache
+
     # ------------------------------------------------------------------
     # Token-position helpers
     # ------------------------------------------------------------------
@@ -274,6 +313,29 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
             truncation=True,
             max_length=self.max_input_tokens,
         ).to(device)
+
+    def _tokenize_batch(self, tokenizer, texts: List[str], device: str) -> Dict[str, torch.Tensor]:
+        """Left-pad a batch with position_ids remap (logit_lens precedent)."""
+        orig_side = tokenizer.padding_side
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        try:
+            tokens = tokenizer(
+                texts,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.max_input_tokens,
+                padding=True,
+            ).to(device)
+        finally:
+            tokenizer.padding_side = orig_side
+
+        attention_mask = tokens["attention_mask"]
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+        tokens["position_ids"] = position_ids
+        return tokens
 
     # ------------------------------------------------------------------
     # Phase 1: vocabulary probing
@@ -412,28 +474,37 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
 
         print(f"\nPhase 2: few-shot contrast over {len(samples)} samples …")
         for sample in tqdm(samples, desc="Few-shot contrast"):
-            for condition, few_shot_flag in [("few_shot", True), ("zero_shot", False)]:
-                try:
-                    prompt_str = self._build_prompt(
-                        prompt_strategy, sample.text, sample.metadata or {}, few_shot_flag
+            # Build both conditions up front; if either prompt fails, skip sample.
+            prompts = []
+            try:
+                for condition, few_shot_flag in [("few_shot", True), ("zero_shot", False)]:
+                    prompts.append(
+                        self._build_prompt(
+                            prompt_strategy, sample.text, sample.metadata or {}, few_shot_flag
+                        )
                     )
-                except Exception as exc:
-                    tqdm.write(f"  [skip] sample {sample.idx} prompt ({condition}): {exc}")
-                    continue
+            except Exception as exc:
+                tqdm.write(f"  [skip] sample {sample.idx} prompt: {exc}")
+                continue
 
-                tokens = self._tokenize(tokenizer, prompt_str, device)
-                residuals = self._extract_residuals(backend, tokens, layers)
+            try:
+                # Batch both conditions into ONE forward (2 rows, left-pad).
+                tokens = self._tokenize_batch(tokenizer, prompts, device)
+                residuals = self._extract_last_residuals_batch(backend, tokens, layers)
+            except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
+                tqdm.write(f"  [skip] sample {sample.idx} forward: {exc}")
+                continue
 
-                for layer_idx, resid in residuals.items():
-                    # Use last-token residual — position before the answer letter.
-                    last_resid = resid[-1].unsqueeze(0)  # [1, d_model]
-                    sae = saes[layer_idx]
-                    with torch.inference_mode():
-                        features = sae.encode(last_resid.to(sae.w_enc.device))
-                        feat_acts = features[0].cpu()  # [d_sae]
+            for layer_idx, last_resids in residuals.items():
+                # last_resids: [2, d_model] (few_shot row 0, zero_shot row 1)
+                sae = saes[layer_idx]
+                with torch.inference_mode():
+                    features = sae.encode(last_resids.to(sae.w_enc.device))  # [2, d_sae]
+                    feat_acts = features.cpu()
 
+                for cond_row, condition in [(0, "few_shot"), (1, "zero_shot")]:
                     for feat_idx in top_features[layer_idx]:
-                        val = float(feat_acts[feat_idx].item())
+                        val = float(feat_acts[cond_row, feat_idx].item())
                         contrast[layer_idx][feat_idx][condition].append(val)
 
         return contrast

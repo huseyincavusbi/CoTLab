@@ -117,4 +117,4 @@ jobs:
           uv pip install .
 
       - name: Run integration tests
-        run: uv run pytest tests/test_experiment_docs.py tests/test_smoke_gpt2.py tests/test_equivalence_steering.py tests/test_equivalence_heads.py tests/test_equivalence_layer_patch.py tests/test_equivalence_cett_merge.py tests/test_equivalence_mean_pool.py tests/test_equivalence_ablation.py tests/test_equivalence_jlens.py tests/test_equivalence_full_layer.py tests/test_equivalence_multi_head.py tests/test_equivalence_composite_shift.py tests/test_equivalence_residual_norm.py -v --tb=short
+        run: uv run pytest tests/test_experiment_docs.py tests/test_smoke_gpt2.py tests/test_equivalence_steering.py tests/test_equivalence_heads.py tests/test_equivalence_layer_patch.py tests/test_equivalence_cett_merge.py tests/test_equivalence_mean_pool.py tests/test_equivalence_ablation.py tests/test_equivalence_jlens.py tests/test_equivalence_full_layer.py tests/test_equivalence_multi_head.py tests/test_equivalence_composite_shift.py tests/test_equivalence_residual_norm.py tests/test_equivalence_sae_phase2.py -v --tb=short
