@@ -300,8 +300,11 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         device = backend.device
 
         # Dense accumulators: layer → [d_sae] sum/count of positive activations.
-        # Final mean = sum/count is identical to the per-feature list average
-        # the loop version produced (same values, same reduction order).
+        # Final mean = sum/count matches the per-feature list average the loop
+        # version produced, but accumulates in float32 on GPU rather than Python
+        # floats, so scores agree to ~1e-7 relative float noise (APPROXIMATE at
+        # float level, exact for the set of firing features and top-K ordering
+        # except on ties closer than ~1e-7).
         accum_sum: Dict[int, torch.Tensor] = {layer: None for layer in layers}
         accum_count: Dict[int, torch.Tensor] = {layer: None for layer in layers}
 

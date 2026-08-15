@@ -318,6 +318,8 @@ class ActivationPatchingExperiment(BaseExperiment):
         Returns [B, vocab_size] float32 CPU logits at the last token.
         """
         B = len(target_layers)
+        if B == 0:
+            raise ValueError("target_layers must be non-empty for a batched patch forward")
         model_dtype = next(backend._model.parameters()).dtype
         batch_tokens = {k: v.expand(B, -1) for k, v in tokens.items()}
 
@@ -953,7 +955,7 @@ class ActivationPatchingExperiment(BaseExperiment):
 
         samples = dataset.sample(self.num_samples, seed=self.seed)
         n = len(samples)
-        print(f"Samples: {n}  (each requires {len(target_layers) + 2} forward passes)\n")
+        print(f"Samples: {n}  (each requires 3 forward passes: clean, corrupt, batched sweep)\n")
 
         # Per-layer effect accumulators
         layer_effects: Dict[int, List[float]] = {lid: [] for lid in target_layers}
@@ -1024,30 +1026,56 @@ class ActivationPatchingExperiment(BaseExperiment):
             sample_layer_effects: Dict[int, float] = {}
 
             # Step 3 — patching sweep over layers, batched into a single forward
-            # (one row per target layer, each patching a different layer).
+            # (one row per target layer, each patching a different layer). On
+            # failure (e.g. OOM on a large batch) fall back to the sequential
+            # per-layer path so a single failing layer cannot drop the sample.
             present_layers = [layer for layer in target_layers if layer in act_cache]
-            try:
-                logits_patch_batch = self._forward_patched_batch(
-                    backend, corr_tokens, present_layers, act_cache
-                )
-            except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
-                tqdm.write(f"  [skip] sample {sample.idx} patched sweep: {exc}")
-                torch.cuda.empty_cache()
-                logits_patch_batch = None
+            if not present_layers:
+                sample_layer_effects = {}
+            else:
+                try:
+                    logits_patch_batch = self._forward_patched_batch(
+                        backend, corr_tokens, present_layers, act_cache
+                    )
+                    patched_logits_by_layer = {
+                        layer: logits_patch_batch[row] for row, layer in enumerate(present_layers)
+                    }
+                except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
+                    tqdm.write(
+                        f"  [warn] sample {sample.idx} batched sweep failed, "
+                        f"falling back to sequential: {type(exc).__name__}: {exc}"
+                    )
+                    torch.cuda.empty_cache()
+                    patched_logits_by_layer = {}
+                    for layer in present_layers:
+                        try:
+                            logits_patch = self._forward_patched(
+                                backend, corr_tokens, layer, act_cache[layer]
+                            )
+                            patched_logits_by_layer[layer] = logits_patch
+                        except (
+                            ValueError,
+                            KeyError,
+                            RuntimeError,
+                            IndexError,
+                            TypeError,
+                        ) as layer_exc:
+                            tqdm.write(
+                                f"  [skip] sample {sample.idx} layer {layer}: "
+                                f"{type(layer_exc).__name__}: {layer_exc}"
+                            )
 
-            for row, layer_idx in enumerate(present_layers):
-                if logits_patch_batch is None:
-                    continue
-                patch_logit = float(logits_patch_batch[row, clean_tok_id].item())
-                eps = 1e-6
-                if abs(denom) < eps:
-                    effect = 0.0
-                else:
-                    effect = (patch_logit - corr_logit) / denom
-                # Clip to [-1, 2] to handle outliers
-                effect = max(-1.0, min(2.0, effect))
-                layer_effects[layer_idx].append(effect)
-                sample_layer_effects[layer_idx] = round(effect, 4)
+                for layer_idx, logits_patch in patched_logits_by_layer.items():
+                    patch_logit = float(logits_patch[clean_tok_id].item())
+                    eps = 1e-6
+                    if abs(denom) < eps:
+                        effect = 0.0
+                    else:
+                        effect = (patch_logit - corr_logit) / denom
+                    # Clip to [-1, 2] to handle outliers
+                    effect = max(-1.0, min(2.0, effect))
+                    layer_effects[layer_idx].append(effect)
+                    sample_layer_effects[layer_idx] = round(effect, 4)
 
             per_sample_results.append(
                 {

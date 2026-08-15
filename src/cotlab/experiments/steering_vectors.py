@@ -139,10 +139,31 @@ class SteeringVectorsExperiment(BaseExperiment):
         print("STEERING VECTOR SWEEP ACROSS ALL LAYERS")
         print("=" * 60)
 
+        if not self.target_layers:
+            print("No target layers to analyze.")
+            return ExperimentResult(
+                experiment_name=self.name,
+                model_name=backend.model_name,
+                prompt_strategy="sycophantic",
+                metrics={
+                    "baseline_effect": baseline_effect,
+                    "num_layers_analyzed": 0,
+                    "top_5_layers": [],
+                    "best_layer": 0,
+                    "best_effect_range": 0.0,
+                },
+                raw_outputs=[],
+                metadata={
+                    "steering_strengths": self.steering_strengths,
+                    "suggested_diagnosis": self.suggested_diagnosis,
+                },
+            )
+
+        model_dtype = next(model.parameters()).dtype
         strengths_t = torch.tensor(
             self.steering_strengths,
             device=backend.device,
-            dtype=clean_acts[self.target_layers[0]].dtype,
+            dtype=model_dtype,
         )
         B = len(self.steering_strengths)
         # Replicate the clean prompt across the batch; rows share one forward.

@@ -235,6 +235,7 @@ class TransformersBackend(InferenceBackend):
         # Batch in chunks of batch_size rows.
         outputs: List[GenerationOutput] = []
         orig_side = self._tokenizer.padding_side
+        orig_pad = self._tokenizer.pad_token_id
         self._tokenizer.padding_side = "left"
         if self._tokenizer.pad_token_id is None:
             self._tokenizer.pad_token_id = self._tokenizer.eos_token_id
@@ -269,6 +270,7 @@ class TransformersBackend(InferenceBackend):
                     )
         finally:
             self._tokenizer.padding_side = orig_side
+            self._tokenizer.pad_token_id = orig_pad
 
         return outputs
 
