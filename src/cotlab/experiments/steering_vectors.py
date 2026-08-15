@@ -104,43 +104,64 @@ class SteeringVectorsExperiment(BaseExperiment):
         all_layer_results = []
         layer_effects = {}
 
+        # Extract clean and corrupted activations for ALL target layers in two
+        # forwards (one per prompt), hooking every residual module at once.
+        # Each layer's activation is captured at the same hook point it would
+        # see in the sequential per-layer path, so this is exact.
+        clean_acts: dict = {}
+        corr_acts: dict = {}
+
+        def make_cache_hook(storage: dict, layer_idx: int):
+            def hook(module, input, output):
+                storage[layer_idx] = output.detach().clone()
+                return output
+
+            return hook
+
+        def capture(acts: dict, prompt_tokens) -> None:
+            handles = [
+                backend.hook_manager.get_residual_module(layer_idx).register_forward_hook(
+                    make_cache_hook(acts, layer_idx)
+                )
+                for layer_idx in self.target_layers
+            ]
+            try:
+                with torch.inference_mode():
+                    _ = model(**prompt_tokens).logits
+            finally:
+                for h in handles:
+                    h.remove()
+
+        capture(clean_acts, clean_tokens)
+        capture(corr_acts, corr_tokens)
+
         print("\n" + "=" * 60)
         print("STEERING VECTOR SWEEP ACROSS ALL LAYERS")
         print("=" * 60)
 
+        strengths_t = torch.tensor(
+            self.steering_strengths,
+            device=backend.device,
+            dtype=clean_acts[self.target_layers[0]].dtype,
+        )
+        B = len(self.steering_strengths)
+        # Replicate the clean prompt across the batch; rows share one forward.
+        batch_tokens = {k: v.expand(B, -1) for k, v in clean_tokens.items()}
+
         for layer_idx in self.target_layers:
-            # Extract activations for this layer
-            def make_cache_hook(storage: list):
-                def hook(module, input, output):
-                    storage.append(output.detach().clone())
-                    return output
-
-                return hook
-
+            clean_act = clean_acts[layer_idx]
+            corr_act = corr_acts[layer_idx]
             residual_module = backend.hook_manager.get_residual_module(layer_idx)
-
-            # Get clean activation
-            clean_storage: List[torch.Tensor] = []
-            handle = residual_module.register_forward_hook(make_cache_hook(clean_storage))
-            with torch.inference_mode():
-                _ = model(**clean_tokens).logits
-            handle.remove()
-            clean_act = clean_storage[0]
-
-            # Get corrupted activation
-            corr_storage: List[torch.Tensor] = []
-            handle = residual_module.register_forward_hook(make_cache_hook(corr_storage))
-            with torch.inference_mode():
-                _ = model(**corr_tokens).logits
-            handle.remove()
-            corr_act = corr_storage[0]
 
             # Compute steering vector
             steering_vector = corr_act[:, -1, :] - clean_act[:, -1, :]
             vector_norm = torch.norm(steering_vector).item()
 
-            # Test ALL steering strengths for this layer
-            def make_steer_hook(vector, mult):
+            # Test ALL steering strengths for this layer in ONE batched forward:
+            # each batch row applies its own multiplier via a per-row hook.
+            def make_batch_steer_hook(vector, strengths):
+                mult = strengths.view(B, 1)
+
                 def hook(module, input, output):
                     steered = output.clone()
                     steered[:, -1, :] = steered[:, -1, :] + mult * vector
@@ -148,20 +169,20 @@ class SteeringVectorsExperiment(BaseExperiment):
 
                 return hook
 
+            handle = residual_module.register_forward_hook(
+                make_batch_steer_hook(steering_vector, strengths_t)
+            )
             layer_strength_results = []
             best_anti = baseline_effect
             best_pro = baseline_effect
-
-            for strength in self.steering_strengths:
-                handle = residual_module.register_forward_hook(
-                    make_steer_hook(steering_vector, strength)
-                )
-                try:
-                    with torch.inference_mode():
-                        steered_logits = model(**clean_tokens).logits
-                    effect = (
-                        steered_logits[0, -1, token_you] - steered_logits[0, -1, token_acute]
-                    ).item()
+            try:
+                with torch.inference_mode():
+                    steered_logits = model(**batch_tokens).logits
+                effects = (
+                    steered_logits[:, -1, token_you] - steered_logits[:, -1, token_acute]
+                ).cpu()
+                for strength, effect in zip(self.steering_strengths, effects):
+                    effect = effect.item()
                     change = effect - baseline_effect
                     layer_strength_results.append(
                         {
@@ -174,8 +195,8 @@ class SteeringVectorsExperiment(BaseExperiment):
                         best_anti = effect
                     if effect > best_pro:
                         best_pro = effect
-                finally:
-                    handle.remove()
+            finally:
+                handle.remove()
 
             effect_range = best_pro - best_anti
 
