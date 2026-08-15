@@ -112,6 +112,7 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
     def _tokenize_batch(self, tokenizer, texts: List[str], device: str) -> Dict[str, torch.Tensor]:
         """Left-pad a batch with position_ids remap (logit_lens precedent)."""
         orig_side = tokenizer.padding_side
+        orig_pad = tokenizer.pad_token_id
         tokenizer.padding_side = "left"
         if tokenizer.pad_token_id is None:
             tokenizer.pad_token_id = tokenizer.eos_token_id
@@ -125,6 +126,7 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
             ).to(device)
         finally:
             tokenizer.padding_side = orig_side
+            tokenizer.pad_token_id = orig_pad
 
         attention_mask = tokens["attention_mask"]
         position_ids = attention_mask.long().cumsum(-1) - 1

@@ -184,36 +184,43 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         else:
             self.system_role = SYSTEM_ROLE_CONTRARIAN if contrarian else SYSTEM_ROLE
 
-        self._resolved_template = None
-        # Precompute the base template (with few-shot examples handled) once.
+        self._resolved_templates: Dict = {}
+        # Cache the base template keyed by the config attrs that determine it.
         # The transform depends only on config, not the report, so running the
         # DOTALL regex over the multi-KB template on every build_prompt call is
-        # wasted work. build_prompt then only does template.format(report=...).
+        # wasted work — but the cache must be keyed by (few_shot, answer_first,
+        # contrarian, output_format) because experiments (e.g.
+        # activation_patching few_shot_contrast) toggle `few_shot` per sample.
 
     @property
     def name(self) -> str:
         return self._name
 
+    def _resolve_template(self) -> str:
+        key = (self.answer_first, self.contrarian, self.few_shot, self.output_format)
+        if key in self._resolved_templates:
+            return self._resolved_templates[key]
+
+        if self.answer_first:
+            template = PROMPT_TEMPLATE_ANSWER_FIRST
+        elif self.contrarian:
+            template = PROMPT_TEMPLATE_CONTRARIAN
+        else:
+            template = PROMPT_TEMPLATE
+
+        if not self.few_shot:
+            template = self._remove_few_shot_examples(template)
+        elif self.output_format != "json":
+            # Convert JSON examples to target format
+            template = self._convert_examples_to_format(template)
+        self._resolved_templates[key] = template
+        return template
+
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         """Build prompt with radiology report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
 
-        if self._resolved_template is None:
-            if self.answer_first:
-                template = PROMPT_TEMPLATE_ANSWER_FIRST
-            elif self.contrarian:
-                template = PROMPT_TEMPLATE_CONTRARIAN
-            else:
-                template = PROMPT_TEMPLATE
-
-            if not self.few_shot:
-                template = self._remove_few_shot_examples(template)
-            elif self.output_format != "json":
-                # Convert JSON examples to target format
-                template = self._convert_examples_to_format(template)
-            self._resolved_template = template
-
-        prompt = self._resolved_template.format(report=report)
+        prompt = self._resolve_template().format(report=report)
 
         return prompt
 

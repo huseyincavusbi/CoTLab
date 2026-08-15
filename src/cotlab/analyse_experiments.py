@@ -216,6 +216,7 @@ def analyse_experiments_dir(results_dir: Path) -> list:
                 prompt = name
         except (json.JSONDecodeError, KeyError):
             # Fallback to folder name parsing
+            data = None
             parts = name.split("_")
             if len(parts) >= 2:
                 dataset = parts[0]
