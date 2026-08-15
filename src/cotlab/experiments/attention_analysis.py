@@ -258,14 +258,16 @@ class AttentionAnalysisExperiment(BaseExperiment):
                 # the attention rows (identical to the per-head loop).
                 eps = 1e-10
                 p_last = last_token_attn.float()  # (heads, seq_len)
-                head_entropies_last_token = -(p_last * torch.log(p_last + eps)).sum(dim=-1).tolist()
+                head_entropies_last_token = (
+                    (-(p_last * torch.log(p_last + eps))).sum(dim=-1).tolist()
+                )
                 p_all = sample_attn.float()  # (heads, seq_len, seq_len)
                 head_entropies_all_tokens = (
-                    -(p_all * torch.log(p_all + eps)).sum(dim=-1).mean(dim=-1).tolist()
+                    (-(p_all * torch.log(p_all + eps))).sum(dim=-1).mean(dim=-1).tolist()
                 )
                 p_last_k = last_k_tokens_attn.float()  # (heads, k, seq_len)
                 head_entropies_last_k_tokens = (
-                    -(p_last_k * torch.log(p_last_k + eps)).sum(dim=-1).mean(dim=-1).tolist()
+                    (-(p_last_k * torch.log(p_last_k + eps))).sum(dim=-1).mean(dim=-1).tolist()
                 )
 
                 avg_entropy_last_token = np.mean(head_entropies_last_token)
@@ -434,14 +436,14 @@ class AttentionAnalysisExperiment(BaseExperiment):
 
             eps = 1e-10
             p_last = last_token_attn.float()
-            head_entropies_last_token = -(p_last * torch.log(p_last + eps)).sum(dim=-1).tolist()
+            head_entropies_last_token = (-(p_last * torch.log(p_last + eps))).sum(dim=-1).tolist()
             p_all = all_tokens_attn.float()
             head_entropies_all_tokens = (
-                -(p_all * torch.log(p_all + eps)).sum(dim=-1).mean(dim=-1).tolist()
+                (-(p_all * torch.log(p_all + eps))).sum(dim=-1).mean(dim=-1).tolist()
             )
             p_last_k = last_k_tokens_attn.float()
             head_entropies_last_k_tokens = (
-                -(p_last_k * torch.log(p_last_k + eps)).sum(dim=-1).mean(dim=-1).tolist()
+                (-(p_last_k * torch.log(p_last_k + eps))).sum(dim=-1).mean(dim=-1).tolist()
             )
 
             avg_entropy_last_token = np.mean(head_entropies_last_token)

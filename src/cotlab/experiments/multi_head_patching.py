@@ -160,7 +160,8 @@ class MultiHeadPatchingExperiment(BaseExperiment):
         # row r patches the nested prefix top_heads[:r+1]. Each layer's hook
         # patches only the rows whose prefix includes a head at that layer.
         n_rows = len(self.top_heads)
-        batch_tokens = {k: v.expand(n_rows, -1) for k, v in clean_tokens.items()}
+        if n_rows > 0:
+            batch_tokens = {k: v.expand(n_rows, -1) for k, v in clean_tokens.items()}
         handles = []
         for layer_idx in layers_needed:
             row_to_heads: Dict[int, List[int]] = {}
@@ -178,34 +179,35 @@ class MultiHeadPatchingExperiment(BaseExperiment):
                 )
             )
 
-        patched_logits_batch = None
-        try:
-            with torch.inference_mode():
-                patched_logits_batch = model(**batch_tokens).logits
-        finally:
-            for h in handles:
-                h.remove()
+        if n_rows > 0:
+            patched_logits_batch = None
+            try:
+                with torch.inference_mode():
+                    patched_logits_batch = model(**batch_tokens).logits
+            finally:
+                for h in handles:
+                    h.remove()
 
-        last_logits = patched_logits_batch[:, -1, :]  # [n_rows, vocab]
-        effects = (last_logits[:, token_you] - last_logits[:, token_acute]).cpu()
-        top_ids = torch.argmax(last_logits, dim=-1).cpu().tolist()
+            last_logits = patched_logits_batch[:, -1, :]  # [n_rows, vocab]
+            effects = (last_logits[:, token_you] - last_logits[:, token_acute]).cpu()
+            top_ids = torch.argmax(last_logits, dim=-1).cpu().tolist()
 
-        for r, num_to_patch in enumerate(range(1, n_rows + 1)):
-            heads_to_patch = self.top_heads[:num_to_patch]
-            effect = effects[r].item()
-            top_token = tokenizer.decode([top_ids[r]])
+            for r, num_to_patch in enumerate(range(1, n_rows + 1)):
+                heads_to_patch = self.top_heads[:num_to_patch]
+                effect = effects[r].item()
+                top_token = tokenizer.decode([top_ids[r]])
 
-            # Did it flip? Effect should become more positive (toward sycophancy)
-            flipped = effect > clean_effect + 0.5  # At least 0.5 increase
+                # Did it flip? Effect should become more positive (toward sycophancy)
+                flipped = effect > clean_effect + 0.5  # At least 0.5 increase
 
-            heads_str = ", ".join(f"L{layer}H{h}" for layer, h in heads_to_patch)
-            result = CircuitResult(
-                heads=heads_to_patch, effect=effect, top_token=top_token, flipped=flipped
-            )
-            results.append(result)
+                heads_str = ", ".join(f"L{layer}H{h}" for layer, h in heads_to_patch)
+                result = CircuitResult(
+                    heads=heads_to_patch, effect=effect, top_token=top_token, flipped=flipped
+                )
+                results.append(result)
 
-            flip_marker = "YES" if flipped else "no"
-            print(f"{heads_str:<30} | {effect:>8.3f}   | {top_token:<10} | {flip_marker}")
+                flip_marker = "YES" if flipped else "no"
+                print(f"{heads_str:<30} | {effect:>8.3f}   | {top_token:<10} | {flip_marker}")
 
         print("-" * 60)
 

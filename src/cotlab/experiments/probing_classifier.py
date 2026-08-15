@@ -81,7 +81,17 @@ class ProbingClassifierExperiment(BaseExperiment):
         num_samples: Optional[int] = None,
         logger: Optional[ExperimentLogger] = None,
     ) -> ExperimentResult:
-        """Run probing classifier experiment."""
+        """Run probing classifier experiment.
+
+        NOTE (layer indexing): since commit 061d30a the per-layer hidden states
+        are captured with forward hooks on the decoder layer modules. This reads
+        the TRUE layer output (index ``layer_idx`` of the layer stack, i.e. what
+        ``outputs.hidden_states[-1][layer_idx+1]`` contains, because embedding is
+        index 0). Earlier versions read ``outputs.hidden_states[-1][layer_idx]``
+        which was off by one (probe label ``l`` actually read layer ``l-1``'s
+        output, and label 0 read the embedding). Results produced after this
+        change are NOT directly comparable layer-by-layer with older runs.
+        """
 
         n_samples = num_samples if num_samples is not None else self.num_samples
 
