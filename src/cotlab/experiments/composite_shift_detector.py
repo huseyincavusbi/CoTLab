@@ -87,6 +87,7 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
         self.answer_cue = answer_cue
         self.mcq_letters = mcq_letters or list("ABCDEFGHIJ")
         self.batch_size = batch_size
+        self._answer_tok_cache: Dict[str, Optional[int]] = {}
 
     @property
     def name(self) -> str:
@@ -147,11 +148,18 @@ class CompositeShiftDetectorExperiment(BaseExperiment):
         if label is None:
             return None
         label_str = str(label).strip()
+        if not label_str:
+            return None
+        if label_str in self._answer_tok_cache:
+            return self._answer_tok_cache[label_str]
+        result = None
         for prefix in (" ", ""):
             ids = tokenizer.encode(prefix + label_str, add_special_tokens=False)
             if ids:
-                return ids[0]
-        return None
+                result = ids[0]
+                break
+        self._answer_tok_cache[label_str] = result
+        return result
 
     # ------------------------------------------------------------------
     # Single forward pass: residual norm + L3 attention entropy

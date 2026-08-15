@@ -639,6 +639,7 @@ class JacobianLensExperiment(BaseExperiment):
         self.seed = seed
         self.answer_cue = answer_cue
         self.lrp = lrp
+        self._correct_tok_cache: Dict[str, set] = {}
         self.steer_token = steer_token
         self.steer_alpha = steer_alpha
         self.steer_positions = steer_positions
@@ -672,25 +673,28 @@ class JacobianLensExperiment(BaseExperiment):
                 continue
         return None
 
-    @staticmethod
-    def _correct_token_ids(tokenizer, label) -> set:
+    def _correct_token_ids(self, tokenizer, label) -> set:
         if label is None:
             return set()
         if isinstance(label, bool):
             label_str = "Yes" if label else "No"
         else:
             label_str = str(label).strip()
+        if label_str in self._correct_tok_cache:
+            return self._correct_tok_cache[label_str]
         candidates = set()
         if len(label_str) == 1 and label_str.upper() in "ABCDEFG":
             for prefix in (" ", "", "\n", " \n"):
                 ids = tokenizer.encode(prefix + label_str.upper(), add_special_tokens=False)
                 if ids:
                     candidates.add(ids[-1])
+            self._correct_tok_cache[label_str] = candidates
             return candidates
         for prefix in (" ", ""):
             ids = tokenizer.encode(prefix + label_str, add_special_tokens=False)
             if ids:
                 candidates.add(ids[0])
+        self._correct_tok_cache[label_str] = candidates
         return candidates
 
     def _tokenize_batch(self, tokenizer, texts: List[str], device: str) -> Dict[str, torch.Tensor]:
@@ -1386,9 +1390,12 @@ class JacobianLensExperiment(BaseExperiment):
                 # by inner product with h (per row).
                 all_scores = h @ wu_j.T  # [B, vocab]
                 top_k_ids = torch.topk(all_scores, self.ablate_top_n, dim=-1).indices  # [B, k]
+                # Gather all k direction vectors at once: [B, k, d_model].
+                # The sequential removal loop below must stay sequential (each
+                # projection changes h for the next, Gram-Schmidt semantics).
+                dirs = vocab[top_k_ids] @ J  # [B, k, d_model]
                 for j in range(self.ablate_top_n):
-                    v = vocab[top_k_ids[:, j]] @ J  # [B, d_model]
-                    v_norm = v / (torch.norm(v, dim=-1, keepdim=True) + 1e-8)
+                    v_norm = dirs[:, j] / (torch.norm(dirs[:, j], dim=-1, keepdim=True) + 1e-8)
                     h = h - torch.bmm(v_norm.unsqueeze(1), h.unsqueeze(-1)).squeeze(-1) * v_norm
                 t[:, -1, :] = h.to(t.dtype)
                 return (t,) + rest if rest else t
@@ -1488,7 +1495,7 @@ class JacobianLensExperiment(BaseExperiment):
         ]
         batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
 
-        with torch.inference_mode():
+        with torch.no_grad():
             out = model(
                 input_ids=batch_tokens["input_ids"],
                 attention_mask=batch_tokens["attention_mask"],
@@ -1513,11 +1520,13 @@ class JacobianLensExperiment(BaseExperiment):
                 for row in range(len(samples))
             ]
 
-            # Non-J-space: project out top-k directions (per row, batched)
+            # Non-J-space: project out top-k directions (per row, batched).
+            # Gather all k directions at once; removal stays sequential
+            # (Gram-Schmidt semantics).
+            dirs = vocab[top_k_ids] @ J  # [B, k, d_model]
             h_nonj = h.clone()
             for j in range(self.top_k):
-                v = vocab[top_k_ids[:, j]] @ J  # [B, d_model]
-                v_norm = v / (torch.norm(v, dim=-1, keepdim=True) + 1e-8)
+                v_norm = dirs[:, j] / (torch.norm(dirs[:, j], dim=-1, keepdim=True) + 1e-8)
                 h_nonj = (
                     h_nonj
                     - torch.bmm(v_norm.unsqueeze(1), h_nonj.unsqueeze(-1)).squeeze(-1) * v_norm

@@ -87,6 +87,7 @@ class ResidualNormOODExperiment(BaseExperiment):
         self.mcq_letters = mcq_letters or _MCQ_LETTERS
         self.threshold_percentile_step = threshold_percentile_step
         self.batch_size = batch_size
+        self._answer_tok_cache: Dict[str, Optional[int]] = {}
 
     @property
     def name(self) -> str:
@@ -146,15 +147,22 @@ class ResidualNormOODExperiment(BaseExperiment):
         return sorted(ids)
 
     def _answer_token_id(self, tokenizer, label) -> Optional[int]:
-        """Return the first token id of the label string."""
+        """Return the first token id of the label string (memoized per label)."""
         if label is None:
             return None
         label_str = str(label).strip()
+        if not label_str:
+            return None
+        if label_str in self._answer_tok_cache:
+            return self._answer_tok_cache[label_str]
+        result = None
         for prefix in (" ", ""):
             ids = tokenizer.encode(prefix + label_str, add_special_tokens=False)
             if ids:
-                return ids[0]
-        return None
+                result = ids[0]
+                break
+        self._answer_tok_cache[label_str] = result
+        return result
 
     def _forward(
         self,

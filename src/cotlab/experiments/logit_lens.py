@@ -62,6 +62,7 @@ class LogitLensExperiment(BaseExperiment):
         self.answer_cue = answer_cue  # appended to prompt so last token precedes answer letter
         self.batch_size = max(1, int(batch_size))
         self.question = question  # legacy fallback
+        self._correct_tok_cache: Dict[str, set] = {}
 
     @property
     def name(self) -> str:
@@ -101,6 +102,9 @@ class LogitLensExperiment(BaseExperiment):
         else:
             label_str = str(label).strip()
 
+        if label_str in self._correct_tok_cache:
+            return self._correct_tok_cache[label_str]
+
         candidates = set()
 
         # MCQ single-letter
@@ -110,6 +114,7 @@ class LogitLensExperiment(BaseExperiment):
                 ids = tokenizer.encode(prefix + upper, add_special_tokens=False)
                 if ids:
                     candidates.add(ids[-1])
+            self._correct_tok_cache[label_str] = candidates
             return candidates
 
         # Free-text / Yes/No — match first token with/without leading space
@@ -117,6 +122,7 @@ class LogitLensExperiment(BaseExperiment):
             ids = tokenizer.encode(prefix + label_str, add_special_tokens=False)
             if ids:
                 candidates.add(ids[0])
+        self._correct_tok_cache[label_str] = candidates
         return candidates
 
     def _run_batch(
