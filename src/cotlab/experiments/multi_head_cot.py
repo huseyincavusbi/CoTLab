@@ -171,7 +171,8 @@ class MultiHeadCoTExperiment(BaseExperiment):
         # head from that layer. Rows are isolated by the causal attention mask
         # (eval, no dropout), so each row reproduces its sequential forward.
         B = len(test_sizes)
-        batch_tokens = {k: v.expand(B, -1) for k, v in direct_tokens.items()}
+        if B > 0:
+            batch_tokens = {k: v.expand(B, -1) for k, v in direct_tokens.items()}
         handles = []
         for layer_idx in self.target_layers:
             # Row -> list of heads at this layer included in prefix all_heads[:test_sizes[r]]
@@ -191,14 +192,18 @@ class MultiHeadCoTExperiment(BaseExperiment):
             )
 
         patched_logits_batch = None
-        try:
-            with torch.inference_mode():
-                patched_logits_batch = model(**batch_tokens).logits
-        finally:
-            for h in handles:
-                h.remove()
+        if B > 0:
+            try:
+                with torch.inference_mode():
+                    patched_logits_batch = model(**batch_tokens).logits
+            finally:
+                for h in handles:
+                    h.remove()
 
-        patched_tops = torch.argmax(patched_logits_batch[:, -1, :], dim=-1).cpu().tolist()
+        if B > 0:
+            patched_tops = torch.argmax(patched_logits_batch[:, -1, :], dim=-1).cpu().tolist()
+        else:
+            patched_tops = []
         for r, num_heads_to_patch in enumerate(test_sizes):
             heads_to_patch = all_heads[:num_heads_to_patch]
             patched_top = patched_tops[r]
