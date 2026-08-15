@@ -163,6 +163,9 @@ class ActivationPatcher:
         target_layers = layers if layers is not None else clean_cache.layers
         results = {}
 
+        clean_cpu = clean_logits.cpu()
+        corr_cpu = corrupted_logits.cpu()
+
         for layer_idx in target_layers:
             # Run forward pass with patching on this layer
             patched_logits = self._forward_with_patch(corrupted_prompt, clean_cache, layer_idx)
@@ -172,8 +175,8 @@ class ActivationPatcher:
 
             results[layer_idx] = ForwardPatchResult(
                 layer_idx=layer_idx,
-                clean_logits=clean_logits.cpu(),
-                corrupted_logits=corrupted_logits.cpu(),
+                clean_logits=clean_cpu,
+                corrupted_logits=corr_cpu,
                 patched_logits=patched_logits.cpu(),
                 effect_score=effect,
             )
@@ -223,6 +226,9 @@ class ActivationPatcher:
         results: Dict[Tuple[int, int], ForwardPatchResult] = {}
         layers_to_sweep = layers_to_sweep if layers_to_sweep is not None else clean_cache.layers
 
+        clean_cpu = clean_logits.cpu()
+        corr_cpu = corrupted_logits.cpu()
+
         for layer_idx in layers_to_sweep:
             heads = list(target_heads.get(layer_idx, [])) if target_heads else list(head_indices)
             for head_idx in heads:
@@ -236,8 +242,8 @@ class ActivationPatcher:
 
                 results[(layer_idx, head_idx)] = ForwardPatchResult(
                     layer_idx=layer_idx,
-                    clean_logits=clean_logits.cpu(),
-                    corrupted_logits=corrupted_logits.cpu(),
+                    clean_logits=clean_cpu,
+                    corrupted_logits=corr_cpu,
                     patched_logits=patched_logits.cpu(),
                     effect_score=effect,
                 )

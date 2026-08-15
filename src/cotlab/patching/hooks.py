@@ -492,9 +492,14 @@ class HookManager:
                     patched[:, -1, :] = source_activation
             else:
                 patched = hidden_states.clone()
-                for pos in token_positions:
-                    if pos < target_len and source_activation.dim() == 3 and pos < source_len:
-                        patched[:, pos : pos + 1, :] = source_activation[:, pos : pos + 1, :]
+                if source_activation.dim() == 3:
+                    valid = [p for p in token_positions if p < target_len and p < source_len]
+                    if valid:
+                        patched[:, valid, :] = source_activation[:, valid, :]
+                else:
+                    for pos in token_positions:
+                        if pos < target_len:
+                            patched[:, pos : pos + 1, :] = source_activation.unsqueeze(1)
 
             return patched
 

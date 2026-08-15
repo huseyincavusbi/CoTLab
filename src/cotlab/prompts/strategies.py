@@ -1,5 +1,6 @@
 """Prompt strategies for different experiment types."""
 
+import functools
 import re
 from typing import Any, Dict, Optional
 
@@ -13,6 +14,7 @@ GENERIC_FEW_SHOT_EXAMPLES = [
 ]
 
 
+@functools.lru_cache(maxsize=8)
 def _build_generic_few_shot_block(num_examples: int) -> str:
     examples = GENERIC_FEW_SHOT_EXAMPLES[: max(0, num_examples)]
     if not examples:
