@@ -117,4 +117,4 @@ jobs:
           uv pip install .
 
       - name: Run integration tests
-        run: uv run pytest tests/test_experiment_docs.py -v --tb=short
+        run: uv run pytest tests/test_experiment_docs.py tests/test_smoke_gpt2.py -v --tb=short
