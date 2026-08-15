@@ -827,8 +827,6 @@ class JacobianLensExperiment(BaseExperiment):
             if layer in lens.jacobians:
                 j_preloaded[layer] = lens.jacobians[layer].to(device, dtype=torch.float32)
         layers_with_J = [layer for layer in apply_layers if layer in lens.jacobians]
-        if layers_with_J:
-            J_stack = torch.stack([j_preloaded[layer] for layer in layers_with_J])  # [L, d, d]
 
         for sample in tqdm(samples, desc="J-lens apply"):
             prompt_input = {
@@ -873,12 +871,15 @@ class JacobianLensExperiment(BaseExperiment):
                 h_stack = torch.stack(
                     [hidden_states[layer + 1][0, -1, :] for layer in valid_layers]
                 ).to(device)  # [L, d]
+                # J stack aligned to valid_layers order (robust to non-sorted or
+                # gapped source_layers; do not slice a global prefix).
+                valid_J_stack = torch.stack([j_preloaded[layer] for layer in valid_layers])
 
                 # J-lens: transport J_ℓ @ h_ℓ for all layers, then norm + lm_head.
                 # Wrapped in inference_mode like the per-layer lens.decode was.
                 with torch.inference_mode():
                     transported = torch.bmm(
-                        h_stack.unsqueeze(1), J_stack[: len(valid_layers)].transpose(-1, -2)
+                        h_stack.unsqueeze(1), valid_J_stack.transpose(-1, -2)
                     ).squeeze(1)  # [L, d]
                     if norm is not None:
                         transported = norm(transported)
