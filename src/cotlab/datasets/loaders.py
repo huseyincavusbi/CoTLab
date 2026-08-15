@@ -67,11 +67,17 @@ class BaseDataset(ABC):
             yield self[i]
 
     def sample(self, n: int, seed: int = 42) -> List[Sample]:
-        """Random sample of n items."""
+        """Random sample of n items.
+
+        Uses a local ``random.Random(seed)`` instance so the GLOBAL ``random``
+        module is not reseeded (the previous global reseed clobbered the RNG
+        stream of any downstream consumer). The MT algorithm is identical, so
+        the returned index set/order is unchanged for the same seed.
+        """
         import random
 
-        random.seed(seed)
-        indices = random.sample(range(len(self)), min(n, len(self)))
+        rng = random.Random(seed)
+        indices = rng.sample(range(len(self)), min(n, len(self)))
         return [self[i] for i in indices]
 
     def get_compatible_prompts(self) -> Optional[List[str]]:
@@ -1146,7 +1152,7 @@ class MARCDataset(BaseDataset):
         table = pq.read_table(Path(local_path))
         df = table.to_pandas()
 
-        for i, row in df.iterrows():
+        for i, row in df.to_dict("index").items():
             question_id = row.get("question_id")
             question = row.get("question", "") or ""
             options = self._coerce_options(row.get("options"))
@@ -1307,7 +1313,7 @@ class MedBulletsDataset(BaseDataset):
         table = pq.read_table(Path(local_path))
         df = table.to_pandas()
 
-        for i, row in df.iterrows():
+        for i, row in df.to_dict("index").items():
             qid = row.get("idx")
             question = row.get("question", "") or ""
             options = self._coerce_options(row.get("options"))
@@ -1648,15 +1654,14 @@ class PubHealthBenchDataset(BaseDataset):
 
         index_to_letter = {i: chr(65 + i) for i in range(26)}
 
-        for i, row in df.iterrows():
+        def clean_value(value: Any) -> Any:
+            if value is None:
+                return None
+            if isinstance(value, float) and math.isnan(value):
+                return None
+            return value
 
-            def clean_value(value: Any) -> Any:
-                if value is None:
-                    return None
-                if isinstance(value, float) and math.isnan(value):
-                    return None
-                return value
-
+        for i, row in df.to_dict("index").items():
             question = row.get("question", "")
             options_formatted = clean_value(row.get("options_formatted"))
             if not options_formatted:

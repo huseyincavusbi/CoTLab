@@ -90,7 +90,7 @@ class ExperimentLogger:
         """
         intermediate_path = self.output_dir / f"intermediate_{step}.json"
         with open(intermediate_path, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+            json.dump(data, f, default=str)
 
     def save_results(self, result: ExperimentResult, filename: str = "results.json") -> Path:
         """
@@ -120,7 +120,7 @@ class ExperimentLogger:
         }
 
         with open(output_path, "w") as f:
-            json.dump(full_result, f, indent=2, default=str)
+            json.dump(full_result, f, default=str)
 
         return output_path
 
@@ -145,7 +145,7 @@ class ExperimentLogger:
         }
 
         with open(output_path, "w") as f:
-            json.dump(summary, f, indent=2, default=str)
+            json.dump(summary, f, default=str)
 
         return output_path
 
@@ -156,6 +156,5 @@ class ExperimentLogger:
             json.dump(
                 {"samples": self._samples, "timestamp": datetime.now().isoformat()},
                 f,
-                indent=2,
                 default=str,
             )

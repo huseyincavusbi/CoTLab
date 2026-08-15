@@ -168,9 +168,14 @@ class VLLMBackend(InferenceBackend):
         temperature: float = 0.7,
         top_p: float = 0.9,
         system_prompt: Optional[str] = None,
+        seed: Optional[int] = None,
         **kwargs,
     ) -> List[GenerationOutput]:
-        """Generate from multiple prompts efficiently."""
+        """Generate from multiple prompts efficiently.
+
+        ``seed`` (when provided) is passed to ``SamplingParams`` so sampling is
+        reproducible per request; greedy runs (temperature=0) are unaffected.
+        """
         from vllm import SamplingParams
 
         if self._model is None:
@@ -178,9 +183,18 @@ class VLLMBackend(InferenceBackend):
 
         prompts = self._apply_system_prompt(prompts, system_prompt)
 
-        sampling_params = SamplingParams(
-            max_tokens=max_new_tokens, temperature=temperature, top_p=top_p, **kwargs
-        )
+        if seed is not None:
+            sampling_params = SamplingParams(
+                max_tokens=max_new_tokens,
+                temperature=temperature,
+                top_p=top_p,
+                seed=seed,
+                **kwargs,
+            )
+        else:
+            sampling_params = SamplingParams(
+                max_tokens=max_new_tokens, temperature=temperature, top_p=top_p, **kwargs
+            )
 
         outputs = self._model.generate(prompts, sampling_params)
 

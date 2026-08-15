@@ -155,6 +155,10 @@ class ActivationPatchingExperiment(BaseExperiment):
         self.patching = patching or {}
         self.token_group_contrast_layer = int(token_group_contrast_layer)
         self.token_group_mode = token_group_mode
+        # Memoize token-id lookups: encode() is a pure function of the tokenizer
+        # vocab (stable within a run), so recomputing per sample is wasted work.
+        self._answer_tok_cache: Dict[str, Optional[int]] = {}
+        self._answer_letter_cache: Optional[List[int]] = None
 
     @property
     def name(self) -> str:
@@ -202,21 +206,29 @@ class ActivationPatchingExperiment(BaseExperiment):
         label_str = str(label).strip()
         if not label_str:
             return None
+        if label_str in self._answer_tok_cache:
+            return self._answer_tok_cache[label_str]
+        result = None
         for prefix in (" ", ""):
             ids = tokenizer.encode(prefix + label_str, add_special_tokens=False)
             if ids:
-                return ids[0]
-        return None
+                result = ids[0]
+                break
+        self._answer_tok_cache[label_str] = result
+        return result
 
     def _answer_letter_token_ids(self, tokenizer) -> List[int]:
         """Collect all plausible token ids for MCQ answer letters A-J."""
+        if self._answer_letter_cache is not None:
+            return self._answer_letter_cache
         ids = set()
         for letter in "ABCDEFGHIJ":
             for prefix in (" ", "", "\n"):
                 encoded = tokenizer.encode(prefix + letter, add_special_tokens=False)
                 if encoded:
                     ids.add(encoded[-1])
-        return sorted(ids)
+        self._answer_letter_cache = sorted(ids)
+        return self._answer_letter_cache
 
     def _tokenize(self, tokenizer, text: str, device):
         return tokenizer(

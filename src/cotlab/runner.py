@@ -108,6 +108,13 @@ def main():
         total_jobs = sum(len(g["datasets"]) * len(g["prompts"]) for g in grid)
         print(f"Starting execution of {total_jobs} jobs...")
 
+        # Cache dataset instances across grid jobs: the same dataset config is
+        # re-parsed for every prompt in a group (13x for a 13-prompt grid).
+        # Samples are read-only (experiments only read sample fields), so
+        # sharing the parsed instance is exact. Keyed by dataset_name since the
+        # dataset config does not vary per prompt within a group.
+        dataset_cache = {}
+
         job_idx = 0
         for group in grid:
             exp_name = group["experiment"]
@@ -136,7 +143,11 @@ def main():
 
                     # Instantiate Components for this run
                     try:
-                        dataset = create_component(cfg.dataset)
+                        if dataset_name in dataset_cache:
+                            dataset = dataset_cache[dataset_name]
+                        else:
+                            dataset = create_component(cfg.dataset)
+                            dataset_cache[dataset_name] = dataset
                         prompt_strategy = create_component(cfg.prompt)
                         experiment = create_component(cfg.experiment)
 

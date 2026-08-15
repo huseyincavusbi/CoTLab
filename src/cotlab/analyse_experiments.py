@@ -13,6 +13,16 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
+_RE_BOXED = re.compile(r"\$?\\boxed\{([^}]+)\}\$?")
+_RE_FINAL_ANSWER = re.compile(
+    r"(?:final answer|answer)[:\s]*(?:the final answer is\s*)?[:\s]*([^\n$]+)",
+    re.IGNORECASE,
+)
+_RE_TRAILING_DOLLAR = re.compile(r"\$.*$")
+_RE_LEADING_TRAILING_STARS = re.compile(r"^[*\s]+|[*\s]+$")
+_RE_DIAGNOSIS = re.compile(r"diagnosis[:\s]+([^\n,]+)", re.IGNORECASE)
+_RE_BOLD = re.compile(r"\*\*([^*]+)\*\*")
+
 
 def extract_answer(text: str) -> str:
     """Extract the final answer/diagnosis from a response."""
@@ -22,25 +32,21 @@ def extract_answer(text: str) -> str:
     text = text.strip().lower()
 
     # 1. Try to extract from \boxed{...}
-    boxed = re.findall(r"\$?\\boxed\{([^}]+)\}\$?", text)
+    boxed = _RE_BOXED.findall(text)
     if boxed:
         return boxed[0].strip().lower()
 
     # 2. Try to extract from "Final Answer: ..." or "**Final Answer:**"
-    final_answer = re.search(
-        r"(?:final answer|answer)[:\s]*(?:the final answer is\s*)?[:\s]*([^\n$]+)",
-        text,
-        re.IGNORECASE,
-    )
+    final_answer = _RE_FINAL_ANSWER.search(text)
     if final_answer:
         answer = final_answer.group(1).strip()
-        answer = re.sub(r"\$.*$", "", answer).strip()
-        answer = re.sub(r"^[*\s]+|[*\s]+$", "", answer)
+        answer = _RE_TRAILING_DOLLAR.sub("", answer).strip()
+        answer = _RE_LEADING_TRAILING_STARS.sub("", answer)
         if answer:
             return answer.lower()
 
     # 3. Try to extract from "Diagnosis: ..."
-    diagnosis = re.search(r"diagnosis[:\s]+([^\n,]+)", text, re.IGNORECASE)
+    diagnosis = _RE_DIAGNOSIS.search(text)
     if diagnosis:
         return diagnosis.group(1).strip().lower()
 
@@ -50,7 +56,7 @@ def extract_answer(text: str) -> str:
         return words[0].strip("*.,!?\"'").lower()
 
     # 5. Look for bold text (**diagnosis**)
-    bold = re.findall(r"\*\*([^*]+)\*\*", text)
+    bold = _RE_BOLD.findall(text)
     if bold:
         return bold[-1].strip().lower()
 
@@ -88,10 +94,15 @@ def answers_match(answer1: str, answer2: str) -> bool:
     return False
 
 
-def analyse_experiment(results_path: Path) -> Optional[dict]:
-    """Analyse a single experiment's results.json file."""
-    with open(results_path) as f:
-        data = json.load(f)
+def analyse_experiment(results_path: Path, data: Optional[dict] = None) -> Optional[dict]:
+    """Analyse a single experiment's results.json file.
+
+    ``data`` may be a pre-loaded JSON dict (avoids re-reading the file when the
+    caller has already loaded it, e.g. in ``analyse_experiments_dir``).
+    """
+    if data is None:
+        with open(results_path) as f:
+            data = json.load(f)
 
     samples = data.get("samples", [])
     if not samples:
@@ -213,7 +224,7 @@ def analyse_experiments_dir(results_dir: Path) -> list:
                 dataset = "unknown"
                 prompt = name
 
-        metrics = analyse_experiment(results_file)
+        metrics = analyse_experiment(results_file, data)
         if metrics:
             metrics["experiment"] = name
             metrics["dataset"] = dataset

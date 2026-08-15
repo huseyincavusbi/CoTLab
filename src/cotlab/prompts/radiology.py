@@ -184,6 +184,12 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         else:
             self.system_role = SYSTEM_ROLE_CONTRARIAN if contrarian else SYSTEM_ROLE
 
+        self._resolved_template = None
+        # Precompute the base template (with few-shot examples handled) once.
+        # The transform depends only on config, not the report, so running the
+        # DOTALL regex over the multi-KB template on every build_prompt call is
+        # wasted work. build_prompt then only does template.format(report=...).
+
     @property
     def name(self) -> str:
         return self._name
@@ -192,22 +198,22 @@ class RadiologyPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
         """Build prompt with radiology report."""
         report = input_data.get("text", input_data.get("report", input_data.get("question", "")))
 
-        # Select base template based on reasoning mode
-        if self.answer_first:
-            template = PROMPT_TEMPLATE_ANSWER_FIRST
-        elif self.contrarian:
-            template = PROMPT_TEMPLATE_CONTRARIAN
-        else:
-            template = PROMPT_TEMPLATE
+        if self._resolved_template is None:
+            if self.answer_first:
+                template = PROMPT_TEMPLATE_ANSWER_FIRST
+            elif self.contrarian:
+                template = PROMPT_TEMPLATE_CONTRARIAN
+            else:
+                template = PROMPT_TEMPLATE
 
-        # Remove examples if few_shot=False
-        if not self.few_shot:
-            template = self._remove_few_shot_examples(template)
-        elif self.output_format != "json":
-            # Convert JSON examples to target format
-            template = self._convert_examples_to_format(template)
+            if not self.few_shot:
+                template = self._remove_few_shot_examples(template)
+            elif self.output_format != "json":
+                # Convert JSON examples to target format
+                template = self._convert_examples_to_format(template)
+            self._resolved_template = template
 
-        prompt = template.format(report=report)
+        prompt = self._resolved_template.format(report=report)
 
         return prompt
 
