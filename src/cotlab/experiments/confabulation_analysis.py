@@ -62,6 +62,7 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
         self.max_input_tokens = max_input_tokens
         self.answer_cue = answer_cue
         self.mcq_letters = mcq_letters or _MCQ_LETTERS
+        self._letter_ids_cache: Optional[Dict[str, int]] = None
 
     @property
     def name(self) -> str:
@@ -251,11 +252,14 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
 
         logits = outputs.logits[0, -1].float().cpu()
 
-        letter_ids = {}
-        for letter in self.mcq_letters:
-            ids = backend._tokenizer.encode(letter, add_special_tokens=False)
-            if ids:
-                letter_ids[letter] = ids[0]
+        if self._letter_ids_cache is None:
+            letter_ids = {}
+            for letter in self.mcq_letters:
+                ids = backend._tokenizer.encode(letter, add_special_tokens=False)
+                if ids:
+                    letter_ids[letter] = ids[0]
+            self._letter_ids_cache = letter_ids
+        letter_ids = self._letter_ids_cache
 
         letter_logits = {letter: logits[tid].item() for letter, tid in letter_ids.items()}
         pred_letter = max(letter_logits.items(), key=lambda x: x[1])[0]
