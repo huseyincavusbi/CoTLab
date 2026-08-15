@@ -240,6 +240,10 @@ def _hydra_main(cfg: DictConfig) -> None:
                 # For vLLM, greedy decoding is achieved by setting temperature=0.
                 if str(cfg.backend._target_).endswith("TransformersBackend"):
                     gen_kwargs["do_sample"] = is_sampling
+                else:
+                    # vLLM samples in worker processes that don't inherit torch RNG,
+                    # so pass the config seed explicitly for reproducible sampling.
+                    gen_kwargs["seed"] = int(cfg.seed)
 
                 # num_samples is optional for some experiments; None means use all samples
                 num_samples = OmegaConf.select(cfg, "experiment.num_samples", default=None)

@@ -178,12 +178,20 @@ def main():
 
                         # Run Experiment
                         num_samples = OmegaConf.select(cfg, "experiment.num_samples", default=None)
+                        run_kwargs = {}
+                        if num_samples is not None:
+                            run_kwargs["num_samples"] = num_samples
+                        # vLLM samples in worker processes; pass the config seed so
+                        # sampling is reproducible per request.
+                        is_vllm = str(cfg.backend._target_).endswith("VLLMBackend")
+                        if is_vllm:
+                            run_kwargs["seed"] = int(cfg.seed)
                         result = experiment.run(
                             backend=backend,
                             dataset=dataset,
                             prompt_strategy=prompt_strategy,
                             logger=logger,
-                            **(dict(num_samples=num_samples) if num_samples is not None else {}),
+                            **run_kwargs,
                         )
 
                         # Save results
