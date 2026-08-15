@@ -256,6 +256,22 @@ class HookManager:
 
         raise ValueError(f"Could not find attention output module for layer {layer_idx}")
 
+    def get_attention_module(self, layer_idx: int) -> nn.Module:
+        """
+        Get the attention module itself for a layer.
+
+        Hooking this module and reading ``output[1]`` captures the post-softmax
+        attention weights (``attn_weights``), which is version-proof across
+        transformers (``output_attentions=True`` is a no-op for some
+        architectures in transformers 5.x, e.g. Gemma). The attention-output
+        projection ``o_proj`` is the output[0] of this same module.
+        """
+        layer_module = self.get_layer_module(layer_idx)
+        for attn_name in ["self_attn", "attn", "attention"]:
+            if hasattr(layer_module, attn_name):
+                return getattr(layer_module, attn_name)
+        raise ValueError(f"Could not find attention module for layer {layer_idx}")
+
     def get_mlp_down_proj_module(self, layer_idx: int) -> nn.Module:
         """
         Get the FFN down-projection module for a layer.
