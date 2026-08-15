@@ -387,3 +387,65 @@ def test_batched_decompose_matches_sequential(backend):
     for i in range(len(prompts)):
         assert abs(float(total_var[i].item()) - seq_results[i][0]) < 1e-4, f"prompt {i} total_var"
         assert abs(float(j_var_frac[i].item()) - seq_results[i][1]) < 1e-4, f"prompt {i} j_var_frac"
+
+
+def test_batched_apply_decode_matches_sequential(backend):
+    """Batched stacked-layer decode equals per-layer lens.decode/logit-lens."""
+    from cotlab.experiments.jacobian_lens import JacobianLens, JacobianLensExperiment
+
+    model = backend.model
+    tokenizer = backend.tokenizer
+
+    exp = JacobianLensExperiment()
+    exp.max_input_tokens = 64
+    exp.top_k = 5
+
+    layers = [2, 4]
+    rng = torch.Generator().manual_seed(4)
+    d = model.config.hidden_size
+    lm_head = model.lm_head if hasattr(model, "lm_head") else model.get_output_embeddings()
+    norm = model.transformer.ln_f if hasattr(model.transformer, "ln_f") else None
+    device = backend.device
+    jacobians = {l: torch.randn(d, d, generator=rng) for l in layers}
+    lens = JacobianLens(jacobians=jacobians, d_model=d)
+
+    prompt = "Question: Patient has chest pain. What is the diagnosis?\n\nAnswer:"
+    tokens = exp._tokenize_batch(tokenizer, [prompt], backend.device)
+
+    with torch.inference_mode():
+        out = model(
+            input_ids=tokens["input_ids"],
+            attention_mask=tokens["attention_mask"],
+            position_ids=tokens["position_ids"],
+            output_hidden_states=True,
+            use_cache=False,
+        )
+    hs = out.hidden_states
+
+    # --- Sequential: per-layer lens.decode + logit-lens ---
+    seq_jl, seq_ll = [], []
+    for layer in layers:
+        h = hs[layer + 1][0, -1, :].detach().clone()
+        with torch.inference_mode():
+            jl = lens.decode(h.unsqueeze(0), layer, lm_head, norm)[0]
+        seq_jl.append(jl)
+        ll_h = h if norm is None else norm(h)
+        with torch.inference_mode():
+            ll = lm_head(ll_h.unsqueeze(0))[0]
+        seq_ll.append(ll)
+
+    # --- Batched: stack h, one norm + lm_head ---
+    J_stack = torch.stack([jacobians[l].to(device, dtype=torch.float32) for l in layers])
+    h_stack = torch.stack([hs[l + 1][0, -1, :] for l in layers]).to(device)
+    with torch.inference_mode():
+        transported = torch.bmm(h_stack.unsqueeze(1), J_stack.transpose(-1, -2)).squeeze(1)
+        if norm is not None:
+            transported = norm(transported)
+        bat_jl = lm_head(transported)
+        ll_h = h_stack if norm is None else norm(h_stack)
+        bat_ll = lm_head(ll_h)
+
+    for i in range(len(layers)):
+        torch.testing.assert_close(bat_jl[i], seq_jl[i], atol=1e-4, rtol=1e-5, msg=f"jl layer {i}")
+        torch.testing.assert_close(bat_ll[i], seq_ll[i], atol=1e-4, rtol=1e-5, msg=f"ll layer {i}")
+        assert torch.argmax(bat_jl[i]).item() == torch.argmax(seq_jl[i]).item()

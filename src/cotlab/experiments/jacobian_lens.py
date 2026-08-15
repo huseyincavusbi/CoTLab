@@ -215,6 +215,10 @@ class JacobianLens:
 # ---------------------------------------------------------------------------
 
 SKIP_FIRST_N_POSITIONS = 16
+# Output-coordinate dims per backward pass in the fit loop. The cotangent is
+# [dim_batch, seq_len, d_model] and the prompt is replicated dim_batch times, so
+# VRAM scales ~linearly with dim_batch; higher = fewer autograd.grad calls
+# (d_model/dim_batch), lower = less memory. Verified bit-identical across values.
 DIM_BATCH = 8
 
 
@@ -808,13 +812,23 @@ class JacobianLensExperiment(BaseExperiment):
         n = len(samples)
         print(f"Samples: {n}")
 
-        jl_top1: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
-        jl_topk: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
-        ll_top1: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
-        ll_topk: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
+        jl_top1: Dict[int, List[bool]] = {layer: [] for layer in apply_layers}
+        jl_topk: Dict[int, List[bool]] = {layer: [] for layer in apply_layers}
+        ll_top1: Dict[int, List[bool]] = {layer: [] for layer in apply_layers}
+        ll_topk: Dict[int, List[bool]] = {layer: [] for layer in apply_layers}
         jl_emergence: List[Optional[int]] = []
         ll_emergence: List[Optional[int]] = []
         jl_never = ll_never = final_correct = jl_disagree = 0
+
+        # Preload J matrices to the device once (avoids per-(sample, layer)
+        # .to() device transfers in lens.transport).
+        j_preloaded = {}
+        for layer in apply_layers:
+            if layer in lens.jacobians:
+                j_preloaded[layer] = lens.jacobians[layer].to(device, dtype=torch.float32)
+        layers_with_J = [l for l in apply_layers if l in lens.jacobians]
+        if layers_with_J:
+            J_stack = torch.stack([j_preloaded[l] for l in layers_with_J])  # [L, d, d]
 
         for sample in tqdm(samples, desc="J-lens apply"):
             prompt_input = {
@@ -834,10 +848,11 @@ class JacobianLensExperiment(BaseExperiment):
                 with torch.inference_mode():
                     out = model(input_ids=prompt_tokens, output_hidden_states=True, use_cache=False)
                 hidden_states = out.hidden_states
-                final_h = hidden_states[-1][0, -1, :]
-                if norm is not None:
-                    final_h = norm(final_h)
-                final_id = int(torch.argmax(lm_head(final_h)).item())
+                with torch.inference_mode():
+                    final_h = hidden_states[-1][0, -1, :].detach().clone()
+                    if norm is not None:
+                        final_h = norm(final_h)
+                    final_id = int(torch.argmax(lm_head(final_h)).item())
             except Exception as e:
                 tqdm.write(f"  [skip] sample {sample.idx}: {type(e).__name__}: {e}")
                 n -= 1
@@ -847,40 +862,54 @@ class JacobianLensExperiment(BaseExperiment):
             if correct_ids and final_id in correct_ids:
                 final_correct += 1
 
+            # Batched per-layer decode: stack last-token hidden states across
+            # the lens layers [L, d], one norm + lm_head call each. RMSNorm /
+            # LayerNorm normalize per-token over the hidden dim, and lm_head is
+            # a per-row matmul, so the batched rows are identical to the
+            # per-layer decode.
             jl_ok = ll_ok = False
-            for layer in apply_layers:
-                if layer + 1 >= len(hidden_states):
-                    continue
-                h = hidden_states[layer + 1][0, -1, :]
+            valid_layers = [l for l in layers_with_J if l + 1 < len(hidden_states)]
+            if valid_layers:
+                h_stack = torch.stack([hidden_states[l + 1][0, -1, :] for l in valid_layers]).to(
+                    device
+                )  # [L, d]
 
-                # J-lens
-                try:
-                    jl_score = lens.decode(h.unsqueeze(0), layer, lm_head, norm)[0]
-                except KeyError:
-                    continue
-                jl_ids_list = torch.topk(jl_score, self.top_k).indices.tolist()
-                jl_in_top1 = bool(correct_ids) and (jl_ids_list[0] in correct_ids)
-                jl_in_topk = bool(correct_ids) and bool(correct_ids & set(jl_ids_list))
-                jl_top1[layer].append(jl_in_top1)
-                jl_topk[layer].append(jl_in_topk)
-                if jl_in_topk and not jl_ok:
-                    jl_emergence.append(layer)
-                    jl_ok = True
+                # J-lens: transport J_ℓ @ h_ℓ for all layers, then norm + lm_head.
+                # Wrapped in inference_mode like the per-layer lens.decode was.
+                with torch.inference_mode():
+                    transported = torch.bmm(
+                        h_stack.unsqueeze(1), J_stack[: len(valid_layers)].transpose(-1, -2)
+                    ).squeeze(1)  # [L, d]
+                    if norm is not None:
+                        transported = norm(transported)
+                    jl_logits = lm_head(transported)  # [L, vocab]
 
-                # Logit lens
-                ll_h = h if norm is None else norm(h)
-                ll_logits = lm_head(ll_h.unsqueeze(0))[0]
-                ll_ids_list = torch.topk(ll_logits, self.top_k).indices.tolist()
-                ll_in_top1 = bool(correct_ids) and (ll_ids_list[0] in correct_ids)
-                ll_in_topk = bool(correct_ids) and bool(correct_ids & set(ll_ids_list))
-                ll_top1[layer].append(ll_in_top1)
-                ll_topk[layer].append(ll_in_topk)
-                if ll_in_topk and not ll_ok:
-                    ll_emergence.append(layer)
-                    ll_ok = True
+                    # Logit lens: norm(h) then lm_head.
+                    ll_h = h_stack if norm is None else norm(h_stack)
+                    ll_logits = lm_head(ll_h)  # [L, vocab]
 
-                if jl_in_top1 != ll_in_top1:
-                    jl_disagree += 1
+                jl_ids_lists = torch.topk(jl_logits, self.top_k, dim=-1).indices.tolist()
+                ll_ids_lists = torch.topk(ll_logits, self.top_k, dim=-1).indices.tolist()
+
+                for idx, layer in enumerate(valid_layers):
+                    jl_ids_list = jl_ids_lists[idx]
+                    ll_ids_list = ll_ids_lists[idx]
+                    jl_in_top1 = bool(correct_ids) and (jl_ids_list[0] in correct_ids)
+                    jl_in_topk = bool(correct_ids) and bool(correct_ids & set(jl_ids_list))
+                    ll_in_top1 = bool(correct_ids) and (ll_ids_list[0] in correct_ids)
+                    ll_in_topk = bool(correct_ids) and bool(correct_ids & set(ll_ids_list))
+                    jl_top1[layer].append(jl_in_top1)
+                    jl_topk[layer].append(jl_in_topk)
+                    ll_top1[layer].append(ll_in_top1)
+                    ll_topk[layer].append(ll_in_topk)
+                    if jl_in_topk and not jl_ok:
+                        jl_emergence.append(layer)
+                        jl_ok = True
+                    if ll_in_topk and not ll_ok:
+                        ll_emergence.append(layer)
+                        ll_ok = True
+                    if jl_in_top1 != ll_in_top1:
+                        jl_disagree += 1
 
             if not jl_ok:
                 jl_emergence.append(None)
@@ -899,10 +928,10 @@ class JacobianLensExperiment(BaseExperiment):
                 else None
             )
 
-        jl_t1 = {l: _rate(jl_top1[l]) for layer in apply_layers}
-        jl_tk = {l: _rate(jl_topk[l]) for layer in apply_layers}
-        ll_t1 = {l: _rate(ll_top1[l]) for layer in apply_layers}
-        ll_tk = {l: _rate(ll_topk[l]) for layer in apply_layers}
+        jl_t1 = {layer: _rate(jl_top1[layer]) for layer in apply_layers}
+        jl_tk = {layer: _rate(jl_topk[layer]) for layer in apply_layers}
+        ll_t1 = {layer: _rate(ll_top1[layer]) for layer in apply_layers}
+        ll_tk = {layer: _rate(ll_topk[layer]) for layer in apply_layers}
 
         print(f"\n{'=' * 80}")
         print("JACOBIAN LENS vs LOGIT LENS")
@@ -993,7 +1022,7 @@ class JacobianLensExperiment(BaseExperiment):
             for layer in apply_layers:
                 if layer + 1 >= len(hidden_states):
                     continue
-                h = hidden_states[layer + 1][0, -1, :]
+                h = hidden_states[layer + 1][0, -1, :].detach().clone()
                 try:
                     jl_score = lens.decode(h.unsqueeze(0), layer, lm_head, norm)[0]
                     jl_top = torch.topk(jl_score, self.top_k)
