@@ -159,12 +159,16 @@ class SycophancyHeadsExperiment(BaseExperiment):
             src = corr_attn[:, -1, :].unsqueeze(0).expand(B, -1, -1)  # [B, 1, hidden]
 
             def make_head_patch_hook(source):
+                rows_idx = torch.arange(B, device=backend.device)[:, None].expand(B, head_dim)
+                cols = (
+                    torch.arange(B, device=backend.device)[:, None] * head_dim
+                    + torch.arange(head_dim, device=backend.device)[None, :]
+                )
+
                 def hook(module, input, output):
                     patched = output.clone()
-                    for b in range(B):
-                        h_start = b * head_dim
-                        h_end = (b + 1) * head_dim
-                        patched[b, -1, h_start:h_end] = source[b, -1, h_start:h_end]
+                    # Vectorized per-row head-slice patch: row b patches head b.
+                    patched[rows_idx, -1, cols] = source[rows_idx, -1, cols]
                     return patched
 
                 return hook

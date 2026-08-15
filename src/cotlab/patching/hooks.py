@@ -406,9 +406,9 @@ class HookManager:
             else:
                 # Patch specific positions by building new tensor
                 patched = hidden_states.clone()
-                for pos in token_positions:
-                    if pos < target_seq_len and pos < source_seq_len:
-                        patched[:, pos : pos + 1, :] = source_activation[:, pos : pos + 1, :]
+                valid = [p for p in token_positions if p < target_seq_len and p < source_seq_len]
+                if valid:
+                    patched[:, valid, :] = source_activation[:, valid, :]
 
             if rest:
                 return (patched,) + rest
@@ -557,11 +557,12 @@ class HookManager:
 
         def patch_hook(module, input, output):
             patched = output.clone()
-            for head_idx in head_indices:
-                h_start = head_idx * head_dim
-                h_end = (head_idx + 1) * head_dim
-                # Patch last token position only
-                patched[:, -1, h_start:h_end] = source_activation[:, -1, h_start:h_end]
+            # Patch all requested heads' last-token slices at once.
+            cols = (
+                torch.tensor(head_indices, device=patched.device)[:, None] * head_dim
+                + torch.arange(head_dim, device=patched.device)[None, :]
+            ).flatten()
+            patched[:, -1, cols] = source_activation[:, -1, cols]
             return patched
 
         handle = attn_module.register_forward_hook(patch_hook)
