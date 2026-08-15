@@ -1,7 +1,7 @@
 """Full Layer CoT Patching Experiment.
 
 Patches complete layer outputs (attention + MLP) from CoT to Direct prompts
-to test if full residual stream transfer affects答案.
+to test if full residual stream transfer affects the answer.
 """
 
 from typing import Any, Dict, List, Optional
@@ -14,6 +14,28 @@ from ..core.registry import Registry
 from ..datasets.loaders import BaseDataset
 from ..logging import ExperimentLogger
 from ..prompts import ChainOfThoughtStrategy, DirectAnswerStrategy
+
+
+def make_patch_hook(src: torch.Tensor, row: Optional[int] = None, rows=None):
+    """Row-aware residual patch hook.
+
+    Patches the last-token residual at a layer. With ``row`` set, only that
+    batch row is patched; with ``rows`` (an iterable), every row in it is
+    patched (used for cumulative prefixes). ``src`` is [B, 1, hidden].
+    """
+
+    def hook(module, input, output):
+        patched = output.clone()
+        if rows is not None:
+            for r in rows:
+                patched[r, -1, :] = src[r, -1, :]
+        elif row is not None:
+            patched[row, -1, :] = src[row, -1, :]
+        else:
+            patched[:, -1, :] = src[:, -1, :]
+        return patched
+
+    return hook
 
 
 @Registry.register_experiment("full_layer_cot")
@@ -118,28 +140,30 @@ class FullLayerCoTExperiment(BaseExperiment):
 
         results = []
 
-        for layer_idx in sorted(cot_cache.keys()):
-            source_act = cot_cache[layer_idx]
-
-            def make_patch_hook(src):
-                def hook(module, input, output):
-                    patched = output.clone()
-                    patched[:, -1, :] = src[:, -1, :]
-                    return patched
-
-                return hook
-
-            residual_module = backend.hook_manager.get_residual_module(layer_idx)
-            handle = residual_module.register_forward_hook(make_patch_hook(source_act))
-
+        # 4a. Single-layer sweep batched into ONE forward: one row per layer,
+        # each row patching a different layer's last-token residual. Rows are
+        # isolated by the causal attention mask (eval, no dropout).
+        single_layers = sorted(cot_cache.keys())
+        if single_layers:
+            B = len(single_layers)
+            batch_tokens = {k: v.expand(B, -1) for k, v in direct_tokens.items()}
+            handles = []
+            for row, layer_idx in enumerate(single_layers):
+                src = cot_cache[layer_idx][:, -1, :].unsqueeze(0).expand(B, -1, -1)
+                residual_module = backend.hook_manager.get_residual_module(layer_idx)
+                handles.append(residual_module.register_forward_hook(make_patch_hook(src, row=row)))
             try:
                 with torch.inference_mode():
-                    patched_logits = model(**direct_tokens).logits
+                    patched_logits_batch = model(**batch_tokens).logits
+            finally:
+                for h in handles:
+                    h.remove()
 
-                patched_top = torch.argmax(patched_logits[0, -1]).item()
+            patched_tops = torch.argmax(patched_logits_batch[:, -1, :], dim=-1).cpu().tolist()
+            for row, layer_idx in enumerate(single_layers):
+                patched_top = patched_tops[row]
                 patched_token = tokenizer.decode([patched_top])
                 changed = patched_top != direct_top
-
                 results.append(
                     {
                         "layer": layer_idx,
@@ -147,12 +171,8 @@ class FullLayerCoTExperiment(BaseExperiment):
                         "patched_token": patched_token,
                     }
                 )
-
                 status = "YES" if changed else "no"
                 print(f"L{layer_idx:<7} | {status:<10} | {patched_token}")
-
-            finally:
-                handle.remove()
 
         # 5. Cumulative patching
         print("\n" + "-" * 60)
@@ -161,33 +181,35 @@ class FullLayerCoTExperiment(BaseExperiment):
 
         cumulative_results = []
 
-        for num_layers in range(1, len(self.target_layers) + 1):
-            layers_to_patch = sorted(cot_cache.keys())[:num_layers]
+        # 5a. Cumulative sweep batched into ONE forward: row k patches layers
+        # target[0..k] (monotone prefixes), so the hook at layer target[j]
+        # patches every row >= j. Each row reproduces its sequential forward.
+        n_cum = len(self.target_layers)
+        if single_layers:
+            B = n_cum
+            batch_tokens = {k: v.expand(B, -1) for k, v in direct_tokens.items()}
+            layer_list = sorted(cot_cache.keys())[:n_cum]
             handles = []
-
-            for layer_idx in layers_to_patch:
-                source_act = cot_cache[layer_idx]
-
-                def make_patch_hook(src):
-                    def hook(module, input, output):
-                        patched = output.clone()
-                        patched[:, -1, :] = src[:, -1, :]
-                        return patched
-
-                    return hook
-
+            for j, layer_idx in enumerate(layer_list):
+                src = cot_cache[layer_idx][:, -1, :].unsqueeze(0).expand(B, -1, -1)
                 residual_module = backend.hook_manager.get_residual_module(layer_idx)
-                h = residual_module.register_forward_hook(make_patch_hook(source_act))
-                handles.append(h)
-
+                handles.append(
+                    residual_module.register_forward_hook(make_patch_hook(src, rows=range(j, B)))
+                )
             try:
                 with torch.inference_mode():
-                    patched_logits = model(**direct_tokens).logits
+                    patched_logits_batch = model(**batch_tokens).logits
+            finally:
+                for h in handles:
+                    h.remove()
 
-                patched_top = torch.argmax(patched_logits[0, -1]).item()
+            patched_tops = torch.argmax(patched_logits_batch[:, -1, :], dim=-1).cpu().tolist()
+            for num_layers in range(1, n_cum + 1):
+                row = num_layers - 1
+                patched_top = patched_tops[row]
                 patched_token = tokenizer.decode([patched_top])
                 changed = patched_top != direct_top
-
+                layers_to_patch = layer_list[:num_layers]
                 cumulative_results.append(
                     {
                         "num_layers": num_layers,
@@ -196,14 +218,9 @@ class FullLayerCoTExperiment(BaseExperiment):
                         "patched_token": patched_token,
                     }
                 )
-
                 layers_str = ", ".join(f"L{layer}" for layer in layers_to_patch)
                 status = "YES" if changed else "no"
                 print(f"{layers_str:<25} | {status:<10} | {patched_token}")
-
-            finally:
-                for h in handles:
-                    h.remove()
 
         print("-" * 60)
 
