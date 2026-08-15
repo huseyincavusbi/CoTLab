@@ -1243,6 +1243,18 @@ class JacobianLensExperiment(BaseExperiment):
         baseline_correct = 0
         ablate_correct = 0
 
+        # Hoist lm_head and the per-layer W_U·J product out of the sample loop.
+        # W_U·J is a [vocab, d_model] matmul recomputed per (sample, layer)
+        # before; now computed once per layer. Bit-identical matmul, just cached.
+        vocab = lm_head.weight.float().to(device)
+        wu_j_by_layer: dict = {}
+        j_by_layer: dict = {}
+        for layer in layers:
+            if layer in lens.jacobians:
+                J = lens.jacobians[layer].to(device, dtype=torch.float32)
+                j_by_layer[layer] = J
+                wu_j_by_layer[layer] = vocab @ J
+
         for sample in samples:
             prompt = prompt_strategy.build_prompt(
                 {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
@@ -1265,7 +1277,8 @@ class JacobianLensExperiment(BaseExperiment):
 
             # Ablate: at each intervention layer, project out top-k J-space directions
             def make_ablate_hook(layer_idx: int):
-                J = lens.jacobians[layer_idx].to(device, dtype=torch.float32)
+                wu_j = wu_j_by_layer[layer_idx]
+                J = j_by_layer[layer_idx]
 
                 def hook(module, inp, output):
                     if isinstance(output, tuple):
@@ -1276,10 +1289,10 @@ class JacobianLensExperiment(BaseExperiment):
                     # Project onto top-k J-lens directions and remove
                     # J-lens vectors for the full vocabulary at this layer:
                     # W_U · J_ℓ → take top-k by inner product with h
-                    all_scores = h.float() @ (lm_head.weight.float() @ J).T  # [vocab]
+                    all_scores = h.float() @ wu_j.T  # [vocab]
                     top_k_ids = torch.topk(all_scores, self.ablate_top_n).indices
                     for tid in top_k_ids:
-                        v = lm_head.weight[tid].float() @ J  # [d_model]
+                        v = vocab[tid] @ J  # [d_model]
                         v_norm = v / (torch.norm(v) + 1e-8)
                         h = h.float() - torch.dot(h.float(), v_norm) * v_norm
                     t[0, -1, :] = h.to(t.dtype)
@@ -1349,6 +1362,19 @@ class JacobianLensExperiment(BaseExperiment):
         )
 
         decompositions = []
+
+        # Hoist lm_head and per-layer W_U·J out of the sample loop (same as
+        # ablate): the [vocab, d_model] product is recomputed per (sample,
+        # layer) before; now computed once per layer.
+        vocab = lm_head.weight.float().to(device)
+        wu_j_by_layer: dict = {}
+        j_by_layer: dict = {}
+        for layer in layers:
+            if layer in lens.jacobians:
+                J = lens.jacobians[layer].to(device, dtype=torch.float32)
+                j_by_layer[layer] = J
+                wu_j_by_layer[layer] = vocab @ J
+
         for sample in samples:
             prompt = prompt_strategy.build_prompt(
                 {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
@@ -1366,11 +1392,11 @@ class JacobianLensExperiment(BaseExperiment):
                 if layer not in lens.jacobians or layer + 1 >= len(hidden_states):
                     continue
                 h = hidden_states[layer + 1][0, -1, :].float()  # [d_model]
-                J = lens.jacobians[layer].to(device, dtype=torch.float32)
-                vocab = lm_head.weight.float()  # [vocab, d_model]
+                wu_j = wu_j_by_layer[layer]
+                J = j_by_layer[layer]
 
                 # J-space: top-k J-lens directions via inner product
-                all_scores = h @ (vocab @ J).T  # [vocab]
+                all_scores = h @ wu_j.T  # [vocab]
                 top_k_vals, top_k_ids = torch.topk(all_scores, self.top_k)
                 j_tokens = [tokenizer.decode([t.item()]) for t in top_k_ids]
 
