@@ -27,11 +27,13 @@ class ClassificationExperiment(BaseExperiment):
         name: str = "classification",
         description: str = "Classification from medical reports",
         num_samples: int = -1,  # Default to -1 (all samples)
+        batch_size: int = 1,  # rows per generate_batch call; 1 = sequential (exact)
         **kwargs,
     ):
         self._name = name
         self.description = description
         self.num_samples = num_samples
+        self.batch_size = batch_size
 
     @property
     def name(self) -> str:
@@ -141,7 +143,9 @@ class ClassificationExperiment(BaseExperiment):
             if callable(get_system_prompt):
                 system_prompt = get_system_prompt()
 
-        outputs = backend.generate_batch(prompts, system_prompt=system_prompt, **kwargs)
+        outputs = backend.generate_batch(
+            prompts, system_prompt=system_prompt, batch_size=self.batch_size, **kwargs
+        )
 
         # Process results
         print("Analyzing results...")

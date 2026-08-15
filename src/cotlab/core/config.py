@@ -44,6 +44,7 @@ class ModelConfig:
     temperature: float = 0.7
     top_p: float = 0.9
     do_sample: bool = True
+    batch_size: int = 1  # rows per generate_batch call; 1 = sequential (exact)
 
 
 @dataclass

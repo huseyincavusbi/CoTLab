@@ -4,3 +4,4 @@ _target_: cotlab.experiments.ClassificationExperiment
 name: classification
 description: Classification from medical reports
 num_samples: -1  # -1 = use full dataset, or specify a number
+batch_size: 1  # rows per generate_batch call; 1 = sequential (exact), e.g. 8 for batched generation
