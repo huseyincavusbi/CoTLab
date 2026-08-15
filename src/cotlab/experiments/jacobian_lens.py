@@ -121,7 +121,7 @@ class JacobianLens:
         J = self.jacobians[layer].to(residual.device, dtype=residual.dtype)
         return residual @ J.T
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def decode(
         self,
         residual: torch.Tensor,
@@ -135,7 +135,7 @@ class JacobianLens:
             transported = norm(transported)
         return lm_head(transported)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def apply(
         self,
         model: nn.Module,
@@ -160,7 +160,7 @@ class JacobianLens:
         else:
             pos_indices = [p if p >= 0 else seq_len + p for p in positions]
 
-        with torch.no_grad():
+        with torch.inference_mode():
             out = model(input_ids=input_ids, output_hidden_states=True, use_cache=False)
         hidden_states = out.hidden_states
 
@@ -382,8 +382,6 @@ def jacobian_for_prompt(
             J[layer][dim_start : dim_start + n_dims, :] = rows
 
     del source_acts, target_act, replicated
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
     return J
 
 
@@ -833,7 +831,7 @@ class JacobianLensExperiment(BaseExperiment):
                     truncation=True,
                     max_length=self.max_input_tokens,
                 ).to(device)
-                with torch.no_grad():
+                with torch.inference_mode():
                     out = model(input_ids=prompt_tokens, output_hidden_states=True, use_cache=False)
                 hidden_states = out.hidden_states
                 final_h = hidden_states[-1][0, -1, :]
@@ -984,7 +982,7 @@ class JacobianLensExperiment(BaseExperiment):
                     truncation=True,
                     max_length=self.max_input_tokens,
                 ).to(device)
-                with torch.no_grad():
+                with torch.inference_mode():
                     out = model(input_ids=prompt_tokens, output_hidden_states=True, use_cache=False)
                 hidden_states = out.hidden_states
             except Exception as e:
@@ -1461,7 +1459,7 @@ class JacobianLensExperiment(BaseExperiment):
         ]
         batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
 
-        with torch.no_grad():
+        with torch.inference_mode():
             out = model(
                 input_ids=batch_tokens["input_ids"],
                 attention_mask=batch_tokens["attention_mask"],
