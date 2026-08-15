@@ -872,9 +872,11 @@ class JacobianLensExperiment(BaseExperiment):
             jl_ok = ll_ok = False
             valid_layers = [layer for layer in layers_with_J if layer + 1 < len(hidden_states)]
             if valid_layers:
-                h_stack = torch.stack(
-                    [hidden_states[layer + 1][0, -1, :] for layer in valid_layers]
-                ).to(device)  # [L, d]
+                h_stack = (
+                    torch.stack([hidden_states[layer + 1][0, -1, :] for layer in valid_layers])
+                    .to(device)
+                    .float()
+                )  # [L, d] — float32 to match preloaded Js
                 # J stack aligned to valid_layers order (robust to non-sorted or
                 # gapped source_layers; do not slice a global prefix).
                 valid_J_stack = torch.stack([j_preloaded[layer] for layer in valid_layers])
