@@ -27,8 +27,9 @@ def make_patch_hook(src: torch.Tensor, row: Optional[int] = None, rows=None):
     def hook(module, input, output):
         patched = output.clone()
         if rows is not None:
-            for r in rows:
-                patched[r, -1, :] = src[r, -1, :]
+            rows_list = list(rows)
+            if rows_list:
+                patched[rows_list, -1, :] = src[rows_list, -1, :]
         elif row is not None:
             patched[row, -1, :] = src[row, -1, :]
         else:
