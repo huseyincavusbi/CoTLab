@@ -1,10 +1,21 @@
 # Confabulation Analysis — Test if H-Neurons encode confident errors vs uncertainty
+#
+# probe_path: point this at an hprobes result JSON. Create the probe with:
+#
+#     hprobes run --model google/gemma-3-1b-it --data <dataset.jsonl> --out results/my_probe
+#
+# which writes results/my_probe.json (neurons) + results/my_probe.safetensors
+# (learned classifier weights, mean/std, intercept). Both files must stay side
+# by side: confabulation reads the neurons from the JSON and the real learned
+# weights/stats from the sibling .safetensors, so the H-Score is scored exactly
+# like hprobes (standardized features + intercept). If no weights are found it
+# warns and falls back to uniform weights.
 _target_: cotlab.experiments.ConfabulationAnalysisExperiment
 
 name: confabulation_analysis
 description: "Test if H-Neurons encode confabulation vs uncertainty"
 
-probe_path: sweep_C_1.json
+probe_path: null
 ood_dataset_path: CoTLab/data/movie_ood.jsonl
 num_samples: 50
 conf_high: 13.0
