@@ -178,3 +178,53 @@ def test_inference_mode_cache_hooks_identical(backend):
         assert torch.equal(cache_ref.get(layer), captured[layer]), (
             f"layer {layer} cache differs between inference_mode and no_grad"
         )
+
+
+def test_jacobian_ablate_runs_end_to_end(backend):
+    """_run_ablate completes on a real model (regression: inference tensors).
+
+    Regression for the batched ablate path: the baseline decode consumed the
+    ``inference_mode`` final hidden state with autograd enabled
+    ("Inference tensors cannot be saved for backward"). The whole decode must
+    stay inside the inference_mode block.
+    """
+    from cotlab.datasets.loaders import Sample
+    from cotlab.experiments.jacobian_lens import JacobianLens, JacobianLensExperiment
+    from cotlab.prompts import SimplePromptStrategy
+
+    model = backend.model
+    d = model.config.hidden_size
+    rng = torch.Generator().manual_seed(0)
+    lens = JacobianLens(jacobians={2: torch.randn(d, d, generator=rng)}, d_model=d, target_layer=6)
+    samples = [
+        Sample(
+            idx=i,
+            text="Patient presents with a fever. Options: A) cold B) flu C) none",
+            label="A",
+        )
+        for i in range(3)
+    ]
+
+    class TinyDS:
+        name = "tiny"
+
+        def __len__(self):
+            return len(samples)
+
+        def __getitem__(self, i):
+            return samples[i]
+
+        def sample(self, n, seed=42):
+            return samples[:n]
+
+    exp = JacobianLensExperiment(
+        mode="ablate",
+        lens_path=None,
+        num_samples=3,
+        max_input_tokens=64,
+        intervention_layers=[2],
+        ablate_top_n=3,
+    )
+    result = exp._run_ablate(backend, TinyDS(), SimplePromptStrategy(), lens)
+    assert "ablate_accuracy" in result.metrics
+    assert 0.0 <= result.metrics["ablate_accuracy"] <= 1.0

@@ -1369,10 +1369,10 @@ class JacobianLensExperiment(BaseExperiment):
                 output_hidden_states=True,
                 use_cache=False,
             )
-        final_h = base_out.hidden_states[-1][:, -1, :]  # [B, d]
-        if norm is not None:
-            final_h = norm(final_h)
-        base_ids = torch.argmax(lm_head(final_h), dim=-1).tolist()
+            final_h = base_out.hidden_states[-1][:, -1, :]  # [B, d]
+            if norm is not None:
+                final_h = norm(final_h)
+            base_ids = torch.argmax(lm_head(final_h), dim=-1).tolist()
         correct_sets = [self._correct_token_ids(tokenizer, s.label) for s in samples]
         baseline_correct = sum(1 for i, cid in enumerate(base_ids) if cid in correct_sets[i])
 
