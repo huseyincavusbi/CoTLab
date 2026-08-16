@@ -50,9 +50,9 @@ def test_dim_batch_enlargement_bit_identical(backend):
         J8 = jacobian_for_prompt(model, input_ids, [2, 4], target_layer=6, dim_batch=8)
         J16 = jacobian_for_prompt(model, input_ids, [2, 4], target_layer=6, dim_batch=16)
         for layer in J8:
-            assert torch.allclose(
-                J8[layer], J16[layer], rtol=1e-6, atol=1e-6
-            ), f"dim_batch 8 vs 16 differs at layer {layer}"
+            assert torch.allclose(J8[layer], J16[layer], rtol=1e-6, atol=1e-6), (
+                f"dim_batch 8 vs 16 differs at layer {layer}"
+            )
     finally:
         for p in model.parameters():
             p.requires_grad_(True)
