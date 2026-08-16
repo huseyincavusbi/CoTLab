@@ -7,7 +7,6 @@ patterns that main used inline.
 
 import json
 import re
-from pathlib import Path
 
 import pytest
 
