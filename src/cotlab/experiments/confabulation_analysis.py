@@ -17,11 +17,11 @@ should show higher activation for high-conf wrong vs low-conf wrong.
 """
 
 import json
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-from scipy import stats
 from tqdm import tqdm
 
 from ..backends.base import InferenceBackend
@@ -70,18 +70,36 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
     def name(self) -> str:
         return self._name
 
-    def _load_probe(self) -> Tuple[np.ndarray, List[Tuple[int, int]]]:
-        """Load probe weights and neuron indices."""
+    def _load_probe(
+        self,
+    ) -> Tuple[np.ndarray, List[Tuple[int, int]], Optional[Dict[str, Any]]]:
+        """Load probe weights, neuron indices and optional standardization stats.
+
+        Returns:
+            (weights, neurons, stats) where stats is None or a dict with
+            per-neuron ``mean``/``std`` arrays and an ``intercept`` float.
+            When stats are present, ``_compute_h_score`` standardizes features
+            exactly like hprobes' own scoring.
+        """
         if not self.probe_path:
             raise ValueError("probe_path required for confabulation analysis")
 
         with open(self.probe_path) as f:
             probe_data = json.load(f)
 
+        stats = None
+
         # Handle both old format (weights/neurons) and new format (fit.*)
         if "weights" in probe_data:
             weights = np.array(probe_data["weights"])
             neurons = [(n["layer"], n["index"]) for n in probe_data["neurons"]]
+            if "feature_stats" in probe_data:
+                fs = probe_data["feature_stats"]
+                stats = {
+                    "mean": np.array(fs["mean"]),
+                    "std": np.array(fs["std"]),
+                    "intercept": float(probe_data.get("intercept", 0.0)),
+                }
         elif "fit" in probe_data:
             # Extract neurons from fit data
             h_neurons = probe_data["fit"]["h_neurons"]
@@ -90,12 +108,86 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
             else:
                 neurons = [(n["layer"], n["index"]) for n in h_neurons]
 
-            # Use uniform weights if not available (all neurons contribute equally)
-            weights = np.ones(len(neurons))
+            # Prefer weights exported into the JSON (future hprobes versions),
+            # then the sibling .safetensors written by every hprobes save().
+            if "weights" in probe_data["fit"]:
+                weights = np.array(probe_data["fit"]["weights"])
+                fs = probe_data["fit"].get("feature_stats")
+                if fs is not None:
+                    stats = {
+                        "mean": np.array(fs["mean"]),
+                        "std": np.array(fs["std"]),
+                        "intercept": float(probe_data["fit"].get("intercept", 0.0)),
+                    }
+            else:
+                from_safetensors = self._weights_from_safetensors(probe_data, neurons)
+                if from_safetensors is not None:
+                    weights, stats = from_safetensors
+                else:
+                    print(
+                        "WARNING: no learned probe weights found (no fit.weights or "
+                        "sibling .safetensors) — using uniform weights. Re-run hprobes "
+                        "save() to embed the classifier coefficients."
+                    )
+                    weights = np.ones(len(neurons))
         else:
             raise ValueError("Probe file missing weights/neurons data")
 
-        return weights, neurons
+        return weights, neurons, stats
+
+    def _weights_from_safetensors(
+        self, probe_data: Dict[str, Any], neurons: List[Tuple[int, int]]
+    ) -> Optional[Tuple[np.ndarray, Dict[str, Any]]]:
+        """Extract real per-neuron weights + stats from the sibling .safetensors.
+
+        hprobes ``save()`` writes ``clf_coef``/``clf_intercept``/``top_k_idx``/
+        ``col_mean``/``col_std`` next to the JSON; ``top_k_idx`` maps each
+        reduced feature position back to its flat (layer*dim+idx) index.
+        """
+        try:
+            from safetensors.torch import load_file
+        except ImportError:
+            return None
+
+        st_path = Path(self.probe_path).with_suffix(".safetensors")
+        if not st_path.exists():
+            return None
+
+        tensors = load_file(str(st_path))
+        if not {"clf_coef", "top_k_idx"}.issubset(tensors):
+            return None
+
+        metadata = probe_data.get("metadata") or {}
+        intermediate_dim = metadata.get("intermediate_dim")
+        if not intermediate_dim:
+            return None
+
+        coef = tensors["clf_coef"].float().numpy()
+        if coef.ndim == 2:
+            coef = coef[0]
+        top_k_idx = tensors["top_k_idx"].long().numpy()
+        col_mean = tensors.get("col_mean", torch.zeros_like(tensors["top_k_idx"])).float().numpy()
+        col_std = tensors.get("col_std", torch.ones_like(tensors["top_k_idx"])).float().numpy()
+        intercept = float(tensors.get("clf_intercept", torch.zeros(1)).float().reshape(-1)[0])
+
+        pos_by_flat = {int(f): i for i, f in enumerate(top_k_idx)}
+        weights, means, stds = [], [], []
+        for layer, idx in neurons:
+            pos = pos_by_flat.get(int(layer) * int(intermediate_dim) + int(idx))
+            if pos is None:
+                weights.append(0.0)
+                means.append(0.0)
+                stds.append(1.0)
+                continue
+            weights.append(float(coef[pos]))
+            means.append(float(col_mean[pos]))
+            stds.append(float(col_std[pos]))
+
+        return np.array(weights), {
+            "mean": np.array(means),
+            "std": np.array(stds),
+            "intercept": intercept,
+        }
 
     def _build_mcq_prompt(
         self, backend: InferenceBackend, question: str, options: Dict[str, str]
@@ -388,9 +480,23 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
 
         return preds, max_logits, entropies, features
 
-    def _compute_h_score(self, features: np.ndarray, weights: np.ndarray) -> float:
-        """Compute H-Score = sigmoid(w · x)."""
-        logit = np.dot(weights, features)
+    def _compute_h_score(
+        self,
+        features: np.ndarray,
+        weights: np.ndarray,
+        stats: Optional[Dict[str, Any]] = None,
+    ) -> float:
+        """Compute H-Score = sigmoid(w · x).
+
+        When ``stats`` (mean/std/intercept from the fitted probe) are present,
+        features are standardized per neuron exactly like hprobes' own scoring
+        (``(x - mean) / (std + 1e-8)`` then ``coef · x + intercept``).
+        """
+        if stats is not None:
+            features = (features - stats["mean"]) / (stats["std"] + 1e-8)
+            logit = float(np.dot(weights, features)) + stats["intercept"]
+        else:
+            logit = np.dot(weights, features)
         return float(1.0 / (1.0 + np.exp(-logit)))
 
     def _extract_category_data(
@@ -400,6 +506,7 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
         weights: np.ndarray,
         neurons: List[Tuple[int, int]],
         category_name: str,
+        stats: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Extract data for one category.
 
@@ -422,7 +529,7 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
             return sample.text + self.answer_cue, sample.label
 
         def process_row(pred, max_logit, entropy, features, gt_answer) -> None:
-            h_score = self._compute_h_score(features, weights)
+            h_score = self._compute_h_score(features, weights, stats)
             results.append(
                 {
                     "prediction": pred,
@@ -486,11 +593,12 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
         """Run confabulation analysis."""
 
         # Load probe
-        weights, neurons = self._load_probe()
+        weights, neurons, stats = self._load_probe()
 
         print(f"Model         : {backend.model_name}")
         print(f"Dataset       : {dataset.name}")
         print(f"Probe neurons : {len(neurons)}")
+        print(f"Learned weights: {'yes' if stats is not None else 'no (uniform)'}")
         print(f"Conf high     : {self.conf_high}")
         print(f"Conf low      : {self.conf_low}")
 
@@ -502,13 +610,15 @@ class ConfabulationAnalysisExperiment(BaseExperiment):
             with open(self.ood_dataset_path) as f:
                 ood_samples = [json.loads(line) for line in f][: self.num_samples]
             high_conf_wrong = self._extract_category_data(
-                backend, ood_samples, weights, neurons, "High-Conf WRONG (OOD)"
+                backend, ood_samples, weights, neurons, "High-Conf WRONG (OOD)", stats
             )
         else:
             high_conf_wrong = []
 
         # Category 2 & 3: From main dataset, stratify by confidence
-        all_results = self._extract_category_data(backend, samples, weights, neurons, "All samples")
+        all_results = self._extract_category_data(
+            backend, samples, weights, neurons, "All samples", stats
+        )
 
         # Filter by confidence and correctness
         high_conf_correct = [
