@@ -6,12 +6,11 @@ read-only, so sharing the instance must not change anything observable.
 """
 
 
-def test_dataset_cache_shares_instance_and_sampling_is_identical(monkeypatch):
+def test_dataset_cache_creates_once_and_shares_instance(monkeypatch):
     import cotlab.runner as runner_mod
 
     created = []
     ds_instances = []
-    real_create = runner_mod.create_component
 
     class DummyDataset:
         name = "dummy"
@@ -25,22 +24,38 @@ def test_dataset_cache_shares_instance_and_sampling_is_identical(monkeypatch):
             rng = random.Random(seed)
             return [f"s{i}" for i in rng.sample(range(10), n)]
 
-    def make_component(cfg, **kw):
-        target = cfg if isinstance(cfg, str) else getattr(cfg, "_target_", "")
-        if target == "DummyDataset":
-            created.append(target)
-            return DummyDataset()
-        return real_create(cfg, **kw)
+    def fake_create(cfg, **kw):
+        created.append(cfg)
+        return DummyDataset()
 
-    monkeypatch.setattr(runner_mod, "create_component", make_component)
+    monkeypatch.setattr(runner_mod, "create_component", fake_create)
 
-    # Mirrors the runner loop: same dataset_name across grid jobs.
     cache = {}
-    for _ in range(3):
-        name = "DummyDataset"
-        ds = cache[name] if name in cache else make_component("DummyDataset")
-        cache[name] = ds
-        assert ds.sample(4) == ds.sample(4)
+    first = runner_mod.get_cached_dataset(cache, "dummy", "DummyDataset")
+    second = runner_mod.get_cached_dataset(cache, "dummy", "DummyDataset")
 
+    assert first is second, "cache must return the same instance on repeat lookup"
     assert len(created) == 1, "dataset must be created exactly once (cache hit)"
     assert len(ds_instances) == 1, "one shared instance across jobs"
+    assert first.sample(4) == first.sample(4), "sampling must stay deterministic"
+
+
+def test_dataset_cache_keyed_by_name(monkeypatch):
+    import cotlab.runner as runner_mod
+
+    created = []
+
+    def fake_create(cfg, **kw):
+        created.append(cfg)
+        return type("DS", (), {"name": cfg})()
+
+    monkeypatch.setattr(runner_mod, "create_component", fake_create)
+
+    cache = {}
+    a = runner_mod.get_cached_dataset(cache, "ds_a", "A")
+    b = runner_mod.get_cached_dataset(cache, "ds_b", "B")
+    a2 = runner_mod.get_cached_dataset(cache, "ds_a", "A")
+
+    assert a is a2, "same name must hit the cache"
+    assert b is not a, "different names must create different instances"
+    assert created == ["A", "B"], "one creation per distinct name"
