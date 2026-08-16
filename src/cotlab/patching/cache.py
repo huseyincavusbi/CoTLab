@@ -116,7 +116,6 @@ class ActivationCache:
     def clear(self) -> None:
         """Clear all cached activations to free memory."""
         self._cache.clear()
-        torch.cuda.empty_cache()
 
     def to_device(self, device: str) -> "ActivationCache":
         """Move all cached activations to a device."""

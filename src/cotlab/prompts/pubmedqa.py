@@ -67,6 +67,7 @@ Context: A systematic review of 10 randomized trials found inconsistent results.
         self.few_shot = few_shot
         self.contrarian = contrarian
         self.answer_first = answer_first
+        self._few_shot_cache: Dict[bool, str] = {}
 
     @property
     def name(self) -> str:
@@ -103,14 +104,16 @@ Context: A systematic review of 10 randomized trials found inconsistent results.
         return prompt
 
     def _build_few_shot_examples(self) -> str:
-        examples = []
-        for i, ex in enumerate(self.FEW_SHOT_EXAMPLES, 1):
-            if self.answer_first:
-                example = f"### Example {i}\n\n{ex['text']}\n\n**Answer:** {ex['answer']}\n\n**Reasoning:** {ex['reasoning']}"
-            else:
-                example = f"### Example {i}\n\n{ex['text']}\n\n**Reasoning:** {ex['reasoning']}\n\n**Answer:** {ex['answer']}"
-            examples.append(example)
-        return "\n\n".join(examples)
+        if self.answer_first not in self._few_shot_cache:
+            examples = []
+            for i, ex in enumerate(self.FEW_SHOT_EXAMPLES, 1):
+                if self.answer_first:
+                    example = f"### Example {i}\n\n{ex['text']}\n\n**Answer:** {ex['answer']}\n\n**Reasoning:** {ex['reasoning']}"
+                else:
+                    example = f"### Example {i}\n\n{ex['text']}\n\n**Reasoning:** {ex['reasoning']}\n\n**Answer:** {ex['answer']}"
+                examples.append(example)
+            self._few_shot_cache[self.answer_first] = "\n\n".join(examples)
+        return self._few_shot_cache[self.answer_first]
 
     def _get_format_instructions(self) -> str:
         if self.output_format == "json":

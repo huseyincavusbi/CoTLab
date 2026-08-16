@@ -6,7 +6,7 @@ whether different prompts encode diagnoses differently at each layer.
 This probes AFTER the model generates an answer, not at input position.
 """
 
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -81,7 +81,17 @@ class ProbingClassifierExperiment(BaseExperiment):
         num_samples: Optional[int] = None,
         logger: Optional[ExperimentLogger] = None,
     ) -> ExperimentResult:
-        """Run probing classifier experiment."""
+        """Run probing classifier experiment.
+
+        NOTE (layer indexing): since commit 061d30a the per-layer hidden states
+        are captured with forward hooks on the decoder layer modules. This reads
+        the TRUE layer output (index ``layer_idx`` of the layer stack, i.e. what
+        ``outputs.hidden_states[-1][layer_idx+1]`` contains, because embedding is
+        index 0). Earlier versions read ``outputs.hidden_states[-1][layer_idx]``
+        which was off by one (probe label ``l`` actually read layer ``l-1``'s
+        output, and label 0 read the embedding). Results produced after this
+        change are NOT directly comparable layer-by-layer with older runs.
+        """
 
         n_samples = num_samples if num_samples is not None else self.num_samples
 
@@ -132,15 +142,38 @@ class ProbingClassifierExperiment(BaseExperiment):
             inputs = tokenizer(prompt, return_tensors="pt").to(backend.device)
             prompt_length = inputs.input_ids.shape[1]
 
+            # Capture the last generated token's per-layer hidden state with
+            # forward hooks instead of output_hidden_states=True (which retains
+            # steps x layers x [B, seq, hidden] in memory). During KV-cache
+            # decode each layer fires once per step with a single-token input;
+            # the hook overwrites per step, so after generate the captured value
+            # is the final token's layer output — bit-identical to
+            # outputs.hidden_states[-1][layer+1][0, -1] (embedding is index 0).
+            layer_hidden: Dict[int, torch.Tensor] = {}
+            handles = []
+            for layer_idx in self.target_layers:
+                if layer_idx < backend.hook_manager.num_layers:
+                    mod = backend.hook_manager.get_layer_module(layer_idx)
+                    handles.append(
+                        mod.register_forward_hook(
+                            lambda m, i, o, _l=layer_idx: layer_hidden.__setitem__(
+                                _l, (o[0] if isinstance(o, tuple) else o)[0, -1].detach()
+                            )
+                        )
+                    )
+
             # Generate answer with hidden states
-            with torch.no_grad():
-                outputs = model.generate(
-                    **inputs,
-                    max_new_tokens=self.max_new_tokens,
-                    output_hidden_states=True,
-                    return_dict_in_generate=True,
-                    pad_token_id=tokenizer.eos_token_id,
-                )
+            try:
+                with torch.inference_mode():
+                    outputs = model.generate(
+                        **inputs,
+                        max_new_tokens=self.max_new_tokens,
+                        return_dict_in_generate=True,
+                        pad_token_id=tokenizer.eos_token_id,
+                    )
+            finally:
+                for h in handles:
+                    h.remove()
 
             # Extract generated tokens
             generated_ids = outputs.sequences[0, prompt_length:]
@@ -152,13 +185,10 @@ class ProbingClassifierExperiment(BaseExperiment):
             correctness_labels.append(1 if is_correct else 0)
 
             # Get hidden states at the LAST generated token (answer position)
-            if hasattr(outputs, "hidden_states") and outputs.hidden_states:
-                last_step_hidden = outputs.hidden_states[-1]
-
-                for layer_idx in self.target_layers:
-                    if layer_idx < len(last_step_hidden):
-                        h = last_step_hidden[layer_idx][0, -1, :].float().cpu().numpy()
-                        layer_hidden_states[layer_idx].append(h)
+            for layer_idx in self.target_layers:
+                if layer_idx in layer_hidden:
+                    h = layer_hidden[layer_idx].float().cpu().numpy()
+                    layer_hidden_states[layer_idx].append(h)
 
             # Store label based on probe_target
             if self.probe_target == "diagnosis":
@@ -167,10 +197,6 @@ class ProbingClassifierExperiment(BaseExperiment):
                 labels.append(category)
             elif self.probe_target == "correctness":
                 labels.append(1 if is_correct else 0)
-
-            # Clear CUDA cache
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
 
         # Encode labels
         if self.probe_target in ["diagnosis", "category"]:
@@ -388,7 +414,7 @@ class ProbingClassifierExperiment(BaseExperiment):
             prev_loss = loss.item()
 
         # Evaluate
-        with torch.no_grad():
+        with torch.inference_mode():
             # Train accuracy
             train_outputs = model(X_train_t)
             train_preds = torch.argmax(train_outputs, dim=1)

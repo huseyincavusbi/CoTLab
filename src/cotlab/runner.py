@@ -9,6 +9,17 @@ from cotlab.core import create_component
 from cotlab.logging import ExperimentLogger
 
 
+def get_cached_dataset(dataset_cache: dict, dataset_name: str, dataset_cfg) -> object:
+    """Return the parsed dataset instance, creating and caching it on first use.
+
+    Datasets are read-only to experiments (only ``sample`` is called, which
+    returns a fresh list), so sharing one instance across grid jobs is exact.
+    """
+    if dataset_name not in dataset_cache:
+        dataset_cache[dataset_name] = create_component(dataset_cfg)
+    return dataset_cache[dataset_name]
+
+
 def _extract_backend_load_kwargs(cfg_backend) -> dict:
     backend_cfg = OmegaConf.to_container(cfg_backend, resolve=True)
     keys = [
@@ -108,6 +119,13 @@ def main():
         total_jobs = sum(len(g["datasets"]) * len(g["prompts"]) for g in grid)
         print(f"Starting execution of {total_jobs} jobs...")
 
+        # Cache dataset instances across grid jobs: the same dataset config is
+        # re-parsed for every prompt in a group (13x for a 13-prompt grid).
+        # Samples are read-only (experiments only read sample fields), so
+        # sharing the parsed instance is exact. Keyed by dataset_name since the
+        # dataset config does not vary per prompt within a group.
+        dataset_cache = {}
+
         job_idx = 0
         for group in grid:
             exp_name = group["experiment"]
@@ -136,7 +154,7 @@ def main():
 
                     # Instantiate Components for this run
                     try:
-                        dataset = create_component(cfg.dataset)
+                        dataset = get_cached_dataset(dataset_cache, dataset_name, cfg.dataset)
                         prompt_strategy = create_component(cfg.prompt)
                         experiment = create_component(cfg.experiment)
 
@@ -167,12 +185,20 @@ def main():
 
                         # Run Experiment
                         num_samples = OmegaConf.select(cfg, "experiment.num_samples", default=None)
+                        run_kwargs = {}
+                        if num_samples is not None:
+                            run_kwargs["num_samples"] = num_samples
+                        # vLLM samples in worker processes; pass the config seed so
+                        # sampling is reproducible per request.
+                        is_vllm = str(cfg.backend._target_).endswith("VLLMBackend")
+                        if is_vllm:
+                            run_kwargs["seed"] = int(cfg.seed)
                         result = experiment.run(
                             backend=backend,
                             dataset=dataset,
                             prompt_strategy=prompt_strategy,
                             logger=logger,
-                            **(dict(num_samples=num_samples) if num_samples is not None else {}),
+                            **run_kwargs,
                         )
 
                         # Save results

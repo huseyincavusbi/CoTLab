@@ -59,3 +59,22 @@ python -m cotlab.main model=my_model
 ```
 
 See [Models Guide](models.md) for compatibility details.
+
+## Attention Implementation & torch.compile
+
+The `TransformersBackend` passes `attn_implementation` through to
+`AutoModelForCausalLM.from_pretrained` when configured. `eager` is the reference
+path for published results; `sdpa` / `flash_attention_2` are faster but only
+approximately numerically equal to eager (fused kernels reorder float
+accumulation), so they must not be used to produce or reproduce published paper
+numbers without a recorded equivalence check.
+
+Experiments that hook or patch activations (`activation_patching`,
+`jacobian_lens`, the R-lens/LRP fit, the `HookManager` cache hooks) must stay
+eager. `torch.compile` with `fullgraph=True` is incompatible with hook-based
+activation capture — hook logic gets baked into the compiled graph at trace
+time and never executes (pytorch/pytorch#173452, open as of 2026). Do not wrap
+hooked forward paths in `torch.compile`; it is only safe for hook-free,
+fixed-shape forwards (e.g. plain generation). Note also that
+`output_attentions=True` forces eager (`attention_analysis`,
+`composite_shift_detector`).

@@ -155,6 +155,10 @@ class ActivationPatchingExperiment(BaseExperiment):
         self.patching = patching or {}
         self.token_group_contrast_layer = int(token_group_contrast_layer)
         self.token_group_mode = token_group_mode
+        # Memoize token-id lookups: encode() is a pure function of the tokenizer
+        # vocab (stable within a run), so recomputing per sample is wasted work.
+        self._answer_tok_cache: Dict[str, Optional[int]] = {}
+        self._answer_letter_cache: Optional[List[int]] = None
 
     @property
     def name(self) -> str:
@@ -202,21 +206,29 @@ class ActivationPatchingExperiment(BaseExperiment):
         label_str = str(label).strip()
         if not label_str:
             return None
+        if label_str in self._answer_tok_cache:
+            return self._answer_tok_cache[label_str]
+        result = None
         for prefix in (" ", ""):
             ids = tokenizer.encode(prefix + label_str, add_special_tokens=False)
             if ids:
-                return ids[0]
-        return None
+                result = ids[0]
+                break
+        self._answer_tok_cache[label_str] = result
+        return result
 
     def _answer_letter_token_ids(self, tokenizer) -> List[int]:
         """Collect all plausible token ids for MCQ answer letters A-J."""
+        if self._answer_letter_cache is not None:
+            return self._answer_letter_cache
         ids = set()
         for letter in "ABCDEFGHIJ":
             for prefix in (" ", "", "\n"):
                 encoded = tokenizer.encode(prefix + letter, add_special_tokens=False)
                 if encoded:
                     ids.add(encoded[-1])
-        return sorted(ids)
+        self._answer_letter_cache = sorted(ids)
+        return self._answer_letter_cache
 
     def _tokenize(self, tokenizer, text: str, device):
         return tokenizer(
@@ -243,7 +255,7 @@ class ActivationPatchingExperiment(BaseExperiment):
         def make_cache_hook(layer_idx: int):
             def hook(module, inp, output):
                 tensor = output[0] if isinstance(output, tuple) else output
-                with torch.no_grad():
+                with torch.inference_mode():
                     # keep bfloat16 so patching is dtype-compatible with the model
                     act_cache[layer_idx] = tensor[0, -1].detach().cpu()
                 return output
@@ -258,7 +270,7 @@ class ActivationPatchingExperiment(BaseExperiment):
             if layer_idx < backend.hook_manager.num_layers
         ]
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
         finally:
             for h in handles:
@@ -292,13 +304,77 @@ class ActivationPatchingExperiment(BaseExperiment):
         mod = backend.hook_manager.get_residual_module(patch_layer)
         handle = mod.register_forward_hook(patch_hook)
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
         finally:
             handle.remove()
             del patch_gpu
 
         return out.logits[0, -1].detach().float().cpu()
+
+    def _forward_patched_batch(
+        self,
+        backend: InferenceBackend,
+        tokens,
+        target_layers: List[int],
+        act_cache: Dict[int, torch.Tensor],
+    ) -> torch.Tensor:
+        """Forward pass with each batch row patching a different target layer.
+
+        Replaces the per-layer loop with a single forward over
+        ``len(target_layers)`` identical rows; row ``j`` patches layer
+        ``target_layers[j]`` exactly as the sequential path would. Rows are
+        isolated by the causal attention mask (eval, no dropout), so each row
+        reproduces its sequential counterpart (Layer-1 tensor equivalence).
+
+        Returns [B, vocab_size] float32 CPU logits at the last token.
+        """
+        B = len(target_layers)
+        if B == 0:
+            raise ValueError("target_layers must be non-empty for a batched patch forward")
+        model_dtype = next(backend._model.parameters()).dtype
+        batch_tokens = {k: v.expand(B, -1) for k, v in tokens.items()}
+
+        # Row index of each target layer; per-layer patch vector (clean last
+        # token, broadcast over positions) cast to model dtype.
+        row_of_layer = {layer: j for j, layer in enumerate(target_layers)}
+        patches = {
+            layer: act_cache[layer].to(dtype=model_dtype, device=backend.device)
+            for layer in target_layers
+            if layer in act_cache
+        }
+
+        def make_patch_hook(patch_vec: torch.Tensor, row: int):
+            broadcast = patch_vec.unsqueeze(0).unsqueeze(0)
+            row_vec = broadcast[0]  # [1, hidden] for a single batch row
+
+            def patch_hook(module, inp, output):
+                if isinstance(output, tuple):
+                    patched = list(output)
+                    patched[0] = patched[0].clone()
+                    patched[0][row] = row_vec.expand_as(patched[0][row])
+                    return tuple(patched)
+                patched = output.clone()
+                patched[row] = row_vec.expand_as(patched[row])
+                return patched
+
+            return patch_hook
+
+        handles = []
+        for layer in target_layers:
+            if layer in patches and layer < backend.hook_manager.num_layers:
+                mod = backend.hook_manager.get_residual_module(layer)
+                handles.append(
+                    mod.register_forward_hook(make_patch_hook(patches[layer], row_of_layer[layer]))
+                )
+        try:
+            with torch.inference_mode():
+                out = backend._model(**batch_tokens)
+        finally:
+            for h in handles:
+                h.remove()
+
+        return out.logits[:, -1, :].detach().float().cpu()  # [B, vocab]
 
     # ------------------------------------------------------------------
     # Token-group tagger and attention masking helpers
@@ -431,7 +507,7 @@ class ActivationPatchingExperiment(BaseExperiment):
         Returns the logit (float32, CPU) for ``answer_tok_id`` at the last token.
         """
         if not zero_positions:
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
             return float(out.logits[0, -1, answer_tok_id].detach().cpu().item())
 
@@ -464,13 +540,13 @@ class ActivationPatchingExperiment(BaseExperiment):
             tqdm.write(
                 f"  [warn] token_group_contrast: no self_attn on layer {mask_layer}, skipping mask"
             )
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
             return float(out.logits[0, -1, answer_tok_id].detach().cpu().item())
 
         handle = attn_mod.register_forward_pre_hook(_pre_hook, with_kwargs=True)
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = backend._model(**tokens)
         finally:
             handle.remove()
@@ -637,7 +713,7 @@ class ActivationPatchingExperiment(BaseExperiment):
 
             # Baseline forward (no masking) — also derive is_correct in one pass.
             try:
-                with torch.no_grad():
+                with torch.inference_mode():
                     out_base = backend._model(**tokens)
                 last_logits = out_base.logits[0, -1].detach().float().cpu()
                 logit_base = float(last_logits[answer_tok_id].item())
@@ -665,8 +741,6 @@ class ActivationPatchingExperiment(BaseExperiment):
                 except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                     tqdm.write(f"  [skip] sample {sample.idx} group '{group}': {exc}")
                     importance = 0.0
-                finally:
-                    torch.cuda.empty_cache()
 
                 sample_importances[group] = round(importance, 4)
                 group_importances[group].append(importance)
@@ -687,8 +761,6 @@ class ActivationPatchingExperiment(BaseExperiment):
                     entity_importance = round(abs(logit_base - lm_e), 4)
                 except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                     tqdm.write(f"  [skip] sample {sample.idx} (entity): {exc}")
-                finally:
-                    torch.cuda.empty_cache()
             if groups.get("stem"):
                 try:
                     lm_s = self._forward_attention_masked(
@@ -697,8 +769,6 @@ class ActivationPatchingExperiment(BaseExperiment):
                     stem_importance = round(abs(logit_base - lm_s), 4)
                 except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
                     tqdm.write(f"  [skip] sample {sample.idx} (stem): {exc}")
-                finally:
-                    torch.cuda.empty_cache()
 
             per_sample_results.append(
                 {
@@ -897,7 +967,7 @@ class ActivationPatchingExperiment(BaseExperiment):
 
         samples = dataset.sample(self.num_samples, seed=self.seed)
         n = len(samples)
-        print(f"Samples: {n}  (each requires {len(target_layers) + 2} forward passes)\n")
+        print(f"Samples: {n}  (each requires 3 forward passes: clean, corrupt, batched sweep)\n")
 
         # Per-layer effect accumulators
         layer_effects: Dict[int, List[float]] = {lid: [] for lid in target_layers}
@@ -967,30 +1037,57 @@ class ActivationPatchingExperiment(BaseExperiment):
 
             sample_layer_effects: Dict[int, float] = {}
 
-            # Step 3 — patching sweep over layers
-            for layer_idx in target_layers:
-                if layer_idx not in act_cache:
-                    continue
+            # Step 3 — patching sweep over layers, batched into a single forward
+            # (one row per target layer, each patching a different layer). On
+            # failure (e.g. OOM on a large batch) fall back to the sequential
+            # per-layer path so a single failing layer cannot drop the sample.
+            present_layers = [layer for layer in target_layers if layer in act_cache]
+            if not present_layers:
+                sample_layer_effects = {}
+            else:
                 try:
-                    logits_patch = self._forward_patched(
-                        backend, corr_tokens, layer_idx, act_cache[layer_idx]
+                    logits_patch_batch = self._forward_patched_batch(
+                        backend, corr_tokens, present_layers, act_cache
                     )
+                    patched_logits_by_layer = {
+                        layer: logits_patch_batch[row] for row, layer in enumerate(present_layers)
+                    }
                 except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
-                    tqdm.write(f"  [skip] sample {sample.idx} layer {layer_idx}: {exc}")
+                    tqdm.write(
+                        f"  [warn] sample {sample.idx} batched sweep failed, "
+                        f"falling back to sequential: {type(exc).__name__}: {exc}"
+                    )
                     torch.cuda.empty_cache()
-                    continue
+                    patched_logits_by_layer = {}
+                    for layer in present_layers:
+                        try:
+                            logits_patch = self._forward_patched(
+                                backend, corr_tokens, layer, act_cache[layer]
+                            )
+                            patched_logits_by_layer[layer] = logits_patch
+                        except (
+                            ValueError,
+                            KeyError,
+                            RuntimeError,
+                            IndexError,
+                            TypeError,
+                        ) as layer_exc:
+                            tqdm.write(
+                                f"  [skip] sample {sample.idx} layer {layer}: "
+                                f"{type(layer_exc).__name__}: {layer_exc}"
+                            )
 
-                patch_logit = float(logits_patch[clean_tok_id].item())
-                eps = 1e-6
-                if abs(denom) < eps:
-                    effect = 0.0
-                else:
-                    effect = (patch_logit - corr_logit) / denom
-                # Clip to [-1, 2] to handle outliers
-                effect = max(-1.0, min(2.0, effect))
-                layer_effects[layer_idx].append(effect)
-                sample_layer_effects[layer_idx] = round(effect, 4)
-                torch.cuda.empty_cache()
+                for layer_idx, logits_patch in patched_logits_by_layer.items():
+                    patch_logit = float(logits_patch[clean_tok_id].item())
+                    eps = 1e-6
+                    if abs(denom) < eps:
+                        effect = 0.0
+                    else:
+                        effect = (patch_logit - corr_logit) / denom
+                    # Clip to [-1, 2] to handle outliers
+                    effect = max(-1.0, min(2.0, effect))
+                    layer_effects[layer_idx].append(effect)
+                    sample_layer_effects[layer_idx] = round(effect, 4)
 
             per_sample_results.append(
                 {
@@ -1002,7 +1099,6 @@ class ActivationPatchingExperiment(BaseExperiment):
                 }
             )
             processed += 1
-            torch.cuda.empty_cache()
 
         # --- Aggregate --------------------------------------------------
         mean_effects: Dict[int, float] = {}

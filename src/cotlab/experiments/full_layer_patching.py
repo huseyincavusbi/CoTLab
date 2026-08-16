@@ -16,6 +16,29 @@ from ..logging import ExperimentLogger
 from ..prompts.strategies import SycophantStrategy
 
 
+def make_patch_hook(src: torch.Tensor, row: Optional[int] = None, rows=None):
+    """Row-aware residual patch hook.
+
+    Patches the last-token residual at a layer. With ``row`` set, only that
+    batch row is patched; with ``rows`` (an iterable), every row in it is
+    patched (used for cumulative prefixes). ``src`` is [B, 1, hidden].
+    """
+
+    def hook(module, input, output):
+        patched = output.clone()
+        if rows is not None:
+            rows_list = list(rows)
+            if rows_list:
+                patched[rows_list, -1, :] = src[rows_list, -1, :]
+        elif row is not None:
+            patched[row, -1, :] = src[row, -1, :]
+        else:
+            patched[:, -1, :] = src[:, -1, :]
+        return patched
+
+    return hook
+
+
 @Registry.register_experiment("full_layer_patching")
 class FullLayerPatchingExperiment(BaseExperiment):
     """
@@ -78,7 +101,7 @@ class FullLayerPatchingExperiment(BaseExperiment):
 
         # 3. Get baseline
         clean_tokens = tokenizer(clean_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             clean_logits = model(**clean_tokens).logits
         baseline_effect = (clean_logits[0, -1, token_you] - clean_logits[0, -1, token_acute]).item()
         print(f"\nBaseline (clean) effect: {baseline_effect:.4f}")
@@ -101,7 +124,7 @@ class FullLayerPatchingExperiment(BaseExperiment):
             handles.append(h)
 
         corr_tokens = tokenizer(corr_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             corr_logits = model(**corr_tokens).logits
 
         corr_effect = (corr_logits[0, -1, token_you] - corr_logits[0, -1, token_acute]).item()
@@ -119,32 +142,30 @@ class FullLayerPatchingExperiment(BaseExperiment):
 
         results = []
 
-        for layer_idx in self.target_layers:
-            source_act = corr_cache[layer_idx]
-
-            def make_patch_hook(src):
-                def hook(module, input, output):
-                    patched = output.clone()
-                    # Patch last token position with corrupted activations
-                    patched[:, -1, :] = src[:, -1, :]
-                    return patched
-
-                return hook
-
-            residual_module = backend.hook_manager.get_residual_module(layer_idx)
-            handle = residual_module.register_forward_hook(make_patch_hook(source_act))
-
+        # 5a. Single-layer sweep batched into ONE forward (one row per layer).
+        if self.target_layers:
+            B = len(self.target_layers)
+            batch_tokens = {k: v.expand(B, -1) for k, v in clean_tokens.items()}
+            handles = []
+            for row, layer_idx in enumerate(self.target_layers):
+                src = corr_cache[layer_idx][:, -1, :].unsqueeze(0).expand(B, -1, -1)
+                residual_module = backend.hook_manager.get_residual_module(layer_idx)
+                handles.append(residual_module.register_forward_hook(make_patch_hook(src, row=row)))
             try:
-                with torch.no_grad():
-                    patched_logits = model(**clean_tokens).logits
+                with torch.inference_mode():
+                    patched_logits_batch = model(**batch_tokens).logits
+            finally:
+                for h in handles:
+                    h.remove()
 
-                effect = (
-                    patched_logits[0, -1, token_you] - patched_logits[0, -1, token_acute]
-                ).item()
+            effects = (
+                patched_logits_batch[:, -1, token_you] - patched_logits_batch[:, -1, token_acute]
+            ).cpu()
+            top_ids = torch.argmax(patched_logits_batch[:, -1, :], dim=-1).cpu().tolist()
+            for row, layer_idx in enumerate(self.target_layers):
+                effect = effects[row].item()
                 change = effect - baseline_effect
-                top_token_id = torch.argmax(patched_logits[0, -1]).item()
-                top_token = tokenizer.decode([top_token_id])
-
+                top_token = tokenizer.decode([top_ids[row]])
                 results.append(
                     {
                         "layer": layer_idx,
@@ -153,53 +174,44 @@ class FullLayerPatchingExperiment(BaseExperiment):
                         "top_token": top_token,
                     }
                 )
-
                 print(f"L{layer_idx:<7} | {effect:>8.3f}   | {change:>+8.3f}  | {top_token}")
-
-            finally:
-                handle.remove()
 
         # 6. Test cumulative layer patching
         print("\n" + "-" * 60)
         print("CUMULATIVE PATCHING:")
         print("-" * 60)
 
-        for num_layers in range(1, len(self.target_layers) + 1):
-            layers_to_patch = self.target_layers[:num_layers]
+        # 6a. Cumulative sweep batched into ONE forward: row k patches prefix
+        # layers[0..k]; the hook at layer[j] patches every row >= j.
+        if self.target_layers:
+            B = len(self.target_layers)
+            batch_tokens = {k: v.expand(B, -1) for k, v in clean_tokens.items()}
             handles = []
-
-            for layer_idx in layers_to_patch:
-                source_act = corr_cache[layer_idx]
-
-                def make_patch_hook(src):
-                    def hook(module, input, output):
-                        patched = output.clone()
-                        patched[:, -1, :] = src[:, -1, :]
-                        return patched
-
-                    return hook
-
+            for j, layer_idx in enumerate(self.target_layers):
+                src = corr_cache[layer_idx][:, -1, :].unsqueeze(0).expand(B, -1, -1)
                 residual_module = backend.hook_manager.get_residual_module(layer_idx)
-                h = residual_module.register_forward_hook(make_patch_hook(source_act))
-                handles.append(h)
-
+                handles.append(
+                    residual_module.register_forward_hook(make_patch_hook(src, rows=range(j, B)))
+                )
             try:
-                with torch.no_grad():
-                    patched_logits = model(**clean_tokens).logits
-
-                effect = (
-                    patched_logits[0, -1, token_you] - patched_logits[0, -1, token_acute]
-                ).item()
-                change = effect - baseline_effect
-                top_token_id = torch.argmax(patched_logits[0, -1]).item()
-                top_token = tokenizer.decode([top_token_id])
-
-                layers_str = ", ".join(f"L{layer}" for layer in layers_to_patch)
-                print(f"{layers_str:<20} | {effect:>8.3f} | {change:>+8.3f} | {top_token}")
-
+                with torch.inference_mode():
+                    patched_logits_batch = model(**batch_tokens).logits
             finally:
                 for h in handles:
                     h.remove()
+
+            effects = (
+                patched_logits_batch[:, -1, token_you] - patched_logits_batch[:, -1, token_acute]
+            ).cpu()
+            top_ids = torch.argmax(patched_logits_batch[:, -1, :], dim=-1).cpu().tolist()
+            for num_layers in range(1, len(self.target_layers) + 1):
+                row = num_layers - 1
+                effect = effects[row].item()
+                change = effect - baseline_effect
+                top_token = tokenizer.decode([top_ids[row]])
+                layers_to_patch = self.target_layers[:num_layers]
+                layers_str = ", ".join(f"L{layer}" for layer in layers_to_patch)
+                print(f"{layers_str:<20} | {effect:>8.3f} | {change:>+8.3f} | {top_token}")
 
         print("-" * 60)
 

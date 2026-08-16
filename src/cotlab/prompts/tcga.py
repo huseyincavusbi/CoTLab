@@ -106,21 +106,27 @@ class TCGAPromptStrategy(StructuredOutputMixin, BasePromptStrategy):
             self.system_role = system_role
         else:
             self.system_role = SYSTEM_ROLE_CONTRARIAN if contrarian else SYSTEM_ROLE
+        self._resolved_templates: Dict = {}
 
     @property
     def name(self) -> str:
         return self._name
 
+    def _resolve_template(self) -> str:
+        key = (self.answer_first, self.few_shot)
+        if key in self._resolved_templates:
+            return self._resolved_templates[key]
+        template = PROMPT_TEMPLATE_ANSWER_FIRST if self.answer_first else PROMPT_TEMPLATE
+        if not self.few_shot:
+            template = self._remove_few_shot_examples(template)
+        self._resolved_templates[key] = template
+        return template
+
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         """Build prompt with pathology report."""
         report = input_data.get("text", input_data.get("report", ""))
 
-        template = PROMPT_TEMPLATE_ANSWER_FIRST if self.answer_first else PROMPT_TEMPLATE
-
-        if not self.few_shot:
-            template = self._remove_few_shot_examples(template)
-
-        prompt = template.format(report=report)
+        prompt = self._resolve_template().format(report=report)
         return prompt
 
     def _remove_few_shot_examples(self, template: str) -> str:

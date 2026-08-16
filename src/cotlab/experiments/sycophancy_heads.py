@@ -118,7 +118,7 @@ class SycophancyHeadsExperiment(BaseExperiment):
             handles.append(h)
 
         clean_tokens = tokenizer(clean_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             _ = model(**clean_tokens).logits
 
         for h in handles:
@@ -132,7 +132,7 @@ class SycophancyHeadsExperiment(BaseExperiment):
             handles.append(h)
 
         corr_tokens = tokenizer(corr_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             _ = model(**corr_tokens).logits
 
         for h in handles:
@@ -147,34 +147,46 @@ class SycophancyHeadsExperiment(BaseExperiment):
 
         results: List[HeadPatchingResult] = []
 
+        # Batched sweep: one forward per layer with num_heads identical rows,
+        # each row patching a different head slice of the last token. Rows are
+        # isolated by the causal attention mask (eval, no dropout), so each row
+        # reproduces the sequential (layer, head) forward exactly.
+        B = num_heads
+        batch_tokens = {k: v.expand(B, -1) for k, v in clean_tokens.items()}
+
         for layer_idx in self.search_layers:
-            for head_idx in range(num_heads):
-                corr_attn = corr_attn_cache[layer_idx]
-                head_start = head_idx * head_dim
-                head_end = (head_idx + 1) * head_dim
+            corr_attn = corr_attn_cache[layer_idx]
+            src = corr_attn[:, -1, :].unsqueeze(0).expand(B, -1, -1)  # [B, 1, hidden]
 
-                def make_head_patch_hook(corr_act, h_start, h_end):
-                    def hook(module, input, output):
-                        patched = output.clone()
-                        patched[:, -1, h_start:h_end] = corr_act[:, -1, h_start:h_end]
-                        return patched
-
-                    return hook
-
-                attn_module = backend.hook_manager.get_attention_output_module(layer_idx)
-                handle = attn_module.register_forward_hook(
-                    make_head_patch_hook(corr_attn, head_start, head_end)
+            def make_head_patch_hook(source):
+                rows_idx = torch.arange(B, device=backend.device)[:, None].expand(B, head_dim)
+                cols = (
+                    torch.arange(B, device=backend.device)[:, None] * head_dim
+                    + torch.arange(head_dim, device=backend.device)[None, :]
                 )
 
-                try:
-                    with torch.no_grad():
-                        patched_logits = model(**clean_tokens).logits
+                def hook(module, input, output):
+                    patched = output.clone()
+                    # Vectorized per-row head-slice patch: row b patches head b.
+                    patched[rows_idx, -1, cols] = source[rows_idx, -1, cols]
+                    return patched
 
-                    last_logits = patched_logits[0, -1]
-                    effect = (last_logits[token_you] - last_logits[token_acute]).item()
+                return hook
 
-                    top_token_id = torch.argmax(last_logits).item()
-                    top_token = tokenizer.decode([top_token_id])
+            attn_module = backend.hook_manager.get_attention_output_module(layer_idx)
+            handle = attn_module.register_forward_hook(make_head_patch_hook(src))
+
+            try:
+                with torch.inference_mode():
+                    patched_logits = model(**batch_tokens).logits
+
+                last_logits = patched_logits[:, -1, :]  # [B, vocab]
+                effects = (last_logits[:, token_you] - last_logits[:, token_acute]).cpu()
+                top_ids = torch.argmax(last_logits, dim=-1).cpu().tolist()
+
+                for head_idx in range(B):
+                    effect = effects[head_idx].item()
+                    top_token = tokenizer.decode([top_ids[head_idx]])
 
                     results.append(
                         HeadPatchingResult(
@@ -185,8 +197,8 @@ class SycophancyHeadsExperiment(BaseExperiment):
                     # Print all heads
                     print(f"{layer_idx:<6} | {head_idx:<5} | {effect:>8.3f}   | {top_token}")
 
-                finally:
-                    handle.remove()
+            finally:
+                handle.remove()
 
         print("-" * 60)
 

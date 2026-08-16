@@ -16,6 +16,26 @@ from ..logging import ExperimentLogger
 from ..prompts import ChainOfThoughtStrategy, DirectAnswerStrategy
 
 
+def make_nested_head_hook(src: torch.Tensor, row_to_heads: Dict[int, List[int]], head_dim: int):
+    """Row-aware multi-head patch hook for nested prefixes.
+
+    Patches the last-token attention-output head slices at the layer for each
+    batch row, using the head slices listed in ``row_to_heads``. ``src`` is the
+    cached attention output [1, seq, hidden]. Rows without heads are untouched.
+    """
+
+    def hook(module, inp, output):
+        patched = output.clone()
+        for r, heads in row_to_heads.items():
+            for h in heads:
+                h_start = h * head_dim
+                h_end = (h + 1) * head_dim
+                patched[r, -1, h_start:h_end] = src[0, -1, h_start:h_end]
+        return patched
+
+    return hook
+
+
 @Registry.register_experiment("multi_head_cot")
 class MultiHeadCoTExperiment(BaseExperiment):
     """
@@ -91,7 +111,7 @@ class MultiHeadCoTExperiment(BaseExperiment):
 
         # 2. Get baselines
         direct_tokens = tokenizer(direct_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             direct_logits = model(**direct_tokens).logits
         direct_top = torch.argmax(direct_logits[0, -1]).item()
         direct_token = tokenizer.decode([direct_top])
@@ -115,7 +135,7 @@ class MultiHeadCoTExperiment(BaseExperiment):
             handles.append(h)
 
         cot_tokens = tokenizer(cot_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             cot_logits = model(**cot_tokens).logits
 
         for h in handles:
@@ -145,48 +165,62 @@ class MultiHeadCoTExperiment(BaseExperiment):
 
         results = []
 
-        for num_heads_to_patch in test_sizes:
-            heads_to_patch = all_heads[:num_heads_to_patch]
-
-            # Group by layer for efficient patching
-            by_layer: Dict[int, List[int]] = {}
-            for layer, head in heads_to_patch:
-                by_layer.setdefault(layer, []).append(head)
-
-            # Register multi-head patch hooks
-            handles = []
-            for layer_idx, head_list in by_layer.items():
-                h = backend.hook_manager.register_multi_head_patch_hook(
-                    layer_idx=layer_idx,
-                    head_indices=head_list,
-                    source_activation=cot_attn_cache[layer_idx],
-                    head_dim=head_dim,
+        # 5a. Batched progressive patching: ONE forward with len(test_sizes)
+        # identical rows; row r patches the nested prefix all_heads[:test_sizes[r]].
+        # At each layer the hook patches only the rows whose prefix includes a
+        # head from that layer. Rows are isolated by the causal attention mask
+        # (eval, no dropout), so each row reproduces its sequential forward.
+        B = len(test_sizes)
+        if B > 0:
+            batch_tokens = {k: v.expand(B, -1) for k, v in direct_tokens.items()}
+        handles = []
+        for layer_idx in self.target_layers:
+            # Row -> list of heads at this layer included in prefix all_heads[:test_sizes[r]]
+            row_to_heads: Dict[int, List[int]] = {}
+            for r, size in enumerate(test_sizes):
+                heads = [h for (lay, h) in all_heads[:size] if lay == layer_idx]
+                if heads:
+                    row_to_heads[r] = heads
+            if not row_to_heads:
+                continue
+            src = cot_attn_cache[layer_idx]
+            attn_module = backend.hook_manager.get_attention_output_module(layer_idx)
+            handles.append(
+                attn_module.register_forward_hook(
+                    make_nested_head_hook(src, row_to_heads, head_dim)
                 )
-                handles.append(h)
+            )
 
+        patched_logits_batch = None
+        if B > 0:
             try:
-                with torch.no_grad():
-                    patched_logits = model(**direct_tokens).logits
-
-                patched_top = torch.argmax(patched_logits[0, -1]).item()
-                patched_token = tokenizer.decode([patched_top])
-                changed = patched_top != direct_top
-
-                results.append(
-                    {
-                        "num_heads": num_heads_to_patch,
-                        "changed": changed,
-                        "patched_token": patched_token,
-                        "heads": [f"L{layer}H{h}" for layer, h in heads_to_patch],
-                    }
-                )
-
-                status = "YES" if changed else "no"
-                print(f"{num_heads_to_patch:<10} | {status:<10} | {patched_token}")
-
+                with torch.inference_mode():
+                    patched_logits_batch = model(**batch_tokens).logits
             finally:
                 for h in handles:
                     h.remove()
+
+        if B > 0:
+            patched_tops = torch.argmax(patched_logits_batch[:, -1, :], dim=-1).cpu().tolist()
+        else:
+            patched_tops = []
+        for r, num_heads_to_patch in enumerate(test_sizes):
+            heads_to_patch = all_heads[:num_heads_to_patch]
+            patched_top = patched_tops[r]
+            patched_token = tokenizer.decode([patched_top])
+            changed = patched_top != direct_top
+
+            results.append(
+                {
+                    "num_heads": num_heads_to_patch,
+                    "changed": changed,
+                    "patched_token": patched_token,
+                    "heads": [f"L{layer}H{h}" for layer, h in heads_to_patch],
+                }
+            )
+
+            status = "YES" if changed else "no"
+            print(f"{num_heads_to_patch:<10} | {status:<10} | {patched_token}")
 
         print("-" * 60)
 

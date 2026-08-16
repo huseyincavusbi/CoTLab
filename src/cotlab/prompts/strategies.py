@@ -1,5 +1,6 @@
 """Prompt strategies for different experiment types."""
 
+import functools
 import re
 from typing import Any, Dict, Optional
 
@@ -13,6 +14,7 @@ GENERIC_FEW_SHOT_EXAMPLES = [
 ]
 
 
+@functools.lru_cache(maxsize=8)
 def _build_generic_few_shot_block(num_examples: int) -> str:
     examples = GENERIC_FEW_SHOT_EXAMPLES[: max(0, num_examples)]
     if not examples:
@@ -870,6 +872,12 @@ class FewShotStrategy(StructuredOutputMixin, BasePromptStrategy):
         self.contrarian = contrarian
         self.output_format = output_format
         self.json_cot = json_cot
+        # The examples content is constant; whether it is included depends on
+        # self.few_shot at build time (few_shot_contrast toggles it per sample).
+        self._examples_str = "\n".join(
+            f"Symptoms: {s} -> Diagnosis: {d}"
+            for s, d in self.MEDICAL_EXAMPLES[: self.num_examples]
+        )
 
     @property
     def name(self) -> str:
@@ -877,14 +885,7 @@ class FewShotStrategy(StructuredOutputMixin, BasePromptStrategy):
 
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         question = input_data.get("question", input_data.get("text", ""))
-        examples = ""
-        if self.few_shot:
-            examples = "\n".join(
-                [
-                    f"Symptoms: {s} -> Diagnosis: {d}"
-                    for s, d in self.MEDICAL_EXAMPLES[: self.num_examples]
-                ]
-            )
+        examples = self._examples_str if self.few_shot else ""
         header = "Here are some example diagnoses:\n\n" if examples else ""
         prompt = f"""{header}{examples}
 

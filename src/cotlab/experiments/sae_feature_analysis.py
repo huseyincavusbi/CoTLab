@@ -134,6 +134,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         seed: int = 42,
         max_input_tokens: int = 1024,
         answer_cue: str = "\n\nAnswer:",
+        batch_size: int = 8,
         **kwargs,
     ):
         self._name = name
@@ -151,6 +152,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         self.seed = seed
         self.max_input_tokens = max_input_tokens
         self.answer_cue = answer_cue
+        self.batch_size = batch_size
 
     @property
     def name(self) -> str:
@@ -206,7 +208,7 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         def make_hook(layer_idx: int):
             def hook(module, inp, output):
                 tensor = output[0] if isinstance(output, tuple) else output
-                with torch.no_grad():
+                with torch.inference_mode():
                     cache[layer_idx] = tensor[0].detach().float().cpu()
 
             return hook
@@ -218,7 +220,85 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
                 handles.append(mod.register_forward_hook(make_hook(layer_idx)))
 
         try:
-            with torch.no_grad():
+            with torch.inference_mode():
+                backend._model(**tokens)
+        finally:
+            for h in handles:
+                h.remove()
+
+        return cache
+
+    def _extract_residuals_batch(
+        self,
+        backend: InferenceBackend,
+        tokens: Dict[str, torch.Tensor],
+        layers: List[int],
+    ) -> Dict[int, torch.Tensor]:
+        """Batched forward capturing the full residual per layer, per row.
+
+        Left-padding + position_ids remap keep each row's activations identical
+        to its single-sample run (logit_lens precedent).
+
+        Returns:
+            dict: layer_idx → [B, seq_len, d_model] float32 CPU.
+        """
+        cache: Dict[int, torch.Tensor] = {}
+
+        def make_hook(layer_idx: int):
+            def hook(module, inp, output):
+                tensor = output[0] if isinstance(output, tuple) else output
+                with torch.inference_mode():
+                    cache[layer_idx] = tensor.detach().float().cpu()  # [B, seq, d]
+
+            return hook
+
+        handles = []
+        for layer_idx in layers:
+            if layer_idx < backend.hook_manager.num_layers:
+                mod = backend.hook_manager.get_residual_module(layer_idx)
+                handles.append(mod.register_forward_hook(make_hook(layer_idx)))
+
+        try:
+            with torch.inference_mode():
+                backend._model(**tokens)
+        finally:
+            for h in handles:
+                h.remove()
+
+        return cache
+
+    def _extract_last_residuals_batch(
+        self,
+        backend: InferenceBackend,
+        tokens: Dict[str, torch.Tensor],
+        layers: List[int],
+    ) -> Dict[int, torch.Tensor]:
+        """Batched forward capturing the last-token residual per row.
+
+        Left-padding + position_ids remap keep each row's last-token residual
+        identical to its single-sample run (logit_lens precedent).
+
+        Returns:
+            dict: layer_idx → [B, d_model] float32 CPU (per-row last token).
+        """
+        cache: Dict[int, torch.Tensor] = {}
+
+        def make_hook(layer_idx: int):
+            def hook(module, inp, output):
+                tensor = output[0] if isinstance(output, tuple) else output
+                with torch.inference_mode():
+                    cache[layer_idx] = tensor[:, -1, :].detach().float().cpu()  # [B, d]
+
+            return hook
+
+        handles = []
+        for layer_idx in layers:
+            if layer_idx < backend.hook_manager.num_layers:
+                mod = backend.hook_manager.get_residual_module(layer_idx)
+                handles.append(mod.register_forward_hook(make_hook(layer_idx)))
+
+        try:
+            with torch.inference_mode():
                 backend._model(**tokens)
         finally:
             for h in handles:
@@ -275,6 +355,31 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
             max_length=self.max_input_tokens,
         ).to(device)
 
+    def _tokenize_batch(self, tokenizer, texts: List[str], device: str) -> Dict[str, torch.Tensor]:
+        """Left-pad a batch with position_ids remap (logit_lens precedent)."""
+        orig_side = tokenizer.padding_side
+        orig_pad = tokenizer.pad_token_id
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        try:
+            tokens = tokenizer(
+                texts,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.max_input_tokens,
+                padding=True,
+            ).to(device)
+        finally:
+            tokenizer.padding_side = orig_side
+            tokenizer.pad_token_id = orig_pad
+
+        attention_mask = tokens["attention_mask"]
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+        tokens["position_ids"] = position_ids
+        return tokens
+
     # ------------------------------------------------------------------
     # Phase 1: vocabulary probing
     # ------------------------------------------------------------------
@@ -299,41 +404,90 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
         tokenizer = backend._tokenizer
         device = backend.device
 
-        # Accumulators: layer → feature_idx → list of activation values.
-        accum: Dict[int, Dict[int, List[float]]] = {layer: {} for layer in layers}
+        # Dense accumulators: layer → [d_sae] sum/count of positive activations.
+        # Final mean = sum/count matches the per-feature list average the loop
+        # version produced, but accumulates in float32 on GPU rather than Python
+        # floats, so scores agree to ~1e-7 relative float noise (APPROXIMATE at
+        # float level, exact for the set of firing features and top-K ordering
+        # except on ties closer than ~1e-7).
+        accum_sum: Dict[int, torch.Tensor] = {layer: None for layer in layers}
+        accum_count: Dict[int, torch.Tensor] = {layer: None for layer in layers}
 
         print(f"\nPhase 1: vocabulary probing over {len(self.histo_vocab)} terms …")
-        for term in tqdm(self.histo_vocab, desc="Vocab probe"):
+
+        def process_term(term: str) -> None:
+            """Single-term accumulation (per-row SAE encode)."""
             prompt = f"{self.vocab_context_prefix} {term}{self.answer_cue}"
             tokens = self._tokenize(tokenizer, prompt, device)
             input_ids = tokens["input_ids"][0]
-
             term_positions = self._term_token_positions(input_ids, tokenizer, term)
             if not term_positions:
-                # Fallback: use all non-special token positions.
                 term_positions = list(range(len(input_ids)))
-
             residuals = self._extract_residuals(backend, tokens, layers)
-
             for layer_idx, resid in residuals.items():
-                # resid: [seq_len, d_model]  (CPU float32)
                 sae = saes[layer_idx]
                 term_resid = resid[term_positions]  # [n_toks, d_model]
-                with torch.no_grad():
+                with torch.inference_mode():
                     features = sae.encode(term_resid.to(sae.w_enc.device))
-                    # mean over term tokens → [d_sae]
-                    mean_acts = features.mean(dim=0).cpu()
+                    mean_acts = features.mean(dim=0)
+                if accum_sum[layer_idx] is None:
+                    accum_sum[layer_idx] = torch.zeros_like(mean_acts)
+                    accum_count[layer_idx] = torch.zeros_like(mean_acts)
+                pos = mean_acts > 0
+                if pos.any():
+                    accum_sum[layer_idx] = accum_sum[layer_idx] + mean_acts.masked_fill(~pos, 0.0)
+                    accum_count[layer_idx] = accum_count[layer_idx] + pos.to(mean_acts.dtype)
 
-                for feat_idx, val in enumerate(mean_acts.tolist()):
-                    if val > 0:
-                        accum[layer_idx].setdefault(feat_idx, []).append(val)
+        # Batch the per-term forwards into chunks (left-pad + position_ids remap),
+        # then SAE-encode each row at its own (ragged) term positions. The batched
+        # forward reproduces the sequential forwards per row within float32 kernel
+        # noise (~5e-7; the accumulation is documented APPROXIMATE at float level).
+        batch_size = max(1, self.batch_size or 1)
+        for start in tqdm(range(0, len(self.histo_vocab), batch_size), desc="Vocab probe"):
+            chunk = self.histo_vocab[start : start + batch_size]
+            if len(chunk) == 1:
+                process_term(chunk[0])
+                continue
+            prompts = [f"{self.vocab_context_prefix} {term}{self.answer_cue}" for term in chunk]
+            tokens = self._tokenize_batch(tokenizer, prompts, device)
+            try:
+                residuals = self._extract_residuals_batch(backend, tokens, layers)
+            except (ValueError, KeyError, RuntimeError, IndexError, TypeError):
+                # Fall back to per-term on batch failure (e.g. OOM).
+                for term in chunk:
+                    process_term(term)
+                continue
+            input_ids_b = tokens["input_ids"].cpu()
+            for row, term in enumerate(chunk):
+                term_positions = self._term_token_positions(input_ids_b[row], tokenizer, term)
+                if not term_positions:
+                    term_positions = list(range(len(input_ids_b[row])))
+                for layer_idx, resid_b in residuals.items():
+                    sae = saes[layer_idx]
+                    term_resid = resid_b[row][term_positions]  # [n_toks, d_model]
+                    with torch.inference_mode():
+                        features = sae.encode(term_resid.to(sae.w_enc.device))
+                        mean_acts = features.mean(dim=0)
+                    if accum_sum[layer_idx] is None:
+                        accum_sum[layer_idx] = torch.zeros_like(mean_acts)
+                        accum_count[layer_idx] = torch.zeros_like(mean_acts)
+                    pos = mean_acts > 0
+                    if pos.any():
+                        accum_sum[layer_idx] = accum_sum[layer_idx] + mean_acts.masked_fill(
+                            ~pos, 0.0
+                        )
+                        accum_count[layer_idx] = accum_count[layer_idx] + pos.to(mean_acts.dtype)
 
         # Aggregate: mean activation per feature (0 if never fired).
         histo_scores: Dict[int, Dict[int, float]] = {}
         for layer_idx in layers:
-            scores: Dict[int, float] = {}
-            for feat_idx, vals in accum[layer_idx].items():
-                scores[feat_idx] = sum(vals) / len(vals)
+            if accum_sum[layer_idx] is None:
+                histo_scores[layer_idx] = {}
+                continue
+            sums = accum_sum[layer_idx].cpu()
+            counts = accum_count[layer_idx].cpu()
+            mean = torch.where(counts > 0, sums / counts.clamp_min(1.0), torch.zeros_like(sums))
+            scores = {int(i): float(v) for i, v in enumerate(mean.tolist()) if v > 0}
             histo_scores[layer_idx] = scores
 
         return histo_scores
@@ -398,31 +552,38 @@ class SAEFeatureAnalysisExperiment(BaseExperiment):
 
         print(f"\nPhase 2: few-shot contrast over {len(samples)} samples …")
         for sample in tqdm(samples, desc="Few-shot contrast"):
-            for condition, few_shot_flag in [("few_shot", True), ("zero_shot", False)]:
-                try:
-                    prompt_str = self._build_prompt(
-                        prompt_strategy, sample.text, sample.metadata or {}, few_shot_flag
+            # Build both conditions up front; if either prompt fails, skip sample.
+            prompts = []
+            try:
+                for condition, few_shot_flag in [("few_shot", True), ("zero_shot", False)]:
+                    prompts.append(
+                        self._build_prompt(
+                            prompt_strategy, sample.text, sample.metadata or {}, few_shot_flag
+                        )
                     )
-                except Exception as exc:
-                    tqdm.write(f"  [skip] sample {sample.idx} prompt ({condition}): {exc}")
-                    continue
+            except Exception as exc:
+                tqdm.write(f"  [skip] sample {sample.idx} prompt: {exc}")
+                continue
 
-                tokens = self._tokenize(tokenizer, prompt_str, device)
-                residuals = self._extract_residuals(backend, tokens, layers)
+            try:
+                # Batch both conditions into ONE forward (2 rows, left-pad).
+                tokens = self._tokenize_batch(tokenizer, prompts, device)
+                residuals = self._extract_last_residuals_batch(backend, tokens, layers)
+            except (ValueError, KeyError, RuntimeError, IndexError, TypeError) as exc:
+                tqdm.write(f"  [skip] sample {sample.idx} forward: {exc}")
+                continue
 
-                for layer_idx, resid in residuals.items():
-                    # Use last-token residual — position before the answer letter.
-                    last_resid = resid[-1].unsqueeze(0)  # [1, d_model]
-                    sae = saes[layer_idx]
-                    with torch.no_grad():
-                        features = sae.encode(last_resid.to(sae.w_enc.device))
-                        feat_acts = features[0].cpu()  # [d_sae]
+            for layer_idx, last_resids in residuals.items():
+                # last_resids: [2, d_model] (few_shot row 0, zero_shot row 1)
+                sae = saes[layer_idx]
+                with torch.inference_mode():
+                    features = sae.encode(last_resids.to(sae.w_enc.device))  # [2, d_sae]
+                    feat_acts = features.cpu()
 
+                for cond_row, condition in [(0, "few_shot"), (1, "zero_shot")]:
                     for feat_idx in top_features[layer_idx]:
-                        val = float(feat_acts[feat_idx].item())
+                        val = float(feat_acts[cond_row, feat_idx].item())
                         contrast[layer_idx][feat_idx][condition].append(val)
-
-                torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
         return contrast
 

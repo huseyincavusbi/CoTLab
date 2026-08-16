@@ -121,7 +121,7 @@ class JacobianLens:
         J = self.jacobians[layer].to(residual.device, dtype=residual.dtype)
         return residual @ J.T
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def decode(
         self,
         residual: torch.Tensor,
@@ -135,7 +135,7 @@ class JacobianLens:
             transported = norm(transported)
         return lm_head(transported)
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def apply(
         self,
         model: nn.Module,
@@ -160,7 +160,7 @@ class JacobianLens:
         else:
             pos_indices = [p if p >= 0 else seq_len + p for p in positions]
 
-        with torch.no_grad():
+        with torch.inference_mode():
             out = model(input_ids=input_ids, output_hidden_states=True, use_cache=False)
         hidden_states = out.hidden_states
 
@@ -215,6 +215,10 @@ class JacobianLens:
 # ---------------------------------------------------------------------------
 
 SKIP_FIRST_N_POSITIONS = 16
+# Output-coordinate dims per backward pass in the fit loop. The cotangent is
+# [dim_batch, seq_len, d_model] and the prompt is replicated dim_batch times, so
+# VRAM scales ~linearly with dim_batch; higher = fewer autograd.grad calls
+# (d_model/dim_batch), lower = less memory. Verified bit-identical across values.
 DIM_BATCH = 8
 
 
@@ -382,8 +386,6 @@ def jacobian_for_prompt(
             J[layer][dim_start : dim_start + n_dims, :] = rows
 
     del source_acts, target_act, replicated
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
     return J
 
 
@@ -637,6 +639,7 @@ class JacobianLensExperiment(BaseExperiment):
         self.seed = seed
         self.answer_cue = answer_cue
         self.lrp = lrp
+        self._correct_tok_cache: Dict[str, set] = {}
         self.steer_token = steer_token
         self.steer_alpha = steer_alpha
         self.steer_positions = steer_positions
@@ -670,26 +673,59 @@ class JacobianLensExperiment(BaseExperiment):
                 continue
         return None
 
-    @staticmethod
-    def _correct_token_ids(tokenizer, label) -> set:
+    def _correct_token_ids(self, tokenizer, label) -> set:
         if label is None:
             return set()
         if isinstance(label, bool):
             label_str = "Yes" if label else "No"
         else:
             label_str = str(label).strip()
+        if label_str in self._correct_tok_cache:
+            return self._correct_tok_cache[label_str]
         candidates = set()
         if len(label_str) == 1 and label_str.upper() in "ABCDEFG":
             for prefix in (" ", "", "\n", " \n"):
                 ids = tokenizer.encode(prefix + label_str.upper(), add_special_tokens=False)
                 if ids:
                     candidates.add(ids[-1])
+            self._correct_tok_cache[label_str] = candidates
             return candidates
         for prefix in (" ", ""):
             ids = tokenizer.encode(prefix + label_str, add_special_tokens=False)
             if ids:
                 candidates.add(ids[0])
+        self._correct_tok_cache[label_str] = candidates
         return candidates
+
+    def _tokenize_batch(self, tokenizer, texts: List[str], device: str) -> Dict[str, torch.Tensor]:
+        """Left-pad a batch with position_ids remap (logit_lens precedent).
+
+        Each row's positional embeddings then match its single-sample run, so a
+        per-row intervention in one batched forward reproduces the sequential
+        per-sample forwards exactly.
+        """
+        orig_side = tokenizer.padding_side
+        orig_pad = tokenizer.pad_token_id
+        tokenizer.padding_side = "left"
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+        try:
+            tokens = tokenizer(
+                texts,
+                return_tensors="pt",
+                truncation=True,
+                max_length=self.max_input_tokens,
+                padding=True,
+            ).to(device)
+        finally:
+            tokenizer.padding_side = orig_side
+            tokenizer.pad_token_id = orig_pad
+
+        attention_mask = tokens["attention_mask"]
+        position_ids = attention_mask.long().cumsum(-1) - 1
+        position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+        tokens["position_ids"] = position_ids
+        return tokens
 
     def _resolve_apply_layers(self, lens: JacobianLens) -> List[int]:
         if self.source_layers is not None:
@@ -780,13 +816,21 @@ class JacobianLensExperiment(BaseExperiment):
         n = len(samples)
         print(f"Samples: {n}")
 
-        jl_top1: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
-        jl_topk: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
-        ll_top1: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
-        ll_topk: Dict[int, List[bool]] = {l: [] for layer in apply_layers}
+        jl_top1: Dict[int, List[bool]] = {layer: [] for layer in apply_layers}
+        jl_topk: Dict[int, List[bool]] = {layer: [] for layer in apply_layers}
+        ll_top1: Dict[int, List[bool]] = {layer: [] for layer in apply_layers}
+        ll_topk: Dict[int, List[bool]] = {layer: [] for layer in apply_layers}
         jl_emergence: List[Optional[int]] = []
         ll_emergence: List[Optional[int]] = []
         jl_never = ll_never = final_correct = jl_disagree = 0
+
+        # Preload J matrices to the device once (avoids per-(sample, layer)
+        # .to() device transfers in lens.transport).
+        j_preloaded = {}
+        for layer in apply_layers:
+            if layer in lens.jacobians:
+                j_preloaded[layer] = lens.jacobians[layer].to(device, dtype=torch.float32)
+        layers_with_J = [layer for layer in apply_layers if layer in lens.jacobians]
 
         for sample in tqdm(samples, desc="J-lens apply"):
             prompt_input = {
@@ -803,13 +847,14 @@ class JacobianLensExperiment(BaseExperiment):
                     truncation=True,
                     max_length=self.max_input_tokens,
                 ).to(device)
-                with torch.no_grad():
+                with torch.inference_mode():
                     out = model(input_ids=prompt_tokens, output_hidden_states=True, use_cache=False)
                 hidden_states = out.hidden_states
-                final_h = hidden_states[-1][0, -1, :]
-                if norm is not None:
-                    final_h = norm(final_h)
-                final_id = int(torch.argmax(lm_head(final_h)).item())
+                with torch.inference_mode():
+                    final_h = hidden_states[-1][0, -1, :].detach().clone()
+                    if norm is not None:
+                        final_h = norm(final_h)
+                    final_id = int(torch.argmax(lm_head(final_h)).item())
             except Exception as e:
                 tqdm.write(f"  [skip] sample {sample.idx}: {type(e).__name__}: {e}")
                 n -= 1
@@ -819,40 +864,59 @@ class JacobianLensExperiment(BaseExperiment):
             if correct_ids and final_id in correct_ids:
                 final_correct += 1
 
+            # Batched per-layer decode: stack last-token hidden states across
+            # the lens layers [L, d], one norm + lm_head call each. RMSNorm /
+            # LayerNorm normalize per-token over the hidden dim, and lm_head is
+            # a per-row matmul, so the batched rows are identical to the
+            # per-layer decode.
             jl_ok = ll_ok = False
-            for layer in apply_layers:
-                if layer + 1 >= len(hidden_states):
-                    continue
-                h = hidden_states[layer + 1][0, -1, :]
+            valid_layers = [layer for layer in layers_with_J if layer + 1 < len(hidden_states)]
+            if valid_layers:
+                h_stack = (
+                    torch.stack([hidden_states[layer + 1][0, -1, :] for layer in valid_layers])
+                    .to(device)
+                    .float()
+                )  # [L, d] — float32 to match preloaded Js
+                # J stack aligned to valid_layers order (robust to non-sorted or
+                # gapped source_layers; do not slice a global prefix).
+                valid_J_stack = torch.stack([j_preloaded[layer] for layer in valid_layers])
 
-                # J-lens
-                try:
-                    jl_score = lens.decode(h.unsqueeze(0), layer, lm_head, norm)[0]
-                except KeyError:
-                    continue
-                jl_ids_list = torch.topk(jl_score, self.top_k).indices.tolist()
-                jl_in_top1 = bool(correct_ids) and (jl_ids_list[0] in correct_ids)
-                jl_in_topk = bool(correct_ids) and bool(correct_ids & set(jl_ids_list))
-                jl_top1[layer].append(jl_in_top1)
-                jl_topk[layer].append(jl_in_topk)
-                if jl_in_topk and not jl_ok:
-                    jl_emergence.append(layer)
-                    jl_ok = True
+                # J-lens: transport J_ℓ @ h_ℓ for all layers, then norm + lm_head.
+                # Wrapped in inference_mode like the per-layer lens.decode was.
+                with torch.inference_mode():
+                    transported = torch.bmm(
+                        h_stack.unsqueeze(1), valid_J_stack.transpose(-1, -2)
+                    ).squeeze(1)  # [L, d]
+                    if norm is not None:
+                        transported = norm(transported)
+                    jl_logits = lm_head(transported)  # [L, vocab]
 
-                # Logit lens
-                ll_h = h if norm is None else norm(h)
-                ll_logits = lm_head(ll_h.unsqueeze(0))[0]
-                ll_ids_list = torch.topk(ll_logits, self.top_k).indices.tolist()
-                ll_in_top1 = bool(correct_ids) and (ll_ids_list[0] in correct_ids)
-                ll_in_topk = bool(correct_ids) and bool(correct_ids & set(ll_ids_list))
-                ll_top1[layer].append(ll_in_top1)
-                ll_topk[layer].append(ll_in_topk)
-                if ll_in_topk and not ll_ok:
-                    ll_emergence.append(layer)
-                    ll_ok = True
+                    # Logit lens: norm(h) then lm_head.
+                    ll_h = h_stack if norm is None else norm(h_stack)
+                    ll_logits = lm_head(ll_h)  # [L, vocab]
 
-                if jl_in_top1 != ll_in_top1:
-                    jl_disagree += 1
+                jl_ids_lists = torch.topk(jl_logits, self.top_k, dim=-1).indices.tolist()
+                ll_ids_lists = torch.topk(ll_logits, self.top_k, dim=-1).indices.tolist()
+
+                for idx, layer in enumerate(valid_layers):
+                    jl_ids_list = jl_ids_lists[idx]
+                    ll_ids_list = ll_ids_lists[idx]
+                    jl_in_top1 = bool(correct_ids) and (jl_ids_list[0] in correct_ids)
+                    jl_in_topk = bool(correct_ids) and bool(correct_ids & set(jl_ids_list))
+                    ll_in_top1 = bool(correct_ids) and (ll_ids_list[0] in correct_ids)
+                    ll_in_topk = bool(correct_ids) and bool(correct_ids & set(ll_ids_list))
+                    jl_top1[layer].append(jl_in_top1)
+                    jl_topk[layer].append(jl_in_topk)
+                    ll_top1[layer].append(ll_in_top1)
+                    ll_topk[layer].append(ll_in_topk)
+                    if jl_in_topk and not jl_ok:
+                        jl_emergence.append(layer)
+                        jl_ok = True
+                    if ll_in_topk and not ll_ok:
+                        ll_emergence.append(layer)
+                        ll_ok = True
+                    if jl_in_top1 != ll_in_top1:
+                        jl_disagree += 1
 
             if not jl_ok:
                 jl_emergence.append(None)
@@ -871,10 +935,10 @@ class JacobianLensExperiment(BaseExperiment):
                 else None
             )
 
-        jl_t1 = {l: _rate(jl_top1[l]) for layer in apply_layers}
-        jl_tk = {l: _rate(jl_topk[l]) for layer in apply_layers}
-        ll_t1 = {l: _rate(ll_top1[l]) for layer in apply_layers}
-        ll_tk = {l: _rate(ll_topk[l]) for layer in apply_layers}
+        jl_t1 = {layer: _rate(jl_top1[layer]) for layer in apply_layers}
+        jl_tk = {layer: _rate(jl_topk[layer]) for layer in apply_layers}
+        ll_t1 = {layer: _rate(ll_top1[layer]) for layer in apply_layers}
+        ll_tk = {layer: _rate(ll_topk[layer]) for layer in apply_layers}
 
         print(f"\n{'=' * 80}")
         print("JACOBIAN LENS vs LOGIT LENS")
@@ -954,7 +1018,7 @@ class JacobianLensExperiment(BaseExperiment):
                     truncation=True,
                     max_length=self.max_input_tokens,
                 ).to(device)
-                with torch.no_grad():
+                with torch.inference_mode():
                     out = model(input_ids=prompt_tokens, output_hidden_states=True, use_cache=False)
                 hidden_states = out.hidden_states
             except Exception as e:
@@ -965,7 +1029,7 @@ class JacobianLensExperiment(BaseExperiment):
             for layer in apply_layers:
                 if layer + 1 >= len(hidden_states):
                     continue
-                h = hidden_states[layer + 1][0, -1, :]
+                h = hidden_states[layer + 1][0, -1, :].detach().clone()
                 try:
                     jl_score = lens.decode(h.unsqueeze(0), layer, lm_head, norm)[0]
                     jl_top = torch.topk(jl_score, self.top_k)
@@ -1039,47 +1103,58 @@ class JacobianLensExperiment(BaseExperiment):
         )
 
         results = []
-        for sample in samples:
-            prompt = prompt_strategy.build_prompt(
-                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+        # Batched: one forward per layer over all samples as rows. Left-pad +
+        # position_ids remap keep each row's positional embeddings identical to
+        # its single-sample run, so each row reproduces the sequential steer
+        # forward exactly (causal-mask row isolation, eval, no dropout).
+        prompts_full = [
+            prompt_strategy.build_prompt(
+                {"text": s.text, "question": s.text, "metadata": s.metadata or {}}
             )
-            prompt_full = prompt + self.answer_cue
-            tokens = tokenizer.encode(
-                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
-            ).to(device)
+            + self.answer_cue
+            for s in samples
+        ]
+        batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
 
-            for layer in layers:
-                if layer not in lens.jacobians:
-                    continue
-                J = lens.jacobians[layer].to(device, dtype=torch.float32)
-                v_t = (lm_head.weight[target_id].float() @ J).unsqueeze(0)  # [1, d_model]
+        for layer in layers:
+            if layer not in lens.jacobians:
+                continue
+            J = lens.jacobians[layer].to(device, dtype=torch.float32)
+            v_t = lm_head.weight[target_id].float() @ J  # [d_model]
 
-                def make_steer_hook(vec):
-                    def hook(module, inp, output):
-                        if isinstance(output, tuple):
-                            t, rest = output[0], output[1:]
-                        else:
-                            t, rest = output, ()
-                        t[0, -1, :] = t[0, -1, :] + self.steer_alpha * vec.squeeze(0)
-                        return (t,) + rest if rest else t
+            def make_steer_hook(vec):
+                def hook(module, inp, output):
+                    if isinstance(output, tuple):
+                        t, rest = output[0], output[1:]
+                    else:
+                        t, rest = output, ()
+                    t[:, -1, :] = t[:, -1, :] + self.steer_alpha * vec
+                    return (t,) + rest if rest else t
 
-                    return hook
+                return hook
 
-                block = backend.hook_manager.get_layer_module(layer)
-                handle = block.register_forward_hook(make_steer_hook(v_t))
-                with torch.no_grad():
-                    out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+            block = backend.hook_manager.get_layer_module(layer)
+            handle = block.register_forward_hook(make_steer_hook(v_t))
+            try:
+                with torch.inference_mode():
+                    out = model(
+                        input_ids=batch_tokens["input_ids"],
+                        attention_mask=batch_tokens["attention_mask"],
+                        position_ids=batch_tokens["position_ids"],
+                        output_hidden_states=False,
+                        use_cache=False,
+                    )
+            finally:
                 handle.remove()
 
-                logits = out.logits[0, -1, :]
-                probs = torch.softmax(logits, dim=-1)
-                top_tokens = torch.topk(probs, 5)
-                target_rank = (
-                    (probs.sort(descending=True).indices == target_id)
-                    .nonzero(as_tuple=True)[0]
-                    .item()
-                )
+            logits = out.logits[:, -1, :]  # [B, vocab]
+            probs = torch.softmax(logits, dim=-1)
+            top_probs, top_ids = torch.topk(probs, 5, dim=-1)
+            sorted_probs, sorted_ids = probs.sort(descending=True, dim=-1)
+            ranks = (sorted_ids == target_id).nonzero(as_tuple=True)[1]
 
+            for row, sample in enumerate(samples):
+                target_rank = int(ranks[row].item())
                 results.append(
                     {
                         "sample": sample.idx,
@@ -1087,7 +1162,7 @@ class JacobianLensExperiment(BaseExperiment):
                         "steer_token": self.steer_token,
                         "alpha": self.steer_alpha,
                         "target_rank": target_rank + 1,
-                        "top_tokens": [tokenizer.decode([t.item()]) for t in top_tokens.indices],
+                        "top_tokens": [tokenizer.decode([t.item()]) for t in top_ids[row]],
                     }
                 )
 
@@ -1136,64 +1211,82 @@ class JacobianLensExperiment(BaseExperiment):
         )
 
         flips = 0
-        for sample in samples:
-            prompt = prompt_strategy.build_prompt(
-                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
+        # Batched: one forward per layer over all samples as rows (left-pad +
+        # position_ids remap; causal-mask row isolation, eval, no dropout), so
+        # each row reproduces the sequential swap forward exactly.
+        prompts_full = [
+            prompt_strategy.build_prompt(
+                {"text": s.text, "question": s.text, "metadata": s.metadata or {}}
             )
-            prompt_full = prompt + self.answer_cue
-            tokens = tokenizer.encode(
-                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
-            ).to(device)
+            + self.answer_cue
+            for s in samples
+        ]
+        batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
 
-            # Baseline: model output without swap
-            with torch.no_grad():
-                base_out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
-            base_probs = torch.softmax(base_out.logits[0, -1, :], dim=-1)
-            base_top1 = torch.argmax(base_probs).item()
+        # Baseline: model output without swap (batched over all samples).
+        with torch.inference_mode():
+            base_out = model(
+                input_ids=batch_tokens["input_ids"],
+                attention_mask=batch_tokens["attention_mask"],
+                position_ids=batch_tokens["position_ids"],
+                output_hidden_states=False,
+                use_cache=False,
+            )
+        base_probs = torch.softmax(base_out.logits[:, -1, :], dim=-1)  # [B, vocab]
+        base_top1 = torch.argmax(base_probs, dim=-1).tolist()
 
-            # With swap at each layer
-            for layer in layers:
-                if layer not in lens.jacobians:
-                    continue
+        for layer in layers:
+            if layer not in lens.jacobians:
+                continue
 
-                J = lens.jacobians[layer].to(device, dtype=torch.float32)
-                v_src = (lm_head.weight[src_id].float() @ J).unsqueeze(1)  # [d_model, 1]
-                v_tgt = (lm_head.weight[tgt_id].float() @ J).unsqueeze(1)  # [d_model, 1]
-                V = torch.cat([v_src, v_tgt], dim=1)  # [d_model, 2]
-                V_pinv = (
-                    torch.linalg.pinv(V.T @ V + 1e-6 * torch.eye(2, device=device)) @ V.T
-                )  # [2, d_model]
+            J = lens.jacobians[layer].to(device, dtype=torch.float32)
+            v_src = (lm_head.weight[src_id].float() @ J).unsqueeze(1)  # [d_model, 1]
+            v_tgt = (lm_head.weight[tgt_id].float() @ J).unsqueeze(1)  # [d_model, 1]
+            V = torch.cat([v_src, v_tgt], dim=1)  # [d_model, 2]
+            V_pinv = (
+                torch.linalg.pinv(V.T @ V + 1e-6 * torch.eye(2, device=device)) @ V.T
+            )  # [2, d_model]
 
-                def make_swap_hook():
-                    def hook(module, inp, output):
-                        if isinstance(output, tuple):
-                            t, rest = output[0], output[1:]
-                        else:
-                            t, rest = output, ()
-                        h = t[0, -1, :].unsqueeze(1)  # [d_model, 1]
-                        c = V_pinv @ h  # [2, 1]
-                        c_swapped = c.clone()
-                        c_swapped[0], c_swapped[1] = c[1].clone(), c[0].clone()
-                        h_new = h + V @ (c_swapped - c)
-                        t[0, -1, :] = h_new.squeeze(1)
-                        return (t,) + rest if rest else t
+            def make_swap_hook():
+                def hook(module, inp, output):
+                    if isinstance(output, tuple):
+                        t, rest = output[0], output[1:]
+                    else:
+                        t, rest = output, ()
+                    h = t[:, -1, :].unsqueeze(-1)  # [B, d_model, 1]
+                    c = torch.bmm(V_pinv.unsqueeze(0).expand(h.shape[0], -1, -1), h)  # [B, 2, 1]
+                    c_swapped = c.clone()
+                    c_swapped[:, 0], c_swapped[:, 1] = c[:, 1].clone(), c[:, 0].clone()
+                    h_new = h + torch.bmm(V.unsqueeze(0).expand(h.shape[0], -1, -1), c_swapped - c)
+                    t[:, -1, :] = h_new.squeeze(-1)
+                    return (t,) + rest if rest else t
 
-                    return hook
+                return hook
 
-                block = backend.hook_manager.get_layer_module(layer)
-                handle = block.register_forward_hook(make_swap_hook())
-                with torch.no_grad():
-                    swap_out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+            block = backend.hook_manager.get_layer_module(layer)
+            handle = block.register_forward_hook(make_swap_hook())
+            try:
+                with torch.inference_mode():
+                    swap_out = model(
+                        input_ids=batch_tokens["input_ids"],
+                        attention_mask=batch_tokens["attention_mask"],
+                        position_ids=batch_tokens["position_ids"],
+                        output_hidden_states=False,
+                        use_cache=False,
+                    )
+            finally:
                 handle.remove()
 
-                swap_probs = torch.softmax(swap_out.logits[0, -1, :], dim=-1)
-                swap_top1 = torch.argmax(swap_probs).item()
-                flipped = swap_top1 != base_top1
+            swap_probs = torch.softmax(swap_out.logits[:, -1, :], dim=-1)
+            swap_top1 = torch.argmax(swap_probs, dim=-1).tolist()
+
+            for row, sample in enumerate(samples):
+                flipped = swap_top1[row] != base_top1[row]
                 if flipped:
                     flips += 1
                 print(
-                    f"  L{layer:>3} sample={sample.idx}  base={tokenizer.decode([base_top1])}"
-                    f"  swap={tokenizer.decode([swap_top1])}  flipped={flipped}"
+                    f"  L{layer:>3} sample={sample.idx}  base={tokenizer.decode([base_top1[row]])}"
+                    f"  swap={tokenizer.decode([swap_top1[row]])}  flipped={flipped}"
                 )
 
         n_trials = len(samples) * len([layer for layer in layers if layer in lens.jacobians])
@@ -1243,64 +1336,95 @@ class JacobianLensExperiment(BaseExperiment):
         baseline_correct = 0
         ablate_correct = 0
 
-        for sample in samples:
-            prompt = prompt_strategy.build_prompt(
-                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
-            )
-            prompt_full = prompt + self.answer_cue
-            tokens = tokenizer.encode(
-                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
-            ).to(device)
+        # Hoist lm_head and the per-layer W_U·J product out of the sample loop.
+        # W_U·J is a [vocab, d_model] matmul recomputed per (sample, layer)
+        # before; now computed once per layer. Bit-identical matmul, just cached.
+        vocab = lm_head.weight.float().to(device)
+        wu_j_by_layer: dict = {}
+        j_by_layer: dict = {}
+        for layer in layers:
+            if layer in lens.jacobians:
+                J = lens.jacobians[layer].to(device, dtype=torch.float32)
+                j_by_layer[layer] = J
+                wu_j_by_layer[layer] = vocab @ J
 
-            # Baseline
-            with torch.no_grad():
-                base_out = model(input_ids=tokens, output_hidden_states=True, use_cache=False)
-            final_h = base_out.hidden_states[-1][0, -1, :]
+        # Batched: one baseline + one ablated forward over all samples as rows
+        # (left-pad + position_ids remap; causal-mask row isolation). The ablate
+        # hook projects out top-k J-space directions per row.
+        prompts_full = [
+            prompt_strategy.build_prompt(
+                {"text": s.text, "question": s.text, "metadata": s.metadata or {}}
+            )
+            + self.answer_cue
+            for s in samples
+        ]
+        batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
+
+        # Baseline
+        with torch.inference_mode():
+            base_out = model(
+                input_ids=batch_tokens["input_ids"],
+                attention_mask=batch_tokens["attention_mask"],
+                position_ids=batch_tokens["position_ids"],
+                output_hidden_states=True,
+                use_cache=False,
+            )
+            final_h = base_out.hidden_states[-1][:, -1, :]  # [B, d]
             if norm is not None:
                 final_h = norm(final_h)
-            base_id = torch.argmax(lm_head(final_h)).item()
-            correct_ids = self._correct_token_ids(tokenizer, sample.label)
-            if base_id in correct_ids:
-                baseline_correct += 1
+            base_ids = torch.argmax(lm_head(final_h), dim=-1).tolist()
+        correct_sets = [self._correct_token_ids(tokenizer, s.label) for s in samples]
+        baseline_correct = sum(1 for i, cid in enumerate(base_ids) if cid in correct_sets[i])
 
-            # Ablate: at each intervention layer, project out top-k J-space directions
-            def make_ablate_hook(layer_idx: int):
-                J = lens.jacobians[layer_idx].to(device, dtype=torch.float32)
+        # Ablate: at each intervention layer, project out top-k J-space directions
+        def make_ablate_hook(layer_idx: int):
+            wu_j = wu_j_by_layer[layer_idx]
+            J = j_by_layer[layer_idx]
 
-                def hook(module, inp, output):
-                    if isinstance(output, tuple):
-                        t, rest = output[0], output[1:]
-                    else:
-                        t, rest = output, ()
-                    h = t[0, -1, :]  # [d_model]
-                    # Project onto top-k J-lens directions and remove
-                    # J-lens vectors for the full vocabulary at this layer:
-                    # W_U · J_ℓ → take top-k by inner product with h
-                    all_scores = h.float() @ (lm_head.weight.float() @ J).T  # [vocab]
-                    top_k_ids = torch.topk(all_scores, self.ablate_top_n).indices
-                    for tid in top_k_ids:
-                        v = lm_head.weight[tid].float() @ J  # [d_model]
-                        v_norm = v / (torch.norm(v) + 1e-8)
-                        h = h.float() - torch.dot(h.float(), v_norm) * v_norm
-                    t[0, -1, :] = h.to(t.dtype)
-                    return (t,) + rest if rest else t
+            def hook(module, inp, output):
+                if isinstance(output, tuple):
+                    t, rest = output[0], output[1:]
+                else:
+                    t, rest = output, ()
+                h = t[:, -1, :].float()  # [B, d_model]
+                # Project onto top-k J-lens directions and remove J-lens vectors
+                # for the full vocabulary at this layer: W_U · J_ℓ → take top-k
+                # by inner product with h (per row).
+                all_scores = h @ wu_j.T  # [B, vocab]
+                top_k_ids = torch.topk(all_scores, self.ablate_top_n, dim=-1).indices  # [B, k]
+                # Gather all k direction vectors at once: [B, k, d_model].
+                # The sequential removal loop below must stay sequential (each
+                # projection changes h for the next, Gram-Schmidt semantics).
+                dirs = vocab[top_k_ids] @ J  # [B, k, d_model]
+                for j in range(self.ablate_top_n):
+                    v_norm = dirs[:, j] / (torch.norm(dirs[:, j], dim=-1, keepdim=True) + 1e-8)
+                    h = h - torch.bmm(v_norm.unsqueeze(1), h.unsqueeze(-1)).squeeze(-1) * v_norm
+                t[:, -1, :] = h.to(t.dtype)
+                return (t,) + rest if rest else t
 
-                return hook
+            return hook
 
-            handles = []
-            for layer in layers:
-                if layer in lens.jacobians:
-                    block = backend.hook_manager.get_layer_module(layer)
-                    handles.append(block.register_forward_hook(make_ablate_hook(layer)))
+        handles = []
+        for layer in layers:
+            if layer in lens.jacobians:
+                block = backend.hook_manager.get_layer_module(layer)
+                handles.append(block.register_forward_hook(make_ablate_hook(layer)))
 
-            with torch.no_grad():
-                ablate_out = model(input_ids=tokens, output_hidden_states=False, use_cache=False)
+        try:
+            with torch.inference_mode():
+                ablate_out = model(
+                    input_ids=batch_tokens["input_ids"],
+                    attention_mask=batch_tokens["attention_mask"],
+                    position_ids=batch_tokens["position_ids"],
+                    output_hidden_states=False,
+                    use_cache=False,
+                )
+        finally:
             for h in handles:
                 h.remove()
 
-            ablate_id = torch.argmax(ablate_out.logits[0, -1, :]).item()
-            if ablate_id in correct_ids:
-                ablate_correct += 1
+        ablate_ids = torch.argmax(ablate_out.logits[:, -1, :], dim=-1).tolist()
+        ablate_correct = sum(1 for i, cid in enumerate(ablate_ids) if cid in correct_sets[i])
 
         base_acc = baseline_correct / n
         abl_acc = ablate_correct / n
@@ -1349,56 +1473,89 @@ class JacobianLensExperiment(BaseExperiment):
         )
 
         decompositions = []
-        for sample in samples:
-            prompt = prompt_strategy.build_prompt(
-                {"text": sample.text, "question": sample.text, "metadata": sample.metadata or {}}
-            )
-            prompt_full = prompt + self.answer_cue
-            tokens = tokenizer.encode(
-                prompt_full, return_tensors="pt", truncation=True, max_length=self.max_input_tokens
-            ).to(device)
 
-            with torch.no_grad():
-                out = model(input_ids=tokens, output_hidden_states=True, use_cache=False)
-            hidden_states = out.hidden_states
-
-            for layer in layers:
-                if layer not in lens.jacobians or layer + 1 >= len(hidden_states):
-                    continue
-                h = hidden_states[layer + 1][0, -1, :].float()  # [d_model]
+        # Hoist lm_head and per-layer W_U·J out of the sample loop (same as
+        # ablate): the [vocab, d_model] product is recomputed per (sample,
+        # layer) before; now computed once per layer.
+        vocab = lm_head.weight.float().to(device)
+        wu_j_by_layer: dict = {}
+        j_by_layer: dict = {}
+        for layer in layers:
+            if layer in lens.jacobians:
                 J = lens.jacobians[layer].to(device, dtype=torch.float32)
-                vocab = lm_head.weight.float()  # [vocab, d_model]
+                j_by_layer[layer] = J
+                wu_j_by_layer[layer] = vocab @ J
 
-                # J-space: top-k J-lens directions via inner product
-                all_scores = h @ (vocab @ J).T  # [vocab]
-                top_k_vals, top_k_ids = torch.topk(all_scores, self.top_k)
-                j_tokens = [tokenizer.decode([t.item()]) for t in top_k_ids]
+        # Batched: one forward over all samples as rows (left-pad + position_ids
+        # remap; causal-mask row isolation), then per-layer computation on [B, d].
+        prompts_full = [
+            prompt_strategy.build_prompt(
+                {"text": s.text, "question": s.text, "metadata": s.metadata or {}}
+            )
+            + self.answer_cue
+            for s in samples
+        ]
+        batch_tokens = self._tokenize_batch(tokenizer, prompts_full, device)
 
-                # Non-J-space: project out top-k directions
-                h_nonj = h.clone()
-                for tid in top_k_ids:
-                    v = vocab[tid] @ J  # [d_model]
-                    v_norm = v / (torch.norm(v) + 1e-8)
-                    h_nonj = h_nonj - torch.dot(h_nonj, v_norm) * v_norm
+        with torch.no_grad():
+            out = model(
+                input_ids=batch_tokens["input_ids"],
+                attention_mask=batch_tokens["attention_mask"],
+                position_ids=batch_tokens["position_ids"],
+                output_hidden_states=True,
+                use_cache=False,
+            )
+        hidden_states = out.hidden_states
 
-                # Total variance, J-variance, non-J-variance
-                total_var = torch.var(h).item()
-                j_component = h - h_nonj
-                j_var = torch.var(j_component).item() if total_var > 1e-8 else 0
-                j_var_frac = j_var / total_var if total_var > 1e-8 else 0
+        for layer in layers:
+            if layer not in lens.jacobians or layer + 1 >= len(hidden_states):
+                continue
+            h = hidden_states[layer + 1][:, -1, :].float().detach()  # [B, d_model]
+            wu_j = wu_j_by_layer[layer]
+            J = j_by_layer[layer]
 
+            # J-space: top-k J-lens directions via inner product (per row)
+            all_scores = h @ wu_j.T  # [B, vocab]
+            top_k_vals, top_k_ids = torch.topk(all_scores, self.top_k, dim=-1)
+            j_tokens_by_row = [
+                [tokenizer.decode([t.item()]) for t in top_k_ids[row]]
+                for row in range(len(samples))
+            ]
+
+            # Non-J-space: project out top-k directions (per row, batched).
+            # Gather all k directions at once; removal stays sequential
+            # (Gram-Schmidt semantics).
+            dirs = vocab[top_k_ids] @ J  # [B, k, d_model]
+            h_nonj = h.clone()
+            for j in range(self.top_k):
+                v_norm = dirs[:, j] / (torch.norm(dirs[:, j], dim=-1, keepdim=True) + 1e-8)
+                h_nonj = (
+                    h_nonj
+                    - torch.bmm(v_norm.unsqueeze(1), h_nonj.unsqueeze(-1)).squeeze(-1) * v_norm
+                )
+
+            total_var = torch.var(h, dim=-1)
+            j_component = h - h_nonj
+            j_var = torch.where(
+                total_var > 1e-8, torch.var(j_component, dim=-1), torch.zeros_like(total_var)
+            )
+            j_var_frac = torch.where(
+                total_var > 1e-8, j_var / total_var, torch.zeros_like(total_var)
+            )
+
+            for row, sample in enumerate(samples):
                 print(
-                    f"  L{layer:>3} sample={sample.idx}  J-space({self.top_k}): {j_tokens[:5]}"
-                    f"  J-var={j_var_frac:.1%}"
+                    f"  L{layer:>3} sample={sample.idx}  J-space({self.top_k}): {j_tokens_by_row[row][:5]}"
+                    f"  J-var={float(j_var_frac[row].item()):.1%}"
                 )
 
                 decompositions.append(
                     {
                         "sample": sample.idx,
                         "layer": layer,
-                        "j_space_tokens": j_tokens,
-                        "j_variance_fraction": round(j_var_frac, 4),
-                        "total_variance": round(total_var, 6),
+                        "j_space_tokens": j_tokens_by_row[row],
+                        "j_variance_fraction": round(float(j_var_frac[row].item()), 4),
+                        "total_variance": round(float(total_var[row].item()), 6),
                     }
                 )
 

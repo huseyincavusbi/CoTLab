@@ -133,35 +133,48 @@ class CoTAblationExperiment(BaseExperiment):
             baseline_logits, baseline_cache = backend.forward_with_cache(
                 full_text, layers=list(range(num_layers))
             )
+            baseline_last = baseline_logits[0, -1].float()
 
-            # Step 4: Ablate reasoning tokens at each layer and measure effect
+            # Step 4: Ablate reasoning tokens at each layer and measure effect.
+            # The L per-layer ablations are mutually independent interventions
+            # (each patches exactly one layer's residual), so they batch into a
+            # single forward with L identical rows, one row per layer. Rows are
+            # isolated by the causal attention mask (eval, no dropout), so each
+            # row reproduces its sequential counterpart exactly.
+            ablated_logits_batch = self._forward_with_ablations_batch(
+                backend,
+                full_text,
+                baseline_cache,
+                list(range(num_layers)),
+                reasoning_positions,
+            )
+
             layer_effects = {}
             for layer_idx in range(num_layers):
-                ablated_logits = self._forward_with_ablation(
-                    backend,
-                    full_text,
-                    baseline_cache,
-                    layer_idx,
-                    reasoning_positions,
-                )
-
-                # Measure effect: how much did logits change at the last position?
-                baseline_last = baseline_logits[0, -1].float()
-                ablated_last = ablated_logits[0, -1].float()
-
+                ablated_last = ablated_logits_batch[layer_idx, -1].float()
                 effect = torch.norm(ablated_last - baseline_last).item()
                 layer_effects[layer_idx] = effect
                 layer_effects_sum[layer_idx] += effect
 
-            # Step 5: Check if answer changed with full ablation at critical layer
+            # Step 5: Check if answer changed with full ablation at critical layer.
             max_effect_layer = max(layer_effects, key=layer_effects.get)
-            ablated_logits = self._forward_with_ablation(
-                backend,
-                full_text,
-                baseline_cache,
-                max_effect_layer,
-                reasoning_positions,
-            )
+            if self.ablation_type == "noise":
+                # Noise mode: the original re-runs the forward with a FRESH noise
+                # draw (a different realization than the loop), and that fresh
+                # realization drives `answer_changed`; the extra draw also keeps
+                # the global RNG state aligned with the sequential path. Preserve
+                # both by keeping the single re-run forward for noise only.
+                ablated_logits = self._forward_with_ablation(
+                    backend,
+                    full_text,
+                    baseline_cache,
+                    max_effect_layer,
+                    reasoning_positions,
+                )
+            else:
+                # zero/mean: deterministic per layer, so the batched row for
+                # max_effect_layer is bit-identical to a fresh re-run.
+                ablated_logits = ablated_logits_batch[max_effect_layer].unsqueeze(0)
 
             # Get ablated vs baseline predictions
             ablated_token = ablated_logits[0, -1].argmax().item()
@@ -255,16 +268,7 @@ class CoTAblationExperiment(BaseExperiment):
         if source_activation is None:
             raise ValueError(f"Layer {layer_idx} not in cache")
 
-        # Create ablated activation (zero out specified positions)
-        ablated_activation = source_activation.clone()
-        for pos in positions_to_ablate:
-            if pos < ablated_activation.shape[1]:
-                if self.ablation_type == "zero":
-                    ablated_activation[:, pos, :] = 0
-                elif self.ablation_type == "mean":
-                    ablated_activation[:, pos, :] = ablated_activation.mean(dim=1)
-                elif self.ablation_type == "noise":
-                    ablated_activation[:, pos, :] += torch.randn_like(ablated_activation[:, pos, :])
+        ablated_activation = self._build_ablated_activation(source_activation, positions_to_ablate)
 
         # Register ablation hook
         hook_manager.register_residual_patch_hook(layer_idx, ablated_activation, None)
@@ -275,3 +279,97 @@ class CoTAblationExperiment(BaseExperiment):
             hook_manager.remove_all_hooks()
 
         return logits
+
+    def _build_ablated_activation(
+        self, source_activation: torch.Tensor, positions_to_ablate: List[int]
+    ) -> torch.Tensor:
+        """Zero/mean/noise-ablate reasoning positions in a source residual.
+
+        Mirrors the sequential per-position loop exactly. For ``noise`` the
+        draw order matters: it consumes one ``randn_like`` per position per
+        call, in the order the caller invokes this. The batched path builds the
+        L layers in the same order the sequential loop would, so the RNG
+        consumption per layer is identical.
+        """
+        ablated_activation = source_activation.clone()
+        valid = [p for p in positions_to_ablate if p < ablated_activation.shape[1]]
+        if not valid:
+            return ablated_activation
+        if self.ablation_type == "zero":
+            ablated_activation[:, valid, :] = 0
+        elif self.ablation_type == "mean":
+            # The reference recomputes the mean per position from the
+            # progressively-modified tensor (each write changes the mean).
+            # Must stay sequential to reproduce it exactly.
+            for pos in valid:
+                ablated_activation[:, pos, :] = ablated_activation.mean(dim=1)
+        elif self.ablation_type == "noise":
+            # One randn_like over [P, d] draws the same RNG stream in the same
+            # order as the per-position loop (verified bit-identical).
+            ablated_activation[:, valid, :] += torch.randn_like(ablated_activation[:, valid, :])
+        return ablated_activation
+
+    def _forward_with_ablations_batch(
+        self,
+        backend: InferenceBackend,
+        prompt: str,
+        cache,
+        layers: List[int],
+        positions_to_ablate: List[int],
+    ) -> torch.Tensor:
+        """Ablate each layer in one forward with ``len(layers)`` identical rows.
+
+        Row ``j`` ablated the residual at ``layers[j]``; rows are isolated by
+        the causal attention mask (eval, no dropout), so each row reproduces the
+        sequential per-layer forward exactly.
+
+        Returns logits [len(layers), seq_len, vocab] at the last token's row.
+        """
+        B = len(layers)
+        if B == 0:
+            raise ValueError("layers must be non-empty for a batched ablation forward")
+
+        # Precompute the ablated residual per layer IN ORDER (matches the
+        # sequential loop's RNG draw order for noise mode).
+        ablated_by_layer = {}
+        for layer_idx in layers:
+            source = cache.get(layer_idx)
+            if source is None:
+                raise ValueError(f"Layer {layer_idx} not in cache")
+            ablated_by_layer[layer_idx] = self._build_ablated_activation(
+                source, positions_to_ablate
+            )
+
+        inputs = backend._tokenizer(prompt, return_tensors="pt").to(backend.device)
+        batch_tokens = {k: v.expand(B, -1) for k, v in inputs.items()}
+        model = backend._model
+        model_dtype = next(model.parameters()).dtype
+
+        def make_ablation_hook(layer_idx: int, row: int):
+            src = ablated_by_layer[layer_idx].to(dtype=model_dtype, device=backend.device)
+
+            def hook(module, inp, output):
+                if isinstance(output, tuple):
+                    patched = list(output)
+                    patched[0] = patched[0].clone()
+                    patched[0][row] = src[0]
+                    return tuple(patched)
+                patched = output.clone()
+                patched[row] = src[0]
+                return patched
+
+            return hook
+
+        handles = []
+        for row, layer_idx in enumerate(layers):
+            mod = backend.hook_manager.get_residual_module(layer_idx)
+            handles.append(mod.register_forward_hook(make_ablation_hook(layer_idx, row)))
+
+        try:
+            with torch.inference_mode():
+                out = model(**batch_tokens)
+        finally:
+            for h in handles:
+                h.remove()
+
+        return out.logits.detach()

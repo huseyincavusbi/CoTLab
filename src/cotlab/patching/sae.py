@@ -155,7 +155,7 @@ class GemmaScopeLayer(nn.Module):
     # Forward
     # ------------------------------------------------------------------
 
-    @torch.no_grad()
+    @torch.inference_mode()
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         """JumpReLU encode.
 

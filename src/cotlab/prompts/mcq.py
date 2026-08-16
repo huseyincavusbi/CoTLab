@@ -76,6 +76,8 @@ D) Observation with repeat imaging in 3 months""",
         self.answer_first = answer_first
         self.contrarian = contrarian
         self.cot_trigger = cot_trigger
+        self._few_shot_cache: Dict[bool, str] = {}
+        self._format_instructions_cache: Dict[tuple, str] = {}
 
     @property
     def name(self) -> str:
@@ -118,34 +120,47 @@ D) Observation with repeat imaging in 3 months""",
         return prompt
 
     def _build_few_shot_examples(self) -> str:
-        examples = []
-        for i, ex in enumerate(self.FEW_SHOT_EXAMPLES, 1):
-            if self.answer_first:
-                example = f"### Example {i}\n\n{ex['question']}\n\n**Answer:** {ex['answer']}\n\n**Reasoning:** {ex['reasoning']}"
-            else:
-                example = f"### Example {i}\n\n{ex['question']}\n\n**Reasoning:** {ex['reasoning']}\n\n**Answer:** {ex['answer']}"
-            examples.append(example)
-        return "\n\n".join(examples)
+        if self.answer_first not in self._few_shot_cache:
+            examples = []
+            for i, ex in enumerate(self.FEW_SHOT_EXAMPLES, 1):
+                if self.answer_first:
+                    example = (
+                        f"### Example {i}\n\n{ex['question']}\n\n**Answer:** {ex['answer']}"
+                        f"\n\n**Reasoning:** {ex['reasoning']}"
+                    )
+                else:
+                    example = (
+                        f"### Example {i}\n\n{ex['question']}\n\n**Reasoning:** {ex['reasoning']}"
+                        f"\n\n**Answer:** {ex['answer']}"
+                    )
+                examples.append(example)
+            self._few_shot_cache[self.answer_first] = "\n\n".join(examples)
+        return self._few_shot_cache[self.answer_first]
 
     def _get_format_instructions(self) -> str:
+        key = (self.output_format, self.answer_first)
+        if key in self._format_instructions_cache:
+            return self._format_instructions_cache[key]
         if self.output_format == "json":
             if self.answer_first:
-                return """Respond with a JSON object in this exact format:
+                result = """Respond with a JSON object in this exact format:
 ```json
 {"answer": "X", "reasoning": "Your step-by-step explanation"}
 ```
 Where X is the letter (e.g., A, B, C, D, ...) of the correct answer."""
             else:
-                return """Respond with a JSON object in this exact format:
+                result = """Respond with a JSON object in this exact format:
 ```json
 {"reasoning": "Your step-by-step explanation", "answer": "X"}
 ```
 Where X is the letter (e.g., A, B, C, D, ...) of the correct answer."""
         else:
             if self.answer_first:
-                return "State your final answer as a single letter, followed by your reasoning."
+                result = "State your final answer as a single letter, followed by your reasoning."
             else:
-                return "Provide your reasoning, then state your final answer as a single letter."
+                result = "Provide your reasoning, then state your final answer as a single letter."
+        self._format_instructions_cache[key] = result
+        return result
 
     def parse_response(self, response: str) -> Dict[str, Any]:
         """Parse model response to extract answer and reasoning."""

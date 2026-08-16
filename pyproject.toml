@@ -105,3 +105,14 @@ environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'linux' and platform_machine == 'aarch64'"
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "real_model: requires downloading a real model from the Hugging Face Hub (skipped by default)",
+    "gpu: requires a CUDA/MPS accelerator (skipped on CPU-only CI)",
+    "perf: performance/equivalence measurement, not a correctness assertion",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+]

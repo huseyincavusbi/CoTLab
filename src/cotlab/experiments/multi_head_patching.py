@@ -17,6 +17,26 @@ from ..logging import ExperimentLogger
 from ..prompts.strategies import SycophantStrategy
 
 
+def make_nested_head_hook(src: torch.Tensor, row_to_heads: Dict[int, List[int]], head_dim: int):
+    """Row-aware multi-head patch hook for nested prefixes.
+
+    Patches the last-token attention-output head slices at the layer for each
+    batch row, using the head slices listed in ``row_to_heads``. ``src`` is the
+    cached attention output [1, seq, hidden]. Rows without heads are untouched.
+    """
+
+    def hook(module, inp, output):
+        patched = output.clone()
+        for r, heads in row_to_heads.items():
+            for h in heads:
+                h_start = h * head_dim
+                h_end = (h + 1) * head_dim
+                patched[r, -1, h_start:h_end] = src[0, -1, h_start:h_end]
+        return patched
+
+    return hook
+
+
 @dataclass
 class CircuitResult:
     """Result for a head combination patching."""
@@ -96,7 +116,7 @@ class MultiHeadPatchingExperiment(BaseExperiment):
 
         # 3. Get baseline logit difference
         clean_tokens = tokenizer(clean_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             clean_logits = model(**clean_tokens).logits
         clean_effect = (clean_logits[0, -1, token_you] - clean_logits[0, -1, token_acute]).item()
         print(f"\nBaseline (clean) effect: {clean_effect:.4f}")
@@ -121,7 +141,7 @@ class MultiHeadPatchingExperiment(BaseExperiment):
             handles.append(h)
 
         corr_tokens = tokenizer(corr_prompt, return_tensors="pt").to(backend.device)
-        with torch.no_grad():
+        with torch.inference_mode():
             _ = model(**corr_tokens).logits
 
         for h in handles:
@@ -136,34 +156,46 @@ class MultiHeadPatchingExperiment(BaseExperiment):
 
         results: List[CircuitResult] = []
 
-        # Test from 1 head up to all top heads
-        for num_to_patch in range(1, len(self.top_heads) + 1):
-            heads_to_patch = self.top_heads[:num_to_patch]
-
-            # Group heads by layer for efficient patching
-            by_layer: Dict[int, List[int]] = {}
-            for layer, head in heads_to_patch:
-                by_layer.setdefault(layer, []).append(head)
-
-            # Register patch hooks for all layers
-            handles = []
-            for layer_idx, head_list in by_layer.items():
-                h = backend.hook_manager.register_multi_head_patch_hook(
-                    layer_idx=layer_idx,
-                    head_indices=head_list,
-                    source_activation=corr_attn_cache[layer_idx],
-                    head_dim=head_dim,
+        # 5a. Batched progressive sweep: ONE forward with len(top_heads) rows;
+        # row r patches the nested prefix top_heads[:r+1]. Each layer's hook
+        # patches only the rows whose prefix includes a head at that layer.
+        n_rows = len(self.top_heads)
+        if n_rows > 0:
+            batch_tokens = {k: v.expand(n_rows, -1) for k, v in clean_tokens.items()}
+        handles = []
+        for layer_idx in layers_needed:
+            row_to_heads: Dict[int, List[int]] = {}
+            for r in range(n_rows):
+                heads = [h for (lay, h) in self.top_heads[: r + 1] if lay == layer_idx]
+                if heads:
+                    row_to_heads[r] = heads
+            if not row_to_heads:
+                continue
+            src = corr_attn_cache[layer_idx]
+            attn_module = backend.hook_manager.get_attention_output_module(layer_idx)
+            handles.append(
+                attn_module.register_forward_hook(
+                    make_nested_head_hook(src, row_to_heads, head_dim)
                 )
-                handles.append(h)
+            )
 
+        if n_rows > 0:
+            patched_logits_batch = None
             try:
-                with torch.no_grad():
-                    patched_logits = model(**clean_tokens).logits
+                with torch.inference_mode():
+                    patched_logits_batch = model(**batch_tokens).logits
+            finally:
+                for h in handles:
+                    h.remove()
 
-                last_logits = patched_logits[0, -1]
-                effect = (last_logits[token_you] - last_logits[token_acute]).item()
-                top_token_id = torch.argmax(last_logits).item()
-                top_token = tokenizer.decode([top_token_id])
+            last_logits = patched_logits_batch[:, -1, :]  # [n_rows, vocab]
+            effects = (last_logits[:, token_you] - last_logits[:, token_acute]).cpu()
+            top_ids = torch.argmax(last_logits, dim=-1).cpu().tolist()
+
+            for r, num_to_patch in enumerate(range(1, n_rows + 1)):
+                heads_to_patch = self.top_heads[:num_to_patch]
+                effect = effects[r].item()
+                top_token = tokenizer.decode([top_ids[r]])
 
                 # Did it flip? Effect should become more positive (toward sycophancy)
                 flipped = effect > clean_effect + 0.5  # At least 0.5 increase
@@ -176,10 +208,6 @@ class MultiHeadPatchingExperiment(BaseExperiment):
 
                 flip_marker = "YES" if flipped else "no"
                 print(f"{heads_str:<30} | {effect:>8.3f}   | {top_token:<10} | {flip_marker}")
-
-            finally:
-                for h in handles:
-                    h.remove()
 
         print("-" * 60)
 

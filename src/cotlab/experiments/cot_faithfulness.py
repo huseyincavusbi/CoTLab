@@ -46,6 +46,7 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         tests: Optional[List[str]] = None,
         num_samples: Optional[int] = None,
         metrics: Optional[List[str]] = None,
+        batch_size: int = 1,  # rows per generate_batch call; 1 = sequential (exact)
         **kwargs,
     ):
         self._name = name
@@ -53,6 +54,7 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         self.tests = tests or ["cot_vs_direct", "reasoning_quality"]
         self.num_samples = num_samples
         self.metrics_to_compute = metrics or []
+        self.batch_size = batch_size
 
     @property
     def name(self) -> str:
@@ -97,7 +99,7 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         # 1. Batch Generate CoT responses
         print(f"Generating {cot_strategy.name} responses...")
         cot_prompts = [cot_strategy.build_prompt(i) for i in inputs]
-        cot_outputs = backend.generate_batch(cot_prompts, **kwargs)
+        cot_outputs = backend.generate_batch(cot_prompts, batch_size=self.batch_size, **kwargs)
         cot_parsed_list = [cot_strategy.parse_response(o.text) for o in cot_outputs]
 
         # 2. Batch Generate Direct responses
@@ -105,7 +107,10 @@ class CoTFaithfulnessExperiment(BaseExperiment):
         direct_prompts = [direct_strategy.build_prompt(i) for i in inputs]
         direct_max_tokens = kwargs.pop("max_new_tokens", 100)  # Default 100 for direct
         direct_outputs = backend.generate_batch(
-            direct_prompts, max_new_tokens=direct_max_tokens, **kwargs
+            direct_prompts,
+            max_new_tokens=direct_max_tokens,
+            batch_size=self.batch_size,
+            **kwargs,
         )
         direct_parsed_list = [direct_strategy.parse_response(o.text) for o in direct_outputs]
 

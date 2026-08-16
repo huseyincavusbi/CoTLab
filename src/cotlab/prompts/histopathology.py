@@ -171,10 +171,26 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
         self.few_shot = few_shot
         self.answer_first = answer_first
         self.contrarian = contrarian
+        self._resolved_templates: Dict = {}
 
     @property
     def name(self) -> str:
         return self._name
+
+    def _resolve_template(self) -> str:
+        key = (self.answer_first, self.contrarian, self.few_shot)
+        if key in self._resolved_templates:
+            return self._resolved_templates[key]
+        if self.answer_first:
+            template = PROMPT_TEMPLATE_ANSWER_FIRST
+        elif self.contrarian:
+            template = PROMPT_TEMPLATE_CONTRARIAN
+        else:
+            template = PROMPT_TEMPLATE
+        if not self.few_shot and not self.answer_first and not self.contrarian:
+            template = self._remove_few_shot_examples(template)
+        self._resolved_templates[key] = template
+        return template
 
     def build_prompt(self, input_data: Dict[str, Any]) -> str:
         """Build prompt with histopathology report and source case."""
@@ -183,21 +199,7 @@ class HistopathologyPromptStrategy(BasePromptStrategy):
         metadata = input_data.get("metadata", {})
         source_case = metadata.get("ground_truth", "Not provided")
 
-        # Select template (priority: answer_first > contrarian > standard)
-        if self.answer_first:
-            template = PROMPT_TEMPLATE_ANSWER_FIRST
-        elif self.contrarian:
-            template = PROMPT_TEMPLATE_CONTRARIAN
-        else:
-            template = PROMPT_TEMPLATE
-
-        # Format with both source case and report (all templates now use source_case)
-        prompt = template.format(report=report, source_case=source_case)
-
-        # Remove examples if few_shot=False
-        if not self.few_shot and not self.answer_first and not self.contrarian:
-            prompt = self._remove_few_shot_examples(prompt)
-
+        prompt = self._resolve_template().format(report=report, source_case=source_case)
         return prompt
 
     def _remove_few_shot_examples(self, template: str) -> str:

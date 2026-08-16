@@ -87,12 +87,21 @@ class ActivationCompareExperiment(BaseExperiment):
         else:
             raise ValueError(f"Unknown pooling: {self.pooling}")
 
-    def _pool_batch(self, tensor: torch.Tensor) -> torch.Tensor:
-        """tensor: [B, seq_len, hidden_size] → [B, hidden_size]"""
+    def _pool_batch(self, tensor: torch.Tensor, attention_mask=None) -> torch.Tensor:
+        """tensor: [B, seq_len, hidden_size] → [B, hidden_size]
+
+        For ``mean`` pooling the batch is left-padded, so pad positions must be
+        masked out to match the single-sample mean exactly (pad embeddings would
+        otherwise dilute the average).
+        """
         if self.pooling == "last_token":
             return tensor[:, -1, :]  # left-padded: last position = last real token
         elif self.pooling == "mean":
-            return tensor.mean(dim=1)
+            if attention_mask is None:
+                return tensor.mean(dim=1)
+            mask = attention_mask.unsqueeze(-1)  # [B, seq, 1]
+            masked = tensor * mask.float()
+            return masked.sum(dim=1) / mask.sum(dim=1).clamp_min(1.0)
         else:
             raise ValueError(f"Unknown pooling: {self.pooling}")
 
@@ -182,17 +191,18 @@ class ActivationCompareExperiment(BaseExperiment):
 
             # Capture hidden states in hooks; move to CPU immediately
             layer_vecs: Dict[int, torch.Tensor] = {}  # layer_idx -> [B, hidden] CPU float32
+            batch_mask = tokens["attention_mask"] if B > 1 else None
 
             def make_hook(layer_idx: int):
                 def hook(module, inp, output):
                     tensor = output[0] if isinstance(output, tuple) else output
-                    with torch.no_grad():
+                    with torch.inference_mode():
                         if B == 1:
                             # tensor: [1, seq_len, hidden]
                             vec = self._pool(tensor[0]).unsqueeze(0).cpu().float()  # [1, hidden]
                         else:
                             # tensor: [B, seq_len, hidden]
-                            vec = self._pool_batch(tensor).cpu().float()  # [B, hidden]
+                            vec = self._pool_batch(tensor, batch_mask).cpu().float()  # [B, hidden]
                     layer_vecs[layer_idx] = vec
                     return output
 
@@ -205,7 +215,7 @@ class ActivationCompareExperiment(BaseExperiment):
                     handles.append(mod.register_forward_hook(make_hook(layer_idx)))
 
             try:
-                with torch.no_grad():
+                with torch.inference_mode():
                     backend._model(**tokens)
             except Exception as e:
                 tqdm.write(f"  [skip] batch starting at {batch[0].idx}: {type(e).__name__}: {e}")
@@ -230,7 +240,6 @@ class ActivationCompareExperiment(BaseExperiment):
                     layer_counts[layer_idx] += 1
 
             del layer_vecs
-            torch.cuda.empty_cache()
             processed += B
 
         # --- Compute statistics -----------------------------------------

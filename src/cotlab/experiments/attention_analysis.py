@@ -128,7 +128,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
             generate_kwargs["temperature"] = self.generated_temperature
             generate_kwargs["top_p"] = self.generated_top_p
 
-        with torch.no_grad():
+        with torch.inference_mode():
             gen_outputs = model.generate(**inputs, **generate_kwargs)
 
         gen_attentions = getattr(gen_outputs, "attentions", None)
@@ -218,7 +218,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
         seq_lengths = attention_mask.sum(dim=1).tolist()
         pad_left = getattr(tokenizer, "padding_side", "right") == "left"
 
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = model(**tokens, output_attentions=True, return_dict=True)
 
         attentions = outputs.attentions  # tuple[(B, heads, padded_seq, padded_seq)] * num_layers
@@ -254,17 +254,21 @@ class AttentionAnalysisExperiment(BaseExperiment):
                 last_k = min(self.last_k_tokens, seq_len)
                 last_k_tokens_attn = sample_attn[:, seq_len - last_k :, :]  # (heads, k, seq_len)
 
-                head_entropies_last_token: List[float] = []
-                head_entropies_all_tokens: List[float] = []
-                head_entropies_last_k_tokens: List[float] = []
-                for h in range(num_heads):
-                    head_entropies_last_token.append(self._compute_entropy(last_token_attn[h]))
-                    head_entropies_all_tokens.append(
-                        self._compute_mean_entropy_over_queries(sample_attn[h])
-                    )
-                    head_entropies_last_k_tokens.append(
-                        self._compute_mean_entropy_over_queries(last_k_tokens_attn[h])
-                    )
+                # Vectorized head entropy: independent per-head reductions over
+                # the attention rows (identical to the per-head loop).
+                eps = 1e-10
+                p_last = last_token_attn.float()  # (heads, seq_len)
+                head_entropies_last_token = (
+                    (-(p_last * torch.log(p_last + eps))).sum(dim=-1).tolist()
+                )
+                p_all = sample_attn.float()  # (heads, seq_len, seq_len)
+                head_entropies_all_tokens = (
+                    (-(p_all * torch.log(p_all + eps))).sum(dim=-1).mean(dim=-1).tolist()
+                )
+                p_last_k = last_k_tokens_attn.float()  # (heads, k, seq_len)
+                head_entropies_last_k_tokens = (
+                    (-(p_last_k * torch.log(p_last_k + eps))).sum(dim=-1).mean(dim=-1).tolist()
+                )
 
                 avg_entropy_last_token = np.mean(head_entropies_last_token)
                 avg_entropy_all_tokens = np.mean(head_entropies_all_tokens)
@@ -309,7 +313,6 @@ class AttentionAnalysisExperiment(BaseExperiment):
             del layer_attn
 
         del attentions
-        torch.cuda.empty_cache()
 
         # Generated-token analysis: run per-sample (auto-regressive, inherently sequential)
         if self.analyze_generated_tokens and not self._generated_analysis_disabled:
@@ -392,7 +395,7 @@ class AttentionAnalysisExperiment(BaseExperiment):
         tokens = tokenizer(prompt, **tokenizer_kwargs).to(device)
         input_ids = tokens["input_ids"]
 
-        with torch.no_grad():
+        with torch.inference_mode():
             outputs = model(**tokens, output_attentions=True, return_dict=True)
 
         attentions = outputs.attentions
@@ -431,17 +434,17 @@ class AttentionAnalysisExperiment(BaseExperiment):
             last_k = min(self.last_k_tokens, seq_len)
             last_k_tokens_attn = attn[0, :, seq_len - last_k :, :]  # (heads, k, seq)
 
-            head_entropies_last_token = []
-            head_entropies_all_tokens = []
-            head_entropies_last_k_tokens = []
-            for h in range(num_heads):
-                head_entropies_last_token.append(self._compute_entropy(last_token_attn[h]))
-                head_entropies_all_tokens.append(
-                    self._compute_mean_entropy_over_queries(all_tokens_attn[h])
-                )
-                head_entropies_last_k_tokens.append(
-                    self._compute_mean_entropy_over_queries(last_k_tokens_attn[h])
-                )
+            eps = 1e-10
+            p_last = last_token_attn.float()
+            head_entropies_last_token = (-(p_last * torch.log(p_last + eps))).sum(dim=-1).tolist()
+            p_all = all_tokens_attn.float()
+            head_entropies_all_tokens = (
+                (-(p_all * torch.log(p_all + eps))).sum(dim=-1).mean(dim=-1).tolist()
+            )
+            p_last_k = last_k_tokens_attn.float()
+            head_entropies_last_k_tokens = (
+                (-(p_last_k * torch.log(p_last_k + eps))).sum(dim=-1).mean(dim=-1).tolist()
+            )
 
             avg_entropy_last_token = np.mean(head_entropies_last_token)
             avg_entropy_all_tokens = np.mean(head_entropies_all_tokens)

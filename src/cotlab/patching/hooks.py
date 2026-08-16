@@ -256,6 +256,22 @@ class HookManager:
 
         raise ValueError(f"Could not find attention output module for layer {layer_idx}")
 
+    def get_attention_module(self, layer_idx: int) -> nn.Module:
+        """
+        Get the attention module itself for a layer.
+
+        Hooking this module and reading ``output[1]`` captures the post-softmax
+        attention weights (``attn_weights``), which is version-proof across
+        transformers (``output_attentions=True`` is a no-op for some
+        architectures in transformers 5.x, e.g. Gemma). The attention-output
+        projection ``o_proj`` is the output[0] of this same module.
+        """
+        layer_module = self.get_layer_module(layer_idx)
+        for attn_name in ["self_attn", "attn", "attention"]:
+            if hasattr(layer_module, attn_name):
+                return getattr(layer_module, attn_name)
+        raise ValueError(f"Could not find attention module for layer {layer_idx}")
+
     def get_mlp_down_proj_module(self, layer_idx: int) -> nn.Module:
         """
         Get the FFN down-projection module for a layer.
@@ -390,9 +406,9 @@ class HookManager:
             else:
                 # Patch specific positions by building new tensor
                 patched = hidden_states.clone()
-                for pos in token_positions:
-                    if pos < target_seq_len and pos < source_seq_len:
-                        patched[:, pos : pos + 1, :] = source_activation[:, pos : pos + 1, :]
+                valid = [p for p in token_positions if p < target_seq_len and p < source_seq_len]
+                if valid:
+                    patched[:, valid, :] = source_activation[:, valid, :]
 
             if rest:
                 return (patched,) + rest
@@ -476,9 +492,14 @@ class HookManager:
                     patched[:, -1, :] = source_activation
             else:
                 patched = hidden_states.clone()
-                for pos in token_positions:
-                    if pos < target_len and source_activation.dim() == 3 and pos < source_len:
-                        patched[:, pos : pos + 1, :] = source_activation[:, pos : pos + 1, :]
+                if source_activation.dim() == 3:
+                    valid = [p for p in token_positions if p < target_len and p < source_len]
+                    if valid:
+                        patched[:, valid, :] = source_activation[:, valid, :]
+                else:
+                    for pos in token_positions:
+                        if pos < target_len:
+                            patched[:, pos : pos + 1, :] = source_activation.unsqueeze(1)
 
             return patched
 
@@ -534,13 +555,16 @@ class HookManager:
         """
         attn_module = self.get_attention_output_module(layer_idx)
 
+        # Column indices for the patched heads are fixed by head_indices/head_dim
+        # and the model device, so build them once instead of per forward pass.
+        cols = (
+            torch.tensor(head_indices, device=attn_module.weight.device)[:, None] * head_dim
+            + torch.arange(head_dim, device=attn_module.weight.device)[None, :]
+        ).flatten()
+
         def patch_hook(module, input, output):
             patched = output.clone()
-            for head_idx in head_indices:
-                h_start = head_idx * head_dim
-                h_end = (head_idx + 1) * head_dim
-                # Patch last token position only
-                patched[:, -1, h_start:h_end] = source_activation[:, -1, h_start:h_end]
+            patched[:, -1, cols] = source_activation[:, -1, cols]
             return patched
 
         handle = attn_module.register_forward_hook(patch_hook)
