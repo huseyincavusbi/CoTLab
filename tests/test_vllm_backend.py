@@ -64,7 +64,9 @@ def test_greedy_unaffected_by_seed(vllm_backend):
 
 def test_main_passes_seed_to_vllm_generate():
     """main.py hands the config seed to vLLM (non-transformers) runs."""
-    main_src = Path("src/cotlab/main.py").read_text()
+    import cotlab.main as main_mod
+
+    main_src = Path(main_mod.__file__).read_text()
     needle = 'gen_kwargs["seed"] = int(cfg.seed)'
     assert needle in main_src
     assert 'endswith("TransformersBackend")' in main_src
