@@ -555,13 +555,15 @@ class HookManager:
         """
         attn_module = self.get_attention_output_module(layer_idx)
 
+        # Column indices for the patched heads are fixed by head_indices/head_dim
+        # and the model device, so build them once instead of per forward pass.
+        cols = (
+            torch.tensor(head_indices, device=attn_module.weight.device)[:, None] * head_dim
+            + torch.arange(head_dim, device=attn_module.weight.device)[None, :]
+        ).flatten()
+
         def patch_hook(module, input, output):
             patched = output.clone()
-            # Patch all requested heads' last-token slices at once.
-            cols = (
-                torch.tensor(head_indices, device=patched.device)[:, None] * head_dim
-                + torch.arange(head_dim, device=patched.device)[None, :]
-            ).flatten()
             patched[:, -1, cols] = source_activation[:, -1, cols]
             return patched
 
