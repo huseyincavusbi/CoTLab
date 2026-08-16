@@ -9,6 +9,17 @@ from cotlab.core import create_component
 from cotlab.logging import ExperimentLogger
 
 
+def get_cached_dataset(dataset_cache: dict, dataset_name: str, dataset_cfg) -> object:
+    """Return the parsed dataset instance, creating and caching it on first use.
+
+    Datasets are read-only to experiments (only ``sample`` is called, which
+    returns a fresh list), so sharing one instance across grid jobs is exact.
+    """
+    if dataset_name not in dataset_cache:
+        dataset_cache[dataset_name] = create_component(dataset_cfg)
+    return dataset_cache[dataset_name]
+
+
 def _extract_backend_load_kwargs(cfg_backend) -> dict:
     backend_cfg = OmegaConf.to_container(cfg_backend, resolve=True)
     keys = [
@@ -143,11 +154,7 @@ def main():
 
                     # Instantiate Components for this run
                     try:
-                        if dataset_name in dataset_cache:
-                            dataset = dataset_cache[dataset_name]
-                        else:
-                            dataset = create_component(cfg.dataset)
-                            dataset_cache[dataset_name] = dataset
+                        dataset = get_cached_dataset(dataset_cache, dataset_name, cfg.dataset)
                         prompt_strategy = create_component(cfg.prompt)
                         experiment = create_component(cfg.experiment)
 
