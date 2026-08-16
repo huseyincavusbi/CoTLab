@@ -113,7 +113,9 @@ class SteeringVectorsExperiment(BaseExperiment):
 
         def make_cache_hook(storage: dict, layer_idx: int):
             def hook(module, input, output):
-                storage[layer_idx] = output.detach().clone()
+                # Only the last-token residual is consumed downstream, so
+                # capture the [B, 1, d] slice instead of the full sequence.
+                storage[layer_idx] = output[:, -1:, :].detach().clone()
                 return output
 
             return hook
