@@ -5,8 +5,6 @@ Covers every load path (canonical weights/neurons, fit.weights, sibling
 """
 
 import json
-import os
-from pathlib import Path
 
 import numpy as np
 import pytest
