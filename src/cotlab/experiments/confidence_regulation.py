@@ -820,27 +820,26 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         act_mean: torch.Tensor,
         indices: List[int],
     ) -> Dict[str, Any]:
-        """Causal mean-ablation via real forwards (per neuron, per sequence).
+        """Causal mean-ablation via real forwards, batched over neurons.
 
         Required for architectures with a post-FFN norm (Gemma 2/3 family)
-        where no analytic shortcut exists. Reports total causal effect only;
-        the LN-mediated fraction is not defined here.
+        where no analytic shortcut exists. A single forward passes ``c``
+        copies of each sequence, one copy per ablated neuron (batch row), so
+        the run scales with ``ceil(n_neurons / c) * n_sequences`` forwards of
+        ``(c, T)`` instead of one ``(1, T)`` forward per neuron -- much larger
+        matmuls, far better CPU utilization. On CPU fp32 this is exactly
+        equivalent to per-neuron sequential runs (validated path).
+
+        Reports total causal effect only; the LN-mediated fraction is not
+        defined on these architectures.
         """
         device = backend.device
         mod = backend.hook_manager.get_mlp_down_proj_module(backend.hook_manager.num_layers - 1)
         te_sum = torch.zeros(len(indices))
         counter = {"positions": 0}
+        chunk = max(1, self.mediate_neuron_chunk)
 
-        def run(hooked_neuron=None):
-            nonlocal_handle = None
-            if hooked_neuron is not None:
-
-                def hook(m, inp):
-                    new = inp[0].clone()
-                    new[:, :, hooked_neuron] = act_mean[hooked_neuron].to(inp[0].device)
-                    return (new,) + tuple(inp[1:])
-
-                nonlocal_handle = mod.register_forward_pre_hook(hook)
+        def nominal():
             losses = []
             for seq in sequences:
                 tokens = seq["tokens"].to(device)
@@ -851,15 +850,40 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 loss = -lp.gather(-1, tokens[:, 1:].unsqueeze(-1)).squeeze(-1)
                 counter["positions"] += loss.numel()
                 losses.append(loss.cpu())
-            if nonlocal_handle is not None:
-                nonlocal_handle.remove()
             return torch.cat(losses)
 
+        def ablate_chunk(rows: List[int]):
+            # rows: global neuron rows in `indices`. Build one (c, T) forward
+            # per sequence with row j = sequence copy with neuron rows[j] ablated.
+            c = len(rows)
+            losses = []
+            neuron_cols = [indices[r] for r in rows]
+
+            def hook(m, inp):
+                new = inp[0].clone()
+                for j, col in enumerate(neuron_cols):
+                    new[j, :, col] = act_mean[col].to(inp[0].device)
+                return (new,) + tuple(inp[1:])
+
+            h = mod.register_forward_pre_hook(hook)
+            for seq in sequences:
+                tokens = seq["tokens"].to(device)
+                inp = tokens.repeat(c, 1)
+                with torch.no_grad():
+                    out = backend.model(inp)
+                logits = out.logits.float()[:, :-1]
+                lp = torch.log_softmax(logits, dim=-1)
+                loss = -lp.gather(-1, inp[:, 1:].unsqueeze(-1)).squeeze(-1)
+                losses.append(loss.cpu())
+            h.remove()
+            return torch.cat(losses, dim=1)  # (c, total_positions)
+
         with torch.no_grad():
-            base_l = run()
-            for row, i in enumerate(indices):
-                abl_l = run(i)
-                te_sum[row] += (abl_l - base_l).abs().sum()
+            base_l = nominal().reshape(-1)
+            for start in range(0, len(indices), chunk):
+                rows = list(range(start, min(start + chunk, len(indices))))
+                abl = ablate_chunk(rows)
+                te_sum[start : start + len(rows)] += (abl - base_l).abs().sum(dim=1)
         te_mean = te_sum / max(1, counter["positions"])
         zeros = torch.zeros(len(indices))
         return {
