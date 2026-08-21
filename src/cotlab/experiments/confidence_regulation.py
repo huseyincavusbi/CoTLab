@@ -40,10 +40,18 @@ mediate:
     mediated (~1) versus ~0 for random neurons.
 
 overlap:
-    Jaccard overlap between identified entropy neurons and H-Neuron probe
+    Jaccard overlap between identified neurons and H-Neuron probe
     sets (``probe_path``). Restricted to the final layer where the
-    entropy-neuron criterion is defined; reports enrichment over the
-    hypergeometric random expectation.
+    criterion is defined; reports enrichment over the hypergeometric
+    random expectation.
+
+neuron_family
+-------------
+``entropy`` (default) ranks by null-space fraction rho;
+``frequency`` ranks by |cosine(write, v_freq)| with ``v_freq`` the
+centered log-unigram direction (paper Sec. 4). In mediate mode the DE
+pathway follows the family: entropy freezes the LayerNorm scale
+(Eq. 6); frequency restores the v_freq logit component (Eq. 7).
 
 Notes
 -----
@@ -99,6 +107,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         mediate_neuron_chunk: int = 16,
         random_baseline_count: int = 20,
         probe_path: Optional[str] = None,
+        neuron_family: str = "entropy",
+        unigram_path: Optional[str] = None,
         seed: int = 42,
         **kwargs,
     ):
@@ -109,6 +119,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             raise ValueError(f"selection must be 'top_n' or 'top_percent', got '{selection}'")
         if mediate_scope not in ("candidates", "all"):
             raise ValueError(f"mediate_scope must be 'candidates' or 'all', got '{mediate_scope}'")
+        if neuron_family not in ("entropy", "frequency"):
+            raise ValueError(
+                f"neuron_family must be 'entropy' or 'frequency', got '{neuron_family}'"
+            )
 
         self._name = name
         self.description = description
@@ -127,6 +141,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.mediate_neuron_chunk = mediate_neuron_chunk
         self.random_baseline_count = random_baseline_count
         self.probe_path = probe_path
+        self.neuron_family = neuron_family
+        self.unigram_path = unigram_path
         self.seed = seed
 
     @property
@@ -292,12 +308,122 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "norms": norms,
             "logit_vars": logit_vars,
             "rho": rho,
+            "score": rho,
+            "score_name": "rho",
             "svd_diag": svd_diag,
             "final_layer": final_layer,
             "selected": selected,
             "summary": summary,
             "detail": detail,
         }
+
+    # ------------------------------------------------------------------
+    # token-frequency family (paper Sec. 4)
+    # ------------------------------------------------------------------
+
+    def _get_v_freq(self, backend: InferenceBackend) -> torch.Tensor:
+        """Centered log-unigram direction ``v_freq`` over the vocabulary.
+
+        From ``unigram_path`` (.npy of unigram counts/probs) when given --
+        the authors ship OpenWebText counts -- otherwise derived from the
+        experiment corpus text (config-gated approximation).
+        """
+        emb = backend.model.get_output_embeddings().weight
+        vocab = emb.shape[0]
+        if self.unigram_path:
+            import numpy as np
+
+            counts = torch.from_numpy(np.load(self.unigram_path).astype("float64"))
+            if counts.numel() != vocab:
+                raise ValueError(f"unigram file has {counts.numel()} entries, vocab is {vocab}")
+        else:
+            ids = torch.cat(
+                [
+                    torch.tensor(
+                        backend.tokenizer(self._corpus_text_or_default())["input_ids"],
+                        dtype=torch.long,
+                    )
+                    for _ in [0]
+                ]
+            )
+            reps = -(-self.n_tokens // ids.numel())
+            stream = ids.repeat(reps)[: self.n_tokens]
+            counts = torch.bincount(stream, minlength=vocab).double()
+        p = counts / counts.sum()
+        log_p = torch.log(p.clamp_min(1e-12))
+        return (log_p - log_p.mean()).float()
+
+    def _corpus_text_or_default(self) -> str:
+        return self.corpus_text if self.corpus_text else self._DEFAULT_CORPUS
+
+    @staticmethod
+    def _compute_freq_scores(
+        w_u: torch.Tensor, w_out: torch.Tensor, v_freq: torch.Tensor
+    ) -> torch.Tensor:
+        """Signed cosine between each neuron's direct logit write and v_freq.
+
+        The write of neuron i onto vocabulary space is ``W_U w_out^(i)``;
+        centering it removes the softmax-invariant constant component. The
+        sign encodes direction: positive boosts frequent tokens, negative
+        suppresses them.
+        """
+        writes = w_u @ w_out  # (vocab, d_mlp)
+        writes = writes - writes.mean(dim=0, keepdim=True)
+        vf = v_freq - v_freq.mean()
+        denom = writes.norm(dim=0) * vf.norm()
+        return (writes.T @ vf) / denom.clamp_min(1e-12)
+
+    def _identify_frequency_arrays(self, backend: InferenceBackend) -> Dict[str, Any]:
+        """Frequency-family counterpart of :meth:`_identify_arrays`."""
+        w_u = self._get_unembedding(backend)
+        w_out = self._get_final_w_out(backend)
+        final_layer = backend.hook_manager.num_layers - 1
+        v_freq = self._get_v_freq(backend)
+
+        norms = w_out.norm(dim=0)
+        scores = self._compute_freq_scores(w_u, w_out, v_freq)
+        ranked = scores.abs()
+        selected = self._select_neurons(ranked)
+
+        summary = {
+            "final_layer": final_layer,
+            "d_model": w_u.shape[1],
+            "d_mlp": w_out.shape[1],
+            "neuron_family": "frequency",
+            "score_name": "abs_cosine(write, v_freq)",
+            "selected_count": len(selected),
+            "selected_mean_norm": float(norms[selected].mean()),
+            "all_mean_norm": float(norms.mean()),
+            "selected_mean_abs_score": float(ranked[selected].mean()),
+            "all_mean_abs_score": float(ranked.mean()),
+            "selected_positive_sign_count": int((scores[selected] > 0).sum()),
+        }
+        detail = [
+            {
+                "layer": final_layer,
+                "index": int(i),
+                "norm": float(norms[i]),
+                "freq_cosine": float(scores[i]),
+            }
+            for i in selected
+        ]
+        return {
+            "w_out": w_out,
+            "norms": norms,
+            "v_freq": v_freq,
+            "score": ranked,
+            "signed_score": scores,
+            "score_name": "abs_cosine(write, v_freq)",
+            "final_layer": final_layer,
+            "selected": selected,
+            "summary": summary,
+            "detail": detail,
+        }
+
+    def _identify_dispatch(self, backend: InferenceBackend) -> Dict[str, Any]:
+        if self.neuron_family == "frequency":
+            return self._identify_frequency_arrays(backend)
+        return self._identify_arrays(backend)
 
     @staticmethod
     def _pearson(a: torch.Tensor, b: torch.Tensor) -> float:
@@ -307,27 +433,43 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         return float((a @ b) / denom) if denom > 0 else 0.0
 
     def _run_identify(self, backend: InferenceBackend) -> ExperimentResult:
-        ident = self._identify_arrays(backend)
+        ident = self._identify_dispatch(backend)
         s = ident["summary"]
-        metrics = {"mode": "identify", "fold_final_norm": self.fold_final_norm, **s}
+        metrics = {
+            "mode": "identify",
+            "fold_final_norm": self.fold_final_norm,
+            "neuron_family": self.neuron_family,
+            **s,
+        }
 
         print("\n" + "=" * 66)
-        print("CONFIDENCE REGULATION -- IDENTIFY")
+        print(f"CONFIDENCE REGULATION -- IDENTIFY ({self.neuron_family})")
         print("=" * 66)
         print(f"Final layer      : {s['final_layer']} (d_model={s['d_model']}, d_mlp={s['d_mlp']})")
-        print(
-            f"Null space dim k : {s['k_null']} "
-            f"(bottom eig {s['bottom_eigval_max']:.2e} vs median {s['median_eigval']:.2e})"
-        )
+        if self.neuron_family == "entropy":
+            print(
+                f"Null space dim k : {s['k_null']} "
+                f"(bottom eig {s['bottom_eigval_max']:.2e} vs median {s['median_eigval']:.2e})"
+            )
+            print(f"rho   selected   : {s['selected_mean_rho']:.4f} | all {s['all_mean_rho']:.4f}")
+            print(
+                f"logitVar selected: {s['selected_mean_logit_var']:.3e} | "
+                f"all {s['all_mean_logit_var']:.3e}"
+            )
+            print(f"pearson(rho, norm)          : {s['pearson_rho_norm']:+.3f}")
+            print(f"pearson(rho, -logitVar)     : {s['pearson_rho_logit_var']:+.3f}")
+        else:
+            print("Score            : |cosine(write, v_freq)|")
+            print(
+                f"|cos| selected   : {s['selected_mean_abs_score']:.4f} | "
+                f"all {s['all_mean_abs_score']:.4f}"
+            )
+            print(
+                f"sign split       : {s['selected_positive_sign_count']} positive "
+                f"(boost frequent) / {s['selected_count']} total"
+            )
         print(f"Selected         : {s['selected_count']} neurons ({self.selection})")
-        print(f"rho   selected   : {s['selected_mean_rho']:.4f} | all {s['all_mean_rho']:.4f}")
         print(f"norm  selected   : {s['selected_mean_norm']:.3f} | all {s['all_mean_norm']:.3f}")
-        print(
-            f"logitVar selected: {s['selected_mean_logit_var']:.3e} | "
-            f"all {s['all_mean_logit_var']:.3e}"
-        )
-        print(f"pearson(rho, norm)          : {s['pearson_rho_norm']:+.3f}")
-        print(f"pearson(rho, -logitVar)     : {s['pearson_rho_logit_var']:+.3f}")
         print("=" * 66)
 
         return ExperimentResult(
@@ -338,6 +480,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             metadata={
                 "description": self.description,
                 "fold_final_norm": self.fold_final_norm,
+                "neuron_family": self.neuron_family,
                 "selection": self.selection,
                 "top_n": self.top_n,
                 "top_percent": self.top_percent,
@@ -454,7 +597,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         calibrated final-norm formula.
         """
         device = backend.device
-        ident = self._identify_arrays(backend)
+        ident = self._identify_dispatch(backend)
         batches = self._build_corpus_batches(backend)
         norm_mod = self._resolve_final_norm_module(backend)
         if norm_mod is None:
@@ -503,67 +646,71 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         authors do on GPU.
         """
         ident, sequences, act_mean, norm_cfg = self._capture_sequences(backend)
-        rho = ident["rho"]
+        score = ident["score"]
         selected = ident["selected"]
 
         rng = torch.Generator().manual_seed(self.seed)
-        rand_idx = torch.randperm(rho.numel(), generator=rng)[: self.random_baseline_count].tolist()
+        rand_idx = torch.randperm(score.numel(), generator=rng)[
+            : self.random_baseline_count
+        ].tolist()
         if self.mediate_scope == "all":
-            indices = list(range(rho.numel()))
+            indices = list(range(score.numel()))
         else:
             indices = sorted(set(selected) | set(rand_idx))
 
-        stats = self._ablate_neurons(backend, sequences, act_mean, norm_cfg, indices)
+        v_freq = ident.get("v_freq") if self.neuron_family == "frequency" else None
+        stats = self._ablate_neurons(backend, sequences, act_mean, norm_cfg, indices, v_freq=v_freq)
         mediated = stats["mediated"]
 
         sel_rows = [indices.index(i) for i in selected]
         rand_rows = [indices.index(i) for i in rand_idx]
 
-        spearman = self._spearman(rho[torch.tensor(indices)], mediated)
+        spearman = self._spearman(score[torch.tensor(indices)], mediated)
+        de_label = "de_freq" if v_freq is not None else "de_ln"
         metrics: Dict[str, Any] = {
             **{f"identify_{k}": v for k, v in ident["summary"].items()},
             "mode": "mediate",
+            "neuron_family": self.neuron_family,
             "mediate_scope": self.mediate_scope,
             "n_ablated_neurons": len(indices),
             "n_sequences": len(sequences),
             "seq_len": self.seq_len,
             "total_positions": stats["positions"],
             "selected_mean_TE": float(stats["te"][sel_rows].mean()),
-            "selected_mean_DE": float(stats["de"][sel_rows].mean()),
-            "selected_mean_ln_mediated": float(mediated[sel_rows].mean()),
-            "random_baseline_mean_ln_mediated": float(mediated[rand_rows].mean()),
-            "random_baseline_max_ln_mediated": float(mediated[rand_rows].max()),
+            f"selected_mean_{de_label}": float(stats["de"][sel_rows].mean()),
+            "selected_mean_mediated": float(mediated[sel_rows].mean()),
+            "random_baseline_mean_mediated": float(mediated[rand_rows].mean()),
+            "random_baseline_max_mediated": float(mediated[rand_rows].max()),
             "random_baseline_neurons": {
                 str(i): float(mediated[indices.index(i)]) for i in rand_idx
             },
-            "spearman_rho_ln_mediated": spearman,
+            "spearman_score_mediated": spearman,
         }
 
         order = torch.argsort(mediated, descending=True)
         top_rows = order[: min(5, len(order))].tolist()
 
         print("\n" + "=" * 66)
-        print("CONFIDENCE REGULATION -- MEDIATE")
+        print(f"CONFIDENCE REGULATION -- MEDIATE ({self.neuron_family})")
         print("=" * 66)
         print(f"Scope            : {self.mediate_scope} ({len(indices)} neurons)")
         print(
             f"Sequences        : {len(sequences)} x {self.seq_len} tokens "
             f"({stats['positions']} positions)"
         )
+        de_name = "freq-mediated" if v_freq is not None else "ln-mediated"
+        print(f"Selected ({len(selected)}): {de_name} = {metrics['selected_mean_mediated']:.3f}")
         print(
-            f"Selected ({len(selected)}): ln-mediated = {metrics['selected_mean_ln_mediated']:.3f}"
-        )
-        print(
-            f"Random baseline  : mean {metrics['random_baseline_mean_ln_mediated']:.3f} "
-            f"max {metrics['random_baseline_max_ln_mediated']:.3f} "
+            f"Random baseline  : mean {metrics['random_baseline_mean_mediated']:.3f} "
+            f"max {metrics['random_baseline_max_mediated']:.3f} "
             f"(R={self.random_baseline_count})"
         )
-        print(f"spearman(rho, ln_mediated)   : {spearman:+.3f}")
-        print("Top-5 ablated neurons by ln-mediated fraction:")
+        print(f"spearman(score, mediated)    : {spearman:+.3f}")
+        print(f"Top-5 ablated neurons by {de_name} fraction:")
         for row in top_rows:
             tag = "*" if indices[row] in set(selected) else " "
             print(
-                f"  {tag}{indices[row]:5d}  ln-mediated={float(mediated[row]):+.3f}  "
+                f"  {tag}{indices[row]:5d}  {de_name}={float(mediated[row]):+.3f}  "
                 f"TE={float(stats['te'][row]):.4f}  DE={float(stats['de'][row]):.4f}"
             )
         print("=" * 66)
@@ -577,14 +724,15 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 "description": self.description,
                 "corpus_default": self.corpus_text is None,
                 "fold_final_norm": self.fold_final_norm,
+                "neuron_family": self.neuron_family,
                 "ablated_indices": indices,
                 "per_neuron": [
                     {
                         "index": int(indices[row]),
                         "te": float(stats["te"][row]),
                         "de": float(stats["de"][row]),
-                        "ln_mediated": float(mediated[row]),
-                        "rho": float(rho[indices[row]]),
+                        "mediated": float(mediated[row]),
+                        "score": float(score[indices[row]]),
                         "is_selected": indices[row] in set(selected),
                     }
                     for row in range(len(indices))
@@ -599,6 +747,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         act_mean: torch.Tensor,
         norm_cfg: Dict[str, Any],
         indices: List[int],
+        v_freq: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         """Chunked analytic ablation with per-neuron separable effects.
 
@@ -608,6 +757,11 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         vocabulary space once per variant, and accumulates the absolute
         loss *change* vs the un-ablated baseline per neuron (paper Eq. 5/6
         are differences against the intact forward).
+
+        For the token-frequency family (``v_freq`` given), DE instead
+        restores each ablated logit vector's component along ``v_freq`` to
+        its pre-ablation value (paper Eq. 7) -- the LayerNorm scale stays
+        live in both TE and DE.
         """
         device = backend.device
         w_out_full = self._get_final_w_out(backend).to(device)
@@ -616,6 +770,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         emb = backend.model.get_output_embeddings()
         b_u = getattr(emb, "bias", None)
         b_u = b_u.detach().float().to(device) if b_u is not None else None
+        vf = v_freq.to(device) if v_freq is not None else None
+        vf2 = vf.pow(2).sum() if vf is not None else None
 
         te_sum = torch.zeros(len(indices))
         de_sum = torch.zeros(len(indices))
@@ -647,6 +803,11 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 base_loss = self._token_loss(
                     base_logits[:, :-1], tokens[:, 1:].reshape(-1).to(device)
                 ).to(device)
+                comp_base = None
+                if vf is not None:
+                    # per-position component of baseline logits along v_freq
+                    bl = base_logits[:, :-1].reshape(-1, base_logits.shape[-1])
+                    comp_base = (bl @ vf) / vf2
                 T = x.shape[1]
                 for start in range(0, len(indices), chunk):
                     idx = indices[start : start + chunk]
@@ -659,7 +820,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                     gain = norm_cfg["weight"].to(device)
                     bias = norm_cfg["bias"].to(device) if norm_cfg["bias"] is not None else None
 
-                    def project(xf_in, scale_frozen=None):
+                    def forward_logits(xf_in, scale_frozen=None):
                         if norm_cfg["is_rms"]:
                             mean = torch.zeros_like(xf_in)
                             scale = (xf_in.pow(2).mean(-1, keepdim=True) + eps).sqrt()
@@ -683,20 +844,29 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                         logits = normed @ w_u.T
                         if b_u is not None:
                             logits = logits + b_u
-                        return self._token_loss(
-                            logits.view(x_abl.shape[0], T, -1)[:, :-1],
-                            tgt_flat,
-                        )
+                        return logits.view(x_abl.shape[0], T, -1)
 
-                    te_losses = project(xf)
-                    de_losses = project(xf, scale_frozen=scale0)
+                    te_logits = forward_logits(xf)  # fresh scale (normal forward)
+                    te_losses = self._token_loss(te_logits[:, :-1], tgt_flat)
+                    if vf is not None:
+                        # DE_freq: restore v_freq component to its baseline
+                        # value (Eq. 7); LayerNorm stays live in TE and DE.
+                        abl = te_logits[:, :-1].reshape(x_abl.shape[0], -1, te_logits.shape[-1])
+                        comp_abl = torch.einsum("nlv,v->nl", abl, vf) / vf2
+                        restored = abl + (comp_base.unsqueeze(0) - comp_abl).unsqueeze(-1) * vf
+                        de_losses = self._token_loss(restored, tgt_flat)
+                        del abl, restored
+                    else:
+                        de_logits = forward_logits(xf, scale_frozen=scale0)
+                        de_losses = self._token_loss(de_logits[:, :-1], tgt_flat)
+                        del de_logits
                     te_sum[start : start + len(idx)] += (
                         (te_losses - base_loss).abs().sum(dim=1).cpu()
                     )
                     de_sum[start : start + len(idx)] += (
                         (de_losses - base_loss).abs().sum(dim=1).cpu()
                     )
-                    del x_abl, xf, te_losses, de_losses
+                    del x_abl, xf, te_logits, te_losses, de_losses
 
         te_mean = te_sum / positions
         de_mean = de_sum / positions
@@ -737,7 +907,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         under random placement so the observed overlap can be read as an
         enrichment ratio.
         """
-        ident = self._identify_arrays(backend)
+        ident = self._identify_dispatch(backend)
         final_layer = ident["final_layer"]
         d_mlp = ident["summary"]["d_mlp"]
         selected_set = set(ident["selected"])
