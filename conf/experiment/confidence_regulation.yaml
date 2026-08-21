@@ -1,0 +1,24 @@
+# Confidence Regulation — entropy-neuron identification/mediation/overlap
+# (Stolfo et al., NeurIPS 2024, arXiv:2406.16254)
+_target_: cotlab.experiments.ConfidenceRegulationExperiment
+
+name: confidence_regulation
+description: "Entropy-neuron identification and mediation (Stolfo et al., NeurIPS 2024)"
+
+# identify | mediate | overlap | full (mediate/overlap land in follow-up commits)
+mode: identify
+
+# top_n | top_percent (ranking metric: rho, per the authors' released code)
+selection: top_n
+top_n: 20
+top_percent: 0.01
+
+# Bottom-k right singular vectors of W_U treated as the effective null space.
+# null defaults to max(1, round(0.01 * d_model)) — 12 for GPT-2 Small,
+# 25 for Gemma 3 4B (d_model=2560), 40 for LLaMA2 7B.
+k_null: null
+
+# Neuron chunk size for the (vocab x chunk) LogitVar projection matmuls.
+logit_chunk_size: 256
+
+seed: 42
