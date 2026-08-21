@@ -109,6 +109,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         probe_path: Optional[str] = None,
         neuron_family: str = "entropy",
         unigram_path: Optional[str] = None,
+        mediate_engine: str = "auto",
         seed: int = 42,
         **kwargs,
     ):
@@ -122,6 +123,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         if neuron_family not in ("entropy", "frequency"):
             raise ValueError(
                 f"neuron_family must be 'entropy' or 'frequency', got '{neuron_family}'"
+            )
+        if mediate_engine not in ("auto", "analytic", "forward"):
+            raise ValueError(
+                f"mediate_engine must be auto|analytic|forward, got '{mediate_engine}'"
             )
 
         self._name = name
@@ -143,6 +148,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.probe_path = probe_path
         self.neuron_family = neuron_family
         self.unigram_path = unigram_path
+        self.mediate_engine = mediate_engine
         self.seed = seed
 
     @property
@@ -669,7 +675,13 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             indices = sorted(set(selected) | set(rand_idx))
 
         v_freq = ident.get("v_freq") if self.neuron_family == "frequency" else None
-        stats = self._ablate_neurons(backend, sequences, act_mean, norm_cfg, indices, v_freq=v_freq)
+        engine = self._resolve_engine(backend)
+        if engine == "forward":
+            stats = self._ablate_neurons_forward(backend, sequences, act_mean, indices)
+        else:
+            stats = self._ablate_neurons(
+                backend, sequences, act_mean, norm_cfg, indices, v_freq=v_freq
+            )
         mediated = stats["mediated"]
 
         sel_rows = [indices.index(i) for i in selected]
@@ -681,50 +693,86 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             **{f"identify_{k}": v for k, v in ident["summary"].items()},
             "mode": "mediate",
             "neuron_family": self.neuron_family,
+            "mediate_engine": engine,
             "mediate_scope": self.mediate_scope,
             "n_ablated_neurons": len(indices),
             "n_sequences": len(sequences),
             "seq_len": self.seq_len,
             "total_positions": stats["positions"],
             "selected_mean_TE": float(stats["te"][sel_rows].mean()),
-            f"selected_mean_{de_label}": float(stats["de"][sel_rows].mean()),
-            "selected_mean_mediated": float(mediated[sel_rows].mean()),
-            "random_baseline_mean_mediated": float(mediated[rand_rows].mean()),
-            "random_baseline_max_mediated": float(mediated[rand_rows].max()),
-            "random_baseline_neurons": {
-                str(i): float(mediated[indices.index(i)]) for i in rand_idx
-            },
-            "spearman_score_mediated": spearman,
         }
+        if mediated is not None:
+            metrics.update(
+                {
+                    f"selected_mean_{de_label}": float(stats["de"][sel_rows].mean()),
+                    "selected_mean_mediated": float(mediated[sel_rows].mean()),
+                    "random_baseline_mean_mediated": float(mediated[rand_rows].mean()),
+                    "random_baseline_max_mediated": float(mediated[rand_rows].max()),
+                    "random_baseline_neurons": {
+                        str(i): float(mediated[indices.index(i)]) for i in rand_idx
+                    },
+                    "spearman_score_mediated": spearman,
+                }
+            )
+        else:
+            metrics.update(
+                {
+                    "random_baseline_mean_TE": float(stats["te"][rand_rows].mean()),
+                    "spearman_score_TE": spearman,
+                }
+            )
 
-        order = torch.argsort(mediated, descending=True)
+        if mediated is not None:
+            order = torch.argsort(mediated, descending=True)
+        else:
+            order = torch.argsort(stats["te"], descending=True)
         top_rows = order[: min(5, len(order))].tolist()
 
         print("\n" + "=" * 66)
-        print(f"CONFIDENCE REGULATION -- MEDIATE ({self.neuron_family})")
+        print(f"CONFIDENCE REGULATION -- MEDIATE ({self.neuron_family}, engine={engine})")
         print("=" * 66)
         print(f"Scope            : {self.mediate_scope} ({len(indices)} neurons)")
         print(
             f"Sequences        : {len(sequences)} x {self.seq_len} tokens "
             f"({stats['positions']} positions)"
         )
-        de_name = "freq-mediated" if v_freq is not None else "ln-mediated"
-        print(f"Selected ({len(selected)}): {de_name} = {metrics['selected_mean_mediated']:.3f}")
-        print(
-            f"Random baseline  : mean {metrics['random_baseline_mean_mediated']:.3f} "
-            f"max {metrics['random_baseline_max_mediated']:.3f} "
-            f"(R={self.random_baseline_count})"
-        )
-        print(f"spearman(score, mediated)    : {spearman:+.3f}")
-        print(f"Top-5 ablated neurons by {de_name} fraction:")
-        for row in top_rows:
-            tag = "*" if indices[row] in set(selected) else " "
+        if mediated is not None:
+            de_name = "freq-mediated" if v_freq is not None else "ln-mediated"
             print(
-                f"  {tag}{indices[row]:5d}  {de_name}={float(mediated[row]):+.3f}  "
-                f"TE={float(stats['te'][row]):.4f}  DE={float(stats['de'][row]):.4f}"
+                f"Selected ({len(selected)}): {de_name} = {metrics['selected_mean_mediated']:.3f}"
             )
+            print(
+                f"Random baseline  : mean {metrics['random_baseline_mean_mediated']:.3f} "
+                f"max {metrics['random_baseline_max_mediated']:.3f} "
+                f"(R={self.random_baseline_count})"
+            )
+            print(f"spearman(score, mediated)    : {spearman:+.3f}")
+            print(f"Top-5 ablated neurons by {de_name} fraction:")
+            for row in top_rows:
+                tag = "*" if indices[row] in set(selected) else " "
+                print(
+                    f"  {tag}{indices[row]:5d}  {de_name}={float(mediated[row]):+.3f}  "
+                    f"TE={float(stats['te'][row]):.4f}  DE={float(stats['de'][row]):.4f}"
+                )
+        else:
+            # forward engine: causal effect only (post-FFN-norm architectures)
+            sel_te = float(stats["te"][sel_rows].mean())
+            rand_te = float(stats["te"][rand_rows].mean())
+            print("Engine           : forward (no analytic shortcut on this arch)")
+            print(f"Selected ({len(selected)}): mean |dLoss| = {sel_te:.4f}")
+            print(f"Random baseline  : mean {rand_te:.4f} (R={self.random_baseline_count})")
+            print(f"spearman(score, TE)          : {spearman:+.3f}")
+            print("Top-5 ablated neurons by causal effect (|dLoss|):")
+            for row in top_rows:
+                tag = "*" if indices[row] in set(selected) else " "
+                print(f"  {tag}{indices[row]:5d}  |dLoss|={float(stats['te'][row]):.4f}")
         print("=" * 66)
 
+        per_neuron_de = (
+            [float(stats["de"][row]) for row in range(len(indices))]
+            if mediated is not None
+            else None
+        )
         return ExperimentResult(
             experiment_name=self.name,
             model_name=backend.model_name,
@@ -735,13 +783,14 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 "corpus_default": self.corpus_text is None,
                 "fold_final_norm": self.fold_final_norm,
                 "neuron_family": self.neuron_family,
+                "mediate_engine": engine,
                 "ablated_indices": indices,
                 "per_neuron": [
                     {
                         "index": int(indices[row]),
                         "te": float(stats["te"][row]),
-                        "de": float(stats["de"][row]),
-                        "mediated": float(mediated[row]),
+                        "de": per_neuron_de[row] if per_neuron_de else None,
+                        "mediated": (float(mediated[row]) if mediated is not None else None),
                         "score": float(ident.get("signed_score", score)[indices[row]]),
                         "is_selected": indices[row] in set(selected),
                     }
@@ -749,6 +798,76 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 ],
             },
         )
+
+    @staticmethod
+    def _has_post_ffn_norm(backend: InferenceBackend) -> bool:
+        """True for architectures whose MLP output is renormalized before the
+        residual add (Gemma 2/3, MedGemma). There the analytic shortcut
+        ``x' = x + dn * w_out`` on the cached final residual is invalid --
+        the write is entangled with all other units through that norm."""
+        layer = backend.hook_manager.get_layer_module(0)
+        return hasattr(layer, "post_feedforward_layernorm")
+
+    def _resolve_engine(self, backend: InferenceBackend) -> str:
+        if self.mediate_engine != "auto":
+            return self.mediate_engine
+        return "forward" if self._has_post_ffn_norm(backend) else "analytic"
+
+    def _ablate_neurons_forward(
+        self,
+        backend: InferenceBackend,
+        sequences: List[Dict[str, torch.Tensor]],
+        act_mean: torch.Tensor,
+        indices: List[int],
+    ) -> Dict[str, Any]:
+        """Causal mean-ablation via real forwards (per neuron, per sequence).
+
+        Required for architectures with a post-FFN norm (Gemma 2/3 family)
+        where no analytic shortcut exists. Reports total causal effect only;
+        the LN-mediated fraction is not defined here.
+        """
+        device = backend.device
+        mod = backend.hook_manager.get_mlp_down_proj_module(backend.hook_manager.num_layers - 1)
+        te_sum = torch.zeros(len(indices))
+        counter = {"positions": 0}
+
+        def run(hooked_neuron=None):
+            nonlocal_handle = None
+            if hooked_neuron is not None:
+
+                def hook(m, inp):
+                    new = inp[0].clone()
+                    new[:, :, hooked_neuron] = act_mean[hooked_neuron].to(inp[0].device)
+                    return (new,) + tuple(inp[1:])
+
+                nonlocal_handle = mod.register_forward_pre_hook(hook)
+            losses = []
+            for seq in sequences:
+                tokens = seq["tokens"].to(device)
+                with torch.no_grad():
+                    out = backend.model(tokens)
+                logits = out.logits.float()[:, :-1]
+                lp = torch.log_softmax(logits, dim=-1)
+                loss = -lp.gather(-1, tokens[:, 1:].unsqueeze(-1)).squeeze(-1)
+                counter["positions"] += loss.numel()
+                losses.append(loss.cpu())
+            if nonlocal_handle is not None:
+                nonlocal_handle.remove()
+            return torch.cat(losses)
+
+        with torch.no_grad():
+            base_l = run()
+            for row, i in enumerate(indices):
+                abl_l = run(i)
+                te_sum[row] += (abl_l - base_l).abs().sum()
+        te_mean = te_sum / max(1, counter["positions"])
+        zeros = torch.zeros(len(indices))
+        return {
+            "te": te_mean,
+            "de": zeros,
+            "mediated": None,
+            "positions": counter["positions"],
+        }
 
     def _ablate_neurons(
         self,
