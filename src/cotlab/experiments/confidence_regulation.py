@@ -59,6 +59,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         top_percent: float = 0.01,
         k_null: Optional[int] = None,
         logit_chunk_size: int = 256,
+        fold_final_norm: bool = True,
         seed: int = 42,
         **kwargs,
     ):
@@ -76,6 +77,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.top_percent = top_percent
         self.k_null = k_null
         self.logit_chunk_size = logit_chunk_size
+        self.fold_final_norm = fold_final_norm
         self.seed = seed
 
     @property
@@ -93,18 +95,52 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     # ------------------------------------------------------------------
 
     def _get_unembedding(self, backend: InferenceBackend) -> torch.Tensor:
-        """Return ``W_U`` as a ``(vocab, d_model)`` float32 CPU tensor."""
-        w_u = backend.model.get_output_embeddings().weight
-        return w_u.detach().float().cpu()
+        """Return the *effective* ``W_U`` as a ``(vocab, d_model)`` fp32 CPU tensor.
+
+        Following the paper (Sec. 2) the final-norm gain is folded into the
+        unembedding: logits = LN(x) @ W_U^T = x_normed @ (W_U ⊙ γ)^T. The
+        null space that matters for entropy neurons is that of the folded
+        matrix (TransformerLens ``fold_ln=True`` equivalent).
+        """
+        w_u = backend.model.get_output_embeddings().weight.detach().float().cpu()
+        if self.fold_final_norm:
+            gamma = self._get_final_norm_gain(backend)
+            if gamma is not None:
+                w_u = w_u * gamma.unsqueeze(0)
+        return w_u
+
+    @staticmethod
+    def _get_final_norm_gain(backend: InferenceBackend):
+        """Resolve the final normalization gain ``γ`` (d_model,) or None."""
+        model = backend.model
+        containers = [
+            model,
+            getattr(model, "model", None),
+            getattr(model, "transformer", None),
+        ]
+        for container in containers:
+            if container is None:
+                continue
+            for attr in ("norm", "ln_f", "final_layernorm", "final_layer_norm"):
+                mod = getattr(container, attr, None)
+                if mod is not None and hasattr(mod, "weight"):
+                    return mod.weight.detach().float().cpu()
+        return None
 
     def _get_final_w_out(self, backend: InferenceBackend) -> torch.Tensor:
         """Return final-layer ``W_out`` as a ``(d_model, d_mlp)`` float32 CPU tensor.
 
-        Columns are the per-neuron output weights ``w_out^(i)``.
+        Columns are the per-neuron output weights ``w_out^(i)``. Handles both
+        parameterizations: ``nn.Linear`` stores ``(d_model, d_mlp)`` (columns
+        are neurons) while GPT-2-style ``Conv1D`` stores ``(d_mlp, d_model)``
+        (rows are neurons).
         """
         final_layer = backend.hook_manager.num_layers - 1
         w_down = backend.hook_manager.get_mlp_down_proj_module(final_layer).weight
-        return w_down.detach().float().cpu()
+        w_down = w_down.detach().float().cpu()
+        if w_down.shape[0] != backend.model.get_input_embeddings().weight.shape[1]:
+            w_down = w_down.T
+        return w_down
 
     def _compute_logit_vars(self, w_u: torch.Tensor, w_out: torch.Tensor) -> torch.Tensor:
         """LogitVar per neuron (Eq. 3), chunked over neurons to bound memory.
@@ -178,6 +214,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
         metrics: Dict[str, Any] = {
             "mode": "identify",
+            "fold_final_norm": self.fold_final_norm,
             "final_layer": final_layer,
             "d_model": w_u.shape[1],
             "d_mlp": w_out.shape[1],
@@ -229,6 +266,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             metrics=metrics,
             metadata={
                 "description": self.description,
+                "fold_final_norm": self.fold_final_norm,
                 "selection": self.selection,
                 "top_n": self.top_n,
                 "top_percent": self.top_percent,
