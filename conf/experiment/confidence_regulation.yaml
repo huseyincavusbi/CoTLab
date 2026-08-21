@@ -38,6 +38,14 @@ random_baseline_count: 20
 # Probe JSON with H-Neuron indices (legacy "neurons" or "fit.h_neurons" format).
 probe_path: null
 
+# --- neuron family ---
+# entropy: null-space rho ranking + DE with frozen LayerNorm scale (Eq. 6)
+# frequency: |cosine(write, v_freq)| ranking + DE with v_freq component
+# restored (Eq. 7); unigram_path points to a .npy of unigram counts
+# (e.g. the authors' OpenWebText file) — null derives counts from the corpus.
+neuron_family: entropy
+unigram_path: null
+
 # Fold the final-norm gain into W_U before SVD/LogitVar (paper Sec. 2;
 # TransformerLens fold_ln equivalent). Required for correct null-space
 # identification — without it GPT-2 Small reproduction drops to 1/6.
