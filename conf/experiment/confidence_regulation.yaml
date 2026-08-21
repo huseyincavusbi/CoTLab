@@ -34,6 +34,10 @@ mediate_scope: candidates
 mediate_neuron_chunk: 16
 random_baseline_count: 20
 
+# --- overlap mode ---
+# Probe JSON with H-Neuron indices (legacy "neurons" or "fit.h_neurons" format).
+probe_path: null
+
 # Fold the final-norm gain into W_U before SVD/LogitVar (paper Sec. 2;
 # TransformerLens fold_ln equivalent). Required for correct null-space
 # identification — without it GPT-2 Small reproduction drops to 1/6.
