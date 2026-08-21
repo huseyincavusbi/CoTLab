@@ -780,6 +780,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         emb = backend.model.get_output_embeddings()
         b_u = getattr(emb, "bias", None)
         b_u = b_u.detach().float().to(device) if b_u is not None else None
+        # Gemma-2-style final-logit softcapping: applied by the model after
+        # the lm_head matmul; must be reproduced or analytic losses diverge.
+        model_cfg = getattr(backend.model, "config", None)
+        softcap = getattr(model_cfg, "final_logit_softcapping", None)
         vf = v_freq.to(device) if v_freq is not None else None
         vf2 = vf.pow(2).sum() if vf is not None else None
 
@@ -808,6 +812,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                     scale0 = (var0 + eps).sqrt()
                 # un-ablated baseline loss for this sequence (Eq. 5 reference)
                 base_logits = self._apply_norm(x, norm_cfg) @ w_u.T
+                if softcap is not None:
+                    base_logits = torch.tanh(base_logits / softcap) * softcap
                 if b_u is not None:
                     base_logits = base_logits + b_u
                 base_loss = self._token_loss(
@@ -854,6 +860,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                         logits = normed @ w_u.T
                         if b_u is not None:
                             logits = logits + b_u
+                        if softcap is not None:
+                            logits = torch.tanh(logits / softcap) * softcap
                         return logits.view(x_abl.shape[0], T, -1)
 
                     te_logits = forward_logits(xf)  # fresh scale (normal forward)
