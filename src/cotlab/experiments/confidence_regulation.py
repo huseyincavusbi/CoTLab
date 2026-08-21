@@ -139,16 +139,20 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     # weight access helpers
     # ------------------------------------------------------------------
 
-    def _get_unembedding(self, backend: InferenceBackend) -> torch.Tensor:
-        """Return the *effective* ``W_U`` as a ``(vocab, d_model)`` fp32 CPU tensor.
+    def _get_unembedding(self, backend: InferenceBackend, folded: bool = True) -> torch.Tensor:
+        """Return ``W_U`` as a ``(vocab, d_model)`` fp32 CPU tensor.
 
-        Following the paper (Sec. 2) the final-norm gain is folded into the
-        unembedding: logits = LN(x) @ W_U^T = x_normed @ (W_U * gamma)^T. The
-        null space that matters for entropy neurons is that of the folded
-        matrix (TransformerLens ``fold_ln=True`` equivalent).
+        With ``folded=True`` (identify mode) the final-norm gain is folded in,
+        matching the paper's weight preprocessing (TransformerLens
+        ``fold_ln=True``): the null space that matters for entropy neurons is
+        that of the effective unembedding.
+
+        With ``folded=False`` (mediate mode) the raw matrix is returned --
+        the mediation math applies the norm affine explicitly via
+        ``_apply_norm``, so folding here would apply gamma twice.
         """
         w_u = backend.model.get_output_embeddings().weight.detach().float().cpu()
-        if self.fold_final_norm:
+        if folded and self.fold_final_norm:
             gamma = self._get_final_norm_gain(backend)
             if gamma is not None:
                 w_u = w_u * gamma.unsqueeze(0)
@@ -450,13 +454,14 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         down_mod = backend.hook_manager.get_mlp_down_proj_module(ident["final_layer"])
         captured: Dict[str, torch.Tensor] = {}
 
-        def grab_down(_mod, _inp, out):
-            captured["acts"] = out.detach().float().cpu()
+        def grab_acts(_mod, inp):
+            # down_proj INPUT = post-activation hidden units (d_mlp)
+            captured["acts"] = inp[0].detach().float().cpu()
 
-        def grab_resid(_mod, inp, _out):
+        def grab_resid(_mod, inp):
             captured["resid"] = inp[0].detach().float().cpu()
 
-        handle_down = down_mod.register_forward_hook(grab_down)
+        handle_down = down_mod.register_forward_pre_hook(grab_acts)
         handle_norm = norm_mod.register_forward_pre_hook(grab_resid)
         sequences: List[Dict[str, torch.Tensor]] = []
         try:
@@ -591,13 +596,14 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         For a chunk of c neurons, builds c variants of the ablated final
         residual ``(c, T, d_model)``, applies the calibrated norm formula
         (fresh scale for TE; per-token frozen scale for DE_LN), projects to
-        vocabulary space once per variant, and accumulates absolute CE loss
-        per neuron over all positions of all sequences.
+        vocabulary space once per variant, and accumulates the absolute
+        loss *change* vs the un-ablated baseline per neuron (paper Eq. 5/6
+        are differences against the intact forward).
         """
         device = backend.device
         w_out_full = self._get_final_w_out(backend).to(device)
         with torch.no_grad():
-            w_u = self._get_unembedding(backend).to(device)
+            w_u = self._get_unembedding(backend, folded=False).to(device)
         emb = backend.model.get_output_embeddings()
         b_u = getattr(emb, "bias", None)
         b_u = b_u.detach().float().to(device) if b_u is not None else None
@@ -625,14 +631,21 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 else:
                     var0 = x.var(-1, unbiased=False, keepdim=True)
                     scale0 = (var0 + eps).sqrt()
+                # un-ablated baseline loss for this sequence (Eq. 5 reference)
+                base_logits = self._apply_norm(x, norm_cfg) @ w_u.T
+                if b_u is not None:
+                    base_logits = base_logits + b_u
+                base_loss = self._token_loss(
+                    base_logits[:, :-1], tokens[:, 1:].reshape(-1).to(device)
+                ).to(device)
                 T = x.shape[1]
                 for start in range(0, len(indices), chunk):
                     idx = indices[start : start + chunk]
                     deltas = delta_all[:, idx].T  # (c, T)
                     w_c = w_out_full[:, idx].T  # (c, d)
-                    x_abl = x.unsqueeze(0) + torch.einsum(
+                    x_abl = x + torch.einsum(
                         "ct,cd->ctd", deltas.to(device), w_c
-                    )  # (c, T, d)
+                    )  # (c, T, d); x's batch dim broadcasts over the chunk
                     xf = x_abl.reshape(-1, x_abl.shape[-1])  # (c*T, d)
                     gain = norm_cfg["weight"].to(device)
                     bias = norm_cfg["bias"].to(device) if norm_cfg["bias"] is not None else None
@@ -668,8 +681,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
                     te_losses = project(xf)
                     de_losses = project(xf, scale_frozen=scale0)
-                    te_sum[start : start + len(idx)] += te_losses.abs().sum(dim=1).cpu()
-                    de_sum[start : start + len(idx)] += de_losses.abs().sum(dim=1).cpu()
+                    te_sum[start : start + len(idx)] += (
+                        (te_losses - base_loss).abs().sum(dim=1).cpu()
+                    )
+                    de_sum[start : start + len(idx)] += (
+                        (de_losses - base_loss).abs().sum(dim=1).cpu()
+                    )
                     del x_abl, xf, te_losses, de_losses
 
         te_mean = te_sum / positions
