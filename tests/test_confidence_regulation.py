@@ -151,6 +151,79 @@ def test_spearman_perfect_and_inverse():
 
 
 # ---------------------------------------------------------------------------
+# token-frequency family
+# ---------------------------------------------------------------------------
+
+
+def test_freq_scores_rank_aligned_neuron_first():
+    torch.manual_seed(0)
+    d, m, vocab = 12, 5, 30
+    w_u = torch.randn(vocab, d)
+    # build v_freq inside the row space of W_U so an exact write exists
+    g = torch.randn(d)
+    v_freq = w_u @ g
+    w_out = 0.01 * torch.randn(d, m)
+    w_out[:, 2] = g / g.norm() * 2.0
+    scores = ConfidenceRegulationExperiment._compute_freq_scores(w_u, w_out, v_freq)
+    assert abs(scores[2]) == pytest.approx(1.0, abs=0.05)
+    assert scores[2].abs() > scores.abs().max() * 0.99
+
+
+def test_v_freq_is_centered_log_unigram(exp, tmp_path):
+    import numpy as np
+
+    p = tmp_path / "unigrams.npy"
+    counts = np.array([10.0, 1.0, 1.0, 0.0])
+    np.save(p, counts)
+
+    class _Tok:
+        @staticmethod
+        def __call__(text):
+            return {"input_ids": [0]}
+
+    class _Emb:
+        weight = torch.zeros(4, 3)
+
+    class _Model:
+        get_output_embeddings = staticmethod(lambda: _Emb())
+
+    class _Backend:  # minimal surface for _get_v_freq
+        model = _Model()
+
+    exp.unigram_path = str(p)
+    v = exp._get_v_freq(_Backend())
+    assert v.shape == (4,)
+    assert v.mean() == pytest.approx(0.0, abs=1e-6)
+    assert v[0] > 0  # most frequent token -> above-mean log prob (paper Eq.: log p_i - mean)
+    assert v[3] < 0  # never-seen token -> clamped low -> below mean
+
+
+def test_v_freq_rejects_wrong_vocab_size(exp, tmp_path):
+    import numpy as np
+
+    p = tmp_path / "unigrams.npy"
+    np.save(p, np.ones(7))
+
+    class _Emb:
+        weight = torch.zeros(4, 3)
+
+    class _Model:
+        get_output_embeddings = staticmethod(lambda: _Emb())
+
+    class _Backend:
+        model = _Model()
+
+    exp.unigram_path = str(p)
+    with pytest.raises(ValueError, match="vocab"):
+        exp._get_v_freq(_Backend())
+
+
+def test_rejects_unknown_family():
+    with pytest.raises(ValueError, match="neuron_family"):
+        ConfidenceRegulationExperiment(neuron_family="bogus")
+
+
+# ---------------------------------------------------------------------------
 # probe loading
 # ---------------------------------------------------------------------------
 
