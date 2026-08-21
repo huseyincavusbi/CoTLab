@@ -16,6 +16,8 @@
 | `probing_classifier` | Probing | Train probes on hidden states |
 | `radiology` | Classification | Medical report classification |
 | `confabulation_analysis` | Probing | H-Score of H-Neurons across confidence × correctness categories |
+| `entropy_neuron_overlap` | Weight analysis | Norm-based overlap between high-norm neurons and H-Neurons |
+| `confidence_regulation` | Entropy/frequency-neuron recipe | Two neuron families in one experiment: entropy (norm/LogitVar/null-space ρ, frozen-scale mediation) and token-frequency (v_freq cosine, component-restoration mediation); Jaccard vs probe sets (Stolfo et al., NeurIPS 2024) |
 
 ## Creating a probe (for `confabulation_analysis`)
 

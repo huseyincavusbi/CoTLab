@@ -6,6 +6,7 @@ from .attention_analysis import AttentionAnalysisExperiment
 from .classification import ClassificationExperiment
 from .composite_shift_detector import CompositeShiftDetectorExperiment
 from .confabulation_analysis import ConfabulationAnalysisExperiment
+from .confidence_regulation import ConfidenceRegulationExperiment
 from .cot_ablation import CoTAblationExperiment
 from .cot_faithfulness import CoTFaithfulnessExperiment
 from .cot_heads import CoTHeadsExperiment
@@ -30,6 +31,7 @@ __all__ = [
     "EntropyNeuronOverlapExperiment",
     "SAEFeatureNeuronOverlapExperiment",
     "CompositeShiftDetectorExperiment",
+    "ConfidenceRegulationExperiment",
     "CoTAblationExperiment",
     "CoTFaithfulnessExperiment",
     "ActivationPatchingExperiment",
