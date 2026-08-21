@@ -435,8 +435,13 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         return normed * cfg["weight"] + (cfg["bias"] if cfg["bias"] is not None else 0)
 
     def _token_loss(self, logits: torch.Tensor, targets_flat: torch.Tensor) -> torch.Tensor:
-        """Per-position CE loss without materializing log_softmax."""
-        tgt = targets_flat.view(1, -1, 1)  # broadcast over the neuron-chunk axis
+        """Per-position CE loss without materializing log_softmax.
+
+        ``logits`` is ``(n, L, vocab)``; every row shares the same target
+        sequence, so the gather index is expanded to match the leading dim
+        (a size-1 index would silently gather row 0's logits for all rows).
+        """
+        tgt = targets_flat.view(1, -1, 1).expand(logits.shape[0], -1, 1)
         gathered = logits.gather(-1, tgt).squeeze(-1)
         lse = logits.logsumexp(dim=-1)
         return -(gathered - lse)
