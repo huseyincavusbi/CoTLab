@@ -110,6 +110,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         neuron_family: str = "entropy",
         unigram_path: Optional[str] = None,
         mediate_engine: str = "auto",
+        layer: Optional[int] = None,
         seed: int = 42,
         **kwargs,
     ):
@@ -128,6 +129,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             raise ValueError(
                 f"mediate_engine must be auto|analytic|forward, got '{mediate_engine}'"
             )
+        if layer is not None and layer < 0:
+            raise ValueError(f"layer must be a non-negative int or None, got {layer}")
 
         self._name = name
         self.description = description
@@ -149,6 +152,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.neuron_family = neuron_family
         self.unigram_path = unigram_path
         self.mediate_engine = mediate_engine
+        self.layer = layer
         self.seed = seed
 
     @property
@@ -203,20 +207,34 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                     return mod.weight.detach().float().cpu()
         return None
 
-    def _get_final_w_out(self, backend: InferenceBackend) -> torch.Tensor:
-        """Return final-layer ``W_out`` as a ``(d_model, d_mlp)`` fp32 CPU tensor.
+    def _resolve_layer(self, backend: InferenceBackend) -> int:
+        """Effective analysis layer: configured ``layer`` or the final one."""
+        num = backend.hook_manager.num_layers
+        layer = self.layer if self.layer is not None else num - 1
+        if layer >= num:
+            raise ValueError(f"layer {layer} out of range for {num}-layer model")
+        return layer
+
+    def _is_final_layer(self, backend: InferenceBackend) -> bool:
+        return self._resolve_layer(backend) == backend.hook_manager.num_layers - 1
+
+    def _get_w_out(self, backend: InferenceBackend, layer: int) -> torch.Tensor:
+        """Return ``W_out`` of ``layer`` as a ``(d_model, d_mlp)`` fp32 CPU tensor.
 
         Columns are the per-neuron output weights ``w_out^(i)``. Handles both
         parameterizations: ``nn.Linear`` stores ``(d_model, d_mlp)`` (columns
         are neurons) while GPT-2-style ``Conv1D`` stores ``(d_mlp, d_model)``
         (rows are neurons).
         """
-        final_layer = backend.hook_manager.num_layers - 1
-        w_down = backend.hook_manager.get_mlp_down_proj_module(final_layer).weight
+        w_down = backend.hook_manager.get_mlp_down_proj_module(layer).weight
         w_down = w_down.detach().float().cpu()
         if w_down.shape[0] != backend.model.get_input_embeddings().weight.shape[1]:
             w_down = w_down.T
         return w_down
+
+    def _get_final_w_out(self, backend: InferenceBackend) -> torch.Tensor:
+        """Backward-compatible wrapper: ``W_out`` at the configured layer."""
+        return self._get_w_out(backend, self._resolve_layer(backend))
 
     # ------------------------------------------------------------------
     # identify
@@ -273,8 +291,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     def _identify_arrays(self, backend: InferenceBackend) -> Dict[str, Any]:
         """Compute all identify-mode quantities once; shared by all modes."""
         w_u = self._get_unembedding(backend)
-        w_out = self._get_final_w_out(backend)
-        final_layer = backend.hook_manager.num_layers - 1
+        layer = self._resolve_layer(backend)
+        w_out = self._get_w_out(backend, layer)
 
         norms = w_out.norm(dim=0)
         logit_vars = self._compute_logit_vars(w_u, w_out)
@@ -286,7 +304,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         sel_rho = rho[selected]
 
         summary = {
-            "final_layer": final_layer,
+            "layer": layer,
             "d_model": w_u.shape[1],
             "d_mlp": w_out.shape[1],
             **svd_diag,
@@ -302,7 +320,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         }
         detail = [
             {
-                "layer": final_layer,
+                "layer": layer,
                 "index": int(i),
                 "norm": float(norms[i]),
                 "logit_var": float(logit_vars[i]),
@@ -318,7 +336,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "score": rho,
             "score_name": "rho",
             "svd_diag": svd_diag,
-            "final_layer": final_layer,
+            "layer": layer,
             "selected": selected,
             "summary": summary,
             "detail": detail,
@@ -388,7 +406,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         """Frequency-family counterpart of :meth:`_identify_arrays`."""
         w_u = self._get_unembedding(backend)
         w_out = self._get_final_w_out(backend)
-        final_layer = backend.hook_manager.num_layers - 1
+        final_layer = self._resolve_layer(backend)
         v_freq = self._get_v_freq(backend)
 
         norms = w_out.norm(dim=0)
@@ -397,7 +415,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         selected = self._select_neurons(ranked)
 
         summary = {
-            "final_layer": final_layer,
+            "layer": final_layer,
             "d_model": w_u.shape[1],
             "d_mlp": w_out.shape[1],
             "neuron_family": "frequency",
@@ -425,7 +443,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "score": ranked,
             "signed_score": scores,
             "score_name": "abs_cosine(write, v_freq)",
-            "final_layer": final_layer,
+            "layer": final_layer,
             "selected": selected,
             "summary": summary,
             "detail": detail,
@@ -456,7 +474,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         print("\n" + "=" * 66)
         print(f"CONFIDENCE REGULATION -- IDENTIFY ({self.neuron_family})")
         print("=" * 66)
-        print(f"Final layer      : {s['final_layer']} (d_model={s['d_model']}, d_mlp={s['d_mlp']})")
+        print(f"Analysis layer   : {s['layer']} (d_model={s['d_model']}, d_mlp={s['d_mlp']})")
         if self.neuron_family == "entropy":
             print(
                 f"Null space dim k : {s['k_null']} "
@@ -619,7 +637,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         if norm_mod is None:
             raise ValueError("could not resolve the final normalization module")
 
-        down_mod = backend.hook_manager.get_mlp_down_proj_module(ident["final_layer"])
+        down_mod = backend.hook_manager.get_mlp_down_proj_module(ident["layer"])
         captured: Dict[str, torch.Tensor] = {}
 
         def grab_acts(_mod, inp):
@@ -676,6 +694,13 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
         v_freq = ident.get("v_freq") if self.neuron_family == "frequency" else None
         engine = self._resolve_engine(backend)
+        if engine == "analytic" and not self._is_final_layer(backend):
+            raise ValueError(
+                "analytic mediation requires the final layer (its single-pathway "
+                f"decomposition is invalid mid-network); configured layer is "
+                f"{self._resolve_layer(backend)}. Use mediate_engine='forward' "
+                "for non-final layers."
+            )
         if engine == "forward":
             stats = self._ablate_neurons_forward(backend, sequences, act_mean, indices)
         else:
@@ -687,7 +712,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         sel_rows = [indices.index(i) for i in selected]
         rand_rows = [indices.index(i) for i in rand_idx]
 
-        spearman = self._spearman(score[torch.tensor(indices)], mediated)
+        if mediated is not None:
+            spearman = self._spearman(score[torch.tensor(indices)], mediated)
+        else:
+            spearman = self._spearman(score[torch.tensor(indices)], stats["te"])
         de_label = "de_freq" if v_freq is not None else "de_ln"
         metrics: Dict[str, Any] = {
             **{f"identify_{k}": v for k, v in ident["summary"].items()},
@@ -758,7 +786,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             # forward engine: causal effect only (post-FFN-norm architectures)
             sel_te = float(stats["te"][sel_rows].mean())
             rand_te = float(stats["te"][rand_rows].mean())
-            print("Engine           : forward (no analytic shortcut on this arch)")
+            reason = (
+                "post-FFN-norm architecture"
+                if self._has_post_ffn_norm(backend)
+                else f"non-final layer {self._resolve_layer(backend)}"
+            )
+            print(f"Engine           : forward ({reason})")
             print(f"Selected ({len(selected)}): mean |dLoss| = {sel_te:.4f}")
             print(f"Random baseline  : mean {rand_te:.4f} (R={self.random_baseline_count})")
             print(f"spearman(score, TE)          : {spearman:+.3f}")
@@ -783,6 +816,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 "corpus_default": self.corpus_text is None,
                 "fold_final_norm": self.fold_final_norm,
                 "neuron_family": self.neuron_family,
+                "layer": ident["layer"],
+                "is_final_layer": self._is_final_layer(backend),
                 "mediate_engine": engine,
                 "ablated_indices": indices,
                 "per_neuron": [
@@ -834,7 +869,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         defined on these architectures.
         """
         device = backend.device
-        mod = backend.hook_manager.get_mlp_down_proj_module(backend.hook_manager.num_layers - 1)
+        mod = backend.hook_manager.get_mlp_down_proj_module(self._resolve_layer(backend))
         te_sum = torch.zeros(len(indices))
         counter = {"positions": 0}
         chunk = max(1, self.mediate_neuron_chunk)
@@ -1069,13 +1104,13 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         enrichment ratio.
         """
         ident = self._identify_dispatch(backend)
-        final_layer = ident["final_layer"]
+        analysis_layer = ident["layer"]
         d_mlp = ident["summary"]["d_mlp"]
         selected_set = set(ident["selected"])
         h_pairs = self._load_probe_neurons()
 
         h_all_count = len(h_pairs)
-        h_final = sorted({i for (layer, i) in set(h_pairs) if layer == final_layer})
+        h_final = sorted({i for (l_, i) in set(h_pairs) if l_ == analysis_layer})
         overlap = sorted(set(h_final) & selected_set)
 
         n_sel = len(selected_set)
@@ -1090,10 +1125,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "mode": "overlap",
             "probe_path": self.probe_path,
             "h_neurons_total": h_all_count,
-            "h_neurons_in_final_layer": n_h_final,
+            "h_neurons_in_analysis_layer": n_h_final,
             "entropy_neuron_count": n_sel,
             "overlap_count": len(overlap),
-            "jaccard_final_layer": jaccard,
+            "jaccard_analysis_layer": jaccard,
             "expected_random_overlap": expected,
             "enrichment_observed_over_random": enrichment,
         }
@@ -1116,7 +1151,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             metrics=metrics,
             metadata={
                 "description": self.description,
-                "h_neurons_final_layer": h_final,
+                "h_neurons_analysis_layer": h_final,
                 "entropy_selected": sorted(selected_set),
                 "overlap": overlap,
             },
