@@ -16,6 +16,8 @@
 | `probing_classifier` | Probing | Train probes on hidden states |
 | `radiology` | Classification | Medical report classification |
 | `confabulation_analysis` | Probing | H-Score of H-Neurons across confidence × correctness categories |
+| `entropy_neuron_overlap` | Weight analysis | Norm-based overlap between high-norm neurons and H-Neurons |
+| `confidence_regulation` | Entropy-neuron recipe | Identify entropy neurons (norm/LogitVar/null-space ρ), validate LN-mediated causality (TE vs DE_LN), Jaccard vs probe sets (Stolfo et al., NeurIPS 2024) |
 
 ## Creating a probe (for `confabulation_analysis`)
 
