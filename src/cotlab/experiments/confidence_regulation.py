@@ -186,6 +186,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             model,
             getattr(model, "model", None),
             getattr(model, "transformer", None),
+            getattr(model, "gpt_neox", None),
         ]
         for container in containers:
             if container is None:
@@ -334,8 +335,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             import numpy as np
 
             counts = torch.from_numpy(np.load(self.unigram_path).astype("float64"))
-            if counts.numel() != vocab:
+            if counts.numel() > vocab:
                 raise ValueError(f"unigram file has {counts.numel()} entries, vocab is {vocab}")
+            if counts.numel() < vocab:
+                # e.g. Pythia pads its vocab (50277 -> 50304); pad with zero
+                # counts -- such tokens are never produced by the model.
+                counts = torch.cat([counts, torch.zeros(vocab - counts.numel())])
         else:
             ids = torch.cat(
                 [
@@ -507,7 +512,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     def _resolve_final_norm_module(self, backend: InferenceBackend):
         """Return the final normalization module (or None)."""
         model = backend.model
-        containers = [model, getattr(model, "model", None), getattr(model, "transformer", None)]
+        containers = [
+            model,
+            getattr(model, "model", None),
+            getattr(model, "transformer", None),
+            getattr(model, "gpt_neox", None),
+        ]
         for container in containers:
             if container is None:
                 continue
@@ -732,7 +742,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                         "te": float(stats["te"][row]),
                         "de": float(stats["de"][row]),
                         "mediated": float(mediated[row]),
-                        "score": float(score[indices[row]]),
+                        "score": float(ident.get("signed_score", score)[indices[row]]),
                         "is_selected": indices[row] in set(selected),
                     }
                     for row in range(len(indices))
