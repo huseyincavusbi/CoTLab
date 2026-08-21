@@ -41,7 +41,9 @@ mediate:
 
 overlap:
     Jaccard overlap between identified entropy neurons and H-Neuron probe
-    sets. Not implemented yet (follow-up commit).
+    sets (``probe_path``). Restricted to the final layer where the
+    entropy-neuron criterion is defined; reports enrichment over the
+    hypergeometric random expectation.
 
 Notes
 -----
@@ -51,7 +53,7 @@ Notes
   validated (SEMANTIC-CHANGE class per working rules).
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
@@ -96,6 +98,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         mediate_scope: str = "candidates",
         mediate_neuron_chunk: int = 16,
         random_baseline_count: int = 20,
+        probe_path: Optional[str] = None,
         seed: int = 42,
         **kwargs,
     ):
@@ -123,6 +126,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.mediate_scope = mediate_scope
         self.mediate_neuron_chunk = mediate_neuron_chunk
         self.random_baseline_count = random_baseline_count
+        self.probe_path = probe_path
         self.seed = seed
 
     @property
@@ -695,6 +699,93 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         mediated = torch.where(te_mean > 1e-12, 1 - de_mean / safe_te, torch.zeros_like(te_mean))
         return {"te": te_mean, "de": de_mean, "mediated": mediated, "positions": positions}
 
+    # ------------------------------------------------------------------
+    # overlap
+    # ------------------------------------------------------------------
+
+    def _load_probe_neurons(self) -> List[Tuple[int, int]]:
+        """Load H-Neuron ``(layer, index)`` pairs from a probe JSON.
+
+        Handles both the legacy format (``neurons: [{layer, index}, ...]``)
+        and the current fit format (``fit.h_neurons`` as ``[[l, i], ...]``).
+        """
+        import json
+
+        if not self.probe_path:
+            raise ValueError("probe_path required for overlap mode")
+        with open(self.probe_path) as f:
+            probe_data = json.load(f)
+        if "neurons" in probe_data:
+            return [(int(n["layer"]), int(n["index"])) for n in probe_data["neurons"]]
+        if "fit" in probe_data and "h_neurons" in probe_data["fit"]:
+            h_neurons = probe_data["fit"]["h_neurons"]
+            if h_neurons and isinstance(h_neurons[0], (list, tuple)):
+                return [(int(layer), int(i)) for layer, i in h_neurons]
+            return [(int(n["layer"]), int(n["index"])) for n in h_neurons]
+        raise ValueError("probe file missing neurons data")
+
+    def _run_overlap(self, backend: InferenceBackend) -> ExperimentResult:
+        """Jaccard overlap between identified entropy neurons and H-Neurons.
+
+        The comparison is restricted to the final layer, where the entropy-
+        neuron criterion is defined. Reports the hypergeometric expectation
+        under random placement so the observed overlap can be read as an
+        enrichment ratio.
+        """
+        ident = self._identify_arrays(backend)
+        final_layer = ident["final_layer"]
+        d_mlp = ident["summary"]["d_mlp"]
+        selected_set = set(ident["selected"])
+        h_pairs = self._load_probe_neurons()
+
+        h_all_count = len(h_pairs)
+        h_final = sorted({i for (layer, i) in set(h_pairs) if layer == final_layer})
+        overlap = sorted(set(h_final) & selected_set)
+
+        n_sel = len(selected_set)
+        n_h_final = len(h_final)
+        expected = n_sel * n_h_final / d_mlp if d_mlp else 0.0
+        union_size = n_sel + n_h_final - len(overlap)
+        jaccard = len(overlap) / union_size if union_size else 0.0
+        enrichment = len(overlap) / expected if expected > 0 else 0.0
+
+        metrics: Dict[str, Any] = {
+            **{f"identify_{k}": v for k, v in ident["summary"].items()},
+            "mode": "overlap",
+            "probe_path": self.probe_path,
+            "h_neurons_total": h_all_count,
+            "h_neurons_in_final_layer": n_h_final,
+            "entropy_neuron_count": n_sel,
+            "overlap_count": len(overlap),
+            "jaccard_final_layer": jaccard,
+            "expected_random_overlap": expected,
+            "enrichment_observed_over_random": enrichment,
+        }
+
+        print("\n" + "=" * 66)
+        print("CONFIDENCE REGULATION -- OVERLAP")
+        print("=" * 66)
+        print(f"Probe                 : {self.probe_path}")
+        print(f"H-Neurons total       : {h_all_count} ({n_h_final} in final layer {final_layer})")
+        print(f"Entropy neurons       : {n_sel}")
+        print(f"Overlap               : {len(overlap)} {sorted(overlap)}")
+        print(f"Jaccard (final layer) : {jaccard:.4f}")
+        print(f"Expected at random    : {expected:.3f}  ->  enrichment x{enrichment:.2f}")
+        print("=" * 66)
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy="n/a",
+            metrics=metrics,
+            metadata={
+                "description": self.description,
+                "h_neurons_final_layer": h_final,
+                "entropy_selected": sorted(selected_set),
+                "overlap": overlap,
+            },
+        )
+
     @staticmethod
     def _spearman(a: torch.Tensor, b: torch.Tensor) -> float:
         ra = a.argsort().argsort().float()
@@ -723,9 +814,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             return self._run_identify(backend)
         if self.mode == "mediate":
             return self._run_mediate(backend)
+        if self.mode == "overlap":
+            return self._run_overlap(backend)
         if self.mode == "full":
             self._run_identify(backend)
-            return self._run_mediate(backend)
+            self._run_mediate(backend)
+            return self._run_overlap(backend)
         raise NotImplementedError(
-            f"mode '{self.mode}' is not implemented yet; use identify|mediate|full"
+            f"mode '{self.mode}' is not implemented yet; use identify|mediate|overlap|full"
         )
