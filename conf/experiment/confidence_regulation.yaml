@@ -21,6 +21,19 @@ k_null: null
 # Neuron chunk size for the (vocab x chunk) LogitVar projection matmuls.
 logit_chunk_size: 256
 
+# --- mediate mode ---
+# Corpus for mean activations; null uses an embedded default text
+# (original work used C4 — approximation, see module docstring).
+corpus_text: null
+n_tokens: 8192
+seq_len: 256
+mediate_sequences: 8
+# candidates = identified set + random baseline (CPU-friendly); "all" sweeps
+# every final-layer neuron like the authors.
+mediate_scope: candidates
+mediate_neuron_chunk: 16
+random_baseline_count: 20
+
 # Fold the final-norm gain into W_U before SVD/LogitVar (paper Sec. 2;
 # TransformerLens fold_ln equivalent). Required for correct null-space
 # identification — without it GPT-2 Small reproduction drops to 1/6.
