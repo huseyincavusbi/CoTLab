@@ -58,3 +58,9 @@ layer: null
 fold_final_norm: true
 
 seed: 42
+
+# --- induction function mode (Sec. 6) ---
+# Duplicated-sequence hedging test: entropy trajectory across first/second
+# occurrence + clip-to-first-occurrence-mean ablation per candidate neuron.
+induction_half_len: 100
+induction_sequences: 6
