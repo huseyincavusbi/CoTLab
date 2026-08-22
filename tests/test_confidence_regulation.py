@@ -24,6 +24,11 @@ def test_rejects_unknown_mode():
         ConfidenceRegulationExperiment(mode="bogus")
 
 
+def test_accepts_induction_mode():
+    assert ConfidenceRegulationExperiment(mode="induction").mode == "induction"
+    assert ConfidenceRegulationExperiment(mode="full").mode == "full"
+
+
 def test_rejects_unknown_selection():
     with pytest.raises(ValueError, match="selection"):
         ConfidenceRegulationExperiment(selection="bogus")
