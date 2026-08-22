@@ -18,6 +18,7 @@ from .jacobian_lens import JacobianLensExperiment
 from .logit_lens import LogitLensExperiment
 from .multi_head_cot import MultiHeadCoTExperiment
 from .multi_head_patching import MultiHeadPatchingExperiment
+from .probe_confidence import ProbeConfidenceExperiment
 from .probing_classifier import ProbingClassifierExperiment
 from .residual_norm_ood import ResidualNormOODExperiment
 from .sae_feature_analysis import SAEFeatureAnalysisExperiment
@@ -37,6 +38,7 @@ __all__ = [
     "ActivationPatchingExperiment",
     "ActivationCompareExperiment",
     "AttentionAnalysisExperiment",
+    "ProbeConfidenceExperiment",
     "ProbingClassifierExperiment",
     "ClassificationExperiment",
     "ResidualNormOODExperiment",

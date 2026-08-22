@@ -111,10 +111,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         unigram_path: Optional[str] = None,
         mediate_engine: str = "auto",
         layer: Optional[int] = None,
+        induction_half_len: int = 100,
+        induction_sequences: int = 10,
         seed: int = 42,
         **kwargs,
     ):
-        valid_modes = ("identify", "mediate", "overlap", "full")
+        valid_modes = ("identify", "mediate", "overlap", "full", "induction")
         if mode not in valid_modes:
             raise ValueError(f"mode must be one of {valid_modes}, got '{mode}'")
         if selection not in ("top_n", "top_percent"):
@@ -153,6 +155,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.unigram_path = unigram_path
         self.mediate_engine = mediate_engine
         self.layer = layer
+        self.induction_half_len = induction_half_len
+        self.induction_sequences = induction_sequences
         self.seed = seed
 
     @property
@@ -1157,6 +1161,197 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             },
         )
 
+    # ------------------------------------------------------------------
+    # induction function mode (paper Sec. 6)
+    # ------------------------------------------------------------------
+
+    def _build_induction_batches(self, backend: InferenceBackend) -> torch.Tensor:
+        """Duplicated-sequence inputs ``(n_sequences, 2*half_len)``.
+
+        Successive non-overlapping ``half_len``-token blocks from the corpus
+        text, each concatenated with itself (AB...A -> B setup).
+        """
+        tokenizer = backend.tokenizer
+        ids = torch.tensor(
+            tokenizer(self._corpus_text_or_default(), add_special_tokens=False)["input_ids"],
+            dtype=torch.long,
+        )
+        half = self.induction_half_len
+        n_blocks = len(ids) // half
+        if n_blocks < 1:
+            raise ValueError("corpus too short for induction_half_len")
+        if n_blocks < self.induction_sequences:
+            reps = -(-self.induction_sequences // n_blocks)
+            ids = ids.repeat(reps)
+            n_blocks = len(ids) // half
+        blocks = ids[: n_blocks * half].view(n_blocks, half)
+        dup = torch.cat([blocks, blocks], dim=1)  # (n_blocks, 2*half)
+        return dup[: self.induction_sequences]
+
+    @staticmethod
+    def _entropy_per_row(logits: torch.Tensor) -> torch.Tensor:
+        log_p = torch.log_softmax(logits.float(), dim=-1)
+        return -(log_p.exp() * log_p).sum(-1)
+
+    def _run_induction(self, backend: InferenceBackend) -> ExperimentResult:
+        """Function case study: hedging on repeated sequences (paper Sec. 6).
+
+        For each candidate neuron of the final MLP layer, activations are
+        clipped to their **first-occurrence mean** at second-occurrence
+        positions via a real forward hook. If the neuron hedges (raises
+        entropy against copying confidence), clipping *reduces*
+        second-occurrence entropy; the reported Δ is negative in that case.
+        """
+        device = backend.device
+        ident = self._identify_dispatch(backend)
+        selected = ident["selected"]
+        batches = self._build_induction_batches(backend)
+        mod = backend.hook_manager.get_mlp_down_proj_module(ident["layer"])
+        captured: Dict[str, Any] = {}
+
+        def grab_acts(_mod, inp):
+            captured["acts"] = inp[0].detach().float().cpu()
+
+        def forward(seq_batch, clip_neuron=None, clip_value=None, positions=None):
+            h = None
+            if clip_neuron is not None:
+
+                def hook(m, inp):
+                    new = inp[0].clone()
+                    new[:, positions:, clip_neuron] = float(clip_value)
+                    return (new,) + tuple(inp[1:])
+
+                h = mod.register_forward_pre_hook(hook)
+            with torch.no_grad():
+                out = backend.model(seq_batch.to(device))
+            if h is not None:
+                h.remove()
+            logits = out.logits  # (B, L, vocab)
+            H = self._entropy_per_row(logits[:, :-1])  # row r predicts token r+1
+            return H, captured["acts"]
+
+        half = self.induction_half_len
+        rng = torch.Generator().manual_seed(self.seed)
+        rand_idx = torch.randperm(ident["score"].numel(), generator=rng)[
+            : self.random_baseline_count
+        ].tolist()
+
+        h_acts = mod.register_forward_pre_hook(grab_acts)
+
+        # baseline pass: entropies + first-occurrence means per sequence
+        base_second, first_means = [], []
+        ent_first_all, ent_second_all = [], []
+        with torch.no_grad():
+            for b in range(batches.shape[0]):
+                H, acts = forward(batches[b : b + 1])
+                # rows [0..half-2] predict first-half tokens 1..half-1
+                ent_first_all.append(H[0, : half - 1])
+                # rows [half-1..2half-3] predict second-half tokens up to last
+                ent_second_all.append(H[0, half - 1 : 2 * half - 2])
+                first_means.append(acts[0, :half].mean(dim=0))
+                base_second.append(H[0, half - 1 : 2 * half - 2])
+        base_second_mean = torch.stack(base_second).mean()
+        ent_first_mean = torch.stack(ent_first_all).mean()
+        base_per_seq = torch.stack(base_second)  # (n_seq, half-1)
+
+        def clip_pass(neuron: int, means: torch.Tensor) -> float:
+            ds = []
+            for b in range(batches.shape[0]):
+                H, _ = forward(
+                    batches[b : b + 1],
+                    clip_neuron=neuron,
+                    clip_value=float(means[b][neuron]),
+                    positions=half,
+                )
+                ds.append(H[0, half - 1 : 2 * half - 2])
+            # per-position delta vs un-clipped baseline (paper Fig. 5b metric)
+            return torch.stack(ds) - base_per_seq
+
+        base_pos = base_per_seq.mean(dim=0).clamp_min(1e-6)
+        indices = sorted(set(selected) | set(rand_idx))
+        d_entropy, peak_red, frac_drop = {}, {}, {}
+        try:
+            for i in indices:
+                dp = clip_pass(i, first_means)
+                d_entropy[i] = float(dp.mean())
+                rel = dp.mean(dim=0) / base_pos
+                peak_red[i] = float(-rel.min())
+                frac_drop[i] = float((rel < -0.2).float().mean())
+        finally:
+            h_acts.remove()
+
+        sel_d = [d_entropy[i] for i in selected]
+        rand_d = [d_entropy[i] for i in rand_idx]
+        strongest = min(sel_d) if sel_d else float("nan")
+
+        metrics: Dict[str, Any] = {
+            **{f"identify_{k}": v for k, v in ident["summary"].items()},
+            "mode": "induction",
+            "n_sequences": batches.shape[0],
+            "seq_len": 2 * half,
+            "baseline_entropy_first_occurrence": float(ent_first_mean),
+            "baseline_entropy_second_occurrence": float(base_second_mean),
+            "selected_mean_d_entropy": float(sum(sel_d) / len(sel_d)) if sel_d else 0.0,
+            "selected_max_reduction_d_entropy": strongest,
+            "random_baseline_mean_d_entropy": float(sum(rand_d) / len(rand_d)) if rand_d else 0.0,
+            "per_neuron_d_entropy": {str(k): v for k, v in sorted(d_entropy.items())},
+            "selected_peak_position_reduction": max(peak_red[i] for i in selected)
+            if selected
+            else 0.0,
+            "random_peak_position_reduction": max(peak_red[i] for i in rand_idx)
+            if rand_idx
+            else 0.0,
+            "selected_n_any_pos_gt20pct": sum(frac_drop[i] > 0 for i in selected),
+        }
+
+        print("\n" + "=" * 66)
+        print("CONFIDENCE REGULATION -- INDUCTION (function case study)")
+        print("=" * 66)
+        print(
+            f"Sequences        : {batches.shape[0]} x {2 * half} tokens (first {half} duplicated)"
+        )
+        print(f"Entropy first occ: {float(ent_first_mean):.3f}")
+        print(
+            f"Entropy second   : {float(base_second_mean):.3f} (confidence rise on repeat expected)"
+        )
+        print(
+            f"Selected ({len(selected)}): mean dEntropy = "
+            f"{metrics['selected_mean_d_entropy']:+.4f} "
+            f"(strongest {strongest:+.4f})"
+        )
+        print(f"Random baseline  : mean {metrics['random_baseline_mean_d_entropy']:+.4f}")
+        print(
+            f"Peak pos. reduction: selected {metrics['selected_peak_position_reduction']:.1%} "
+            f"| random {metrics['random_peak_position_reduction']:.1%}"
+        )
+        print(
+            f"Selected w/ any >20% pos. drop: "
+            f"{metrics['selected_n_any_pos_gt20pct']}/{len(selected)}"
+        )
+        print("Most-negative dEntropy (hedgers):")
+        top = sorted(d_entropy.items(), key=lambda kv: kv[1])[:5]
+        for i, dv in top:
+            tag = "*" if i in set(selected) else " "
+            rel = dv / float(base_second_mean) if base_second_mean else 0.0
+            print(f"  {tag}{i:5d}  dEntropy={dv:+.4f}  ({rel:+.1%} of second-occ entropy)")
+        print("=" * 66)
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy="teacher_forced",
+            metrics=metrics,
+            metadata={
+                "description": self.description,
+                "neuron_family": self.neuron_family,
+                "layer": ident["layer"],
+                "induction_half_len": half,
+                "clip_source": "first_occurrence_mean",
+                "selected_neurons": ident["detail"],
+                "d_entropy": {str(k): v for k, v in d_entropy.items()},
+            },
+        )
+
     @staticmethod
     def _spearman(a: torch.Tensor, b: torch.Tensor) -> float:
         ra = a.argsort().argsort().float()
@@ -1187,6 +1382,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             return self._run_mediate(backend)
         if self.mode == "overlap":
             return self._run_overlap(backend)
+        if self.mode == "induction":
+            return self._run_induction(backend)
         if self.mode == "full":
             self._run_identify(backend)
             self._run_mediate(backend)
