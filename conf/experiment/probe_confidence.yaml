@@ -1,0 +1,21 @@
+# Probe-Confidence Correlation — does a probe's score track model uncertainty?
+_target_: cotlab.experiments.ProbeConfidenceExperiment
+
+name: probe_confidence
+description: "Correlate probe scores with model output entropy per sample"
+
+# Probe JSON (dense fit.weights/intercept/mean/std) or sibling .safetensors
+# (clf_coef + optional top_k_idx + col_mean/std + clf_intercept).
+probe_path: null
+
+# Samples: list of {prompt, response, label(bool)}. When null, the composed
+# CoTLab dataset is iterated instead.
+samples: null
+
+bootstrap_iters: 1000
+batch_size: 1
+# true = build feature vector from the final layer only (must match how the
+# probe was trained)
+feature_last_layer_only: false
+
+seed: 42
