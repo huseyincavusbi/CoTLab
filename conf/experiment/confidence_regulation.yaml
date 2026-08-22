@@ -46,6 +46,12 @@ probe_path: null
 neuron_family: entropy
 unigram_path: null
 
+# Analysis layer: null = final layer. Non-final layers support identify
+# (weight-space descriptors) and forward-engine mediate (in-situ |dLoss|);
+# the analytic engine raises for non-final layers (pathway decomposition
+# is only valid where MLP output feeds the final norm directly).
+layer: null
+
 # Fold the final-norm gain into W_U before SVD/LogitVar (paper Sec. 2;
 # TransformerLens fold_ln equivalent). Required for correct null-space
 # identification — without it GPT-2 Small reproduction drops to 1/6.

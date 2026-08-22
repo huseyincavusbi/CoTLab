@@ -223,6 +223,77 @@ def test_rejects_unknown_family():
         ConfidenceRegulationExperiment(neuron_family="bogus")
 
 
+def test_rejects_negative_layer():
+    with pytest.raises(ValueError, match="layer"):
+        ConfidenceRegulationExperiment(layer=-1)
+
+
+# ---------------------------------------------------------------------------
+# layer parameterization
+# ---------------------------------------------------------------------------
+
+
+class _FakeHookManager:
+    def __init__(self, num_layers):
+        self.num_layers = num_layers
+
+    def get_mlp_down_proj_module(self, layer_idx):
+        assert 0 <= layer_idx < self.num_layers
+        return _FakeDownProj()
+
+
+class _FakeDownProj:
+    """nn.Linear-style weight (d_model, d_mlp); columns are neurons."""
+
+    def __init__(self, d_model=8, d_mlp=6, seed=0):
+        g = torch.Generator().manual_seed(seed)
+        self.weight = torch.randn(d_model, d_mlp, generator=g)
+
+
+def _fake_backend(hook_manager, d_model=8):
+    class _Emb:
+        weight = torch.zeros(50, d_model)
+
+    class _Model:
+        get_input_embeddings = staticmethod(lambda: _Emb())
+
+    class _Backend:
+        model = _Model()
+
+    b = _Backend()
+    b.hook_manager = hook_manager
+    return b
+
+
+def test_resolve_layer_defaults_to_final():
+    exp = ConfidenceRegulationExperiment()
+    backend = _fake_backend(_FakeHookManager(4))
+    assert exp._resolve_layer(backend) == 3
+    assert exp._is_final_layer(backend)
+
+
+def test_resolve_layer_explicit_mid_network():
+    exp = ConfidenceRegulationExperiment(layer=1)
+    backend = _fake_backend(_FakeHookManager(4))
+    assert exp._resolve_layer(backend) == 1
+    assert not exp._is_final_layer(backend)
+
+
+def test_resolve_layer_rejects_out_of_range():
+    exp = ConfidenceRegulationExperiment(layer=9)
+    backend = _fake_backend(_FakeHookManager(4))
+    with pytest.raises(ValueError, match="out of range"):
+        exp._resolve_layer(backend)
+
+
+def test_w_out_at_layer_returns_configured_layer_columns():
+    exp = ConfidenceRegulationExperiment()
+    hm = _FakeHookManager(4)
+    backend = _fake_backend(hm)
+    w = exp._get_w_out(backend, 2)
+    assert w.shape == (8, 6)  # d_model x d_mlp, columns are neurons
+
+
 # ---------------------------------------------------------------------------
 # probe loading
 # ---------------------------------------------------------------------------
