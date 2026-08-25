@@ -196,6 +196,10 @@ class _Tok:
         base = sum(ord(c) for c in text[:3])
         return {"input_ids": [base % 17 + 1, (base * 7) % 17 + 1, (base * 13) % 17 + 1]}
 
+    @staticmethod
+    def decode(ids, skip_special_tokens=True):
+        return ",".join(str(i) for i in ids)
+
 
 class _Backend:
     def __init__(self, model, generate_tokens=None):
@@ -286,3 +290,103 @@ def test_identify_end_to_end_constructive_ground_truth(tmp_path):
     assert (top["layer"], top["index"]) == (1, 2)
     assert result.metrics["ia3_modules_second"] == 1
     assert result.metrics["ia3_modules_first"] == 0
+
+
+# ---------------------------------------------------------------------------
+# mediate mode
+# ---------------------------------------------------------------------------
+
+
+def _adapter_dir(tmp_path, name="ad"):
+    vec = torch.full((6,), 1.0)
+    vec[2] = 40.0
+    d = tmp_path / name
+    d.mkdir()
+    save_file({"layers.1.mlp.down_proj.ia3": vec}, str(d / "adapter_model.safetensors"))
+    return str(d)
+
+
+class _DS:
+    def sample(self, n, seed=42):
+        return [type("S", (), {"text": "abc"})() for _ in range(2)]
+
+
+def test_capture_full_shape_and_determinism():
+    torch.manual_seed(0)
+    model = _ToyModel(num_layers=3, seed=5)
+    backend = _Backend(model)
+    rows = [torch.tensor([1, 2, 3, 4])]
+    exp = SafetyNeuronsExperiment(first_peft_path="x")
+    acts = exp._capture_full(backend, rows)
+    assert len(acts) == 1 and acts[0].shape == (4, 3, 6)  # (T, layers, d_mlp)
+    assert torch.allclose(acts[0], exp._capture_full(backend, rows)[0])
+
+
+def test_teacher_forced_nll_matches_manual_cross_entropy():
+    torch.manual_seed(0)
+    model = _ToyModel(num_layers=2, seed=11)
+    backend = _Backend(model)
+    row = torch.tensor([3, 1, 4, 1])
+    got = SafetyNeuronsExperiment._teacher_forced_nll(backend, row, prompt_len=1)
+
+    tokens = row.unsqueeze(0)
+    with torch.inference_mode():
+        logits = backend.model(tokens).float()
+    want = torch.nn.functional.cross_entropy(logits[0, :-1], row[1:], reduction="mean")
+    assert got == pytest_approx(float(want))
+
+
+def pytest_approx(value):
+    import pytest
+
+    return pytest.approx(value)
+
+
+def test_greedy_patch_loop_baseline_equals_plain_greedy():
+    torch.manual_seed(0)
+    model = _ToyModel(num_layers=2, seed=13)
+    backend = _Backend(model)
+    exp = SafetyNeuronsExperiment(first_peft_path="x", max_new_tokens=5)
+    row = torch.tensor([2, 3])
+    toks, patched = exp._greedy_patch_loop(
+        backend,
+        row,
+        prompt_len=2,
+        guided_acts=torch.zeros(0, 0, 0),
+        candidates_by_layer={},
+        eos_id=None,
+    )
+    assert not patched and len(toks) == 5
+
+    plain = []
+    current = [2, 3]
+    for _ in range(5):
+        with torch.inference_mode():
+            logits = backend.model(torch.tensor([current]))[0, -1]
+        nxt = int(torch.argmax(logits))
+        current.append(nxt)
+        plain.append(nxt)
+    assert toks == plain
+
+
+def test_mediate_end_to_end_deterministic(tmp_path):
+    model = _ToyModel(num_layers=3, seed=7)
+    exp = SafetyNeuronsExperiment(
+        mode="mediate",
+        first_peft_path=None,
+        second_peft_path=_adapter_dir(tmp_path),
+        token_type="completion",
+        selection="top_n",
+        top_n=4,
+        max_new_tokens=4,
+        mediate_num_samples=2,
+    )
+    r1 = exp.run(_Backend(model), dataset=_DS())
+    r2 = exp.run(_Backend(model), dataset=_DS())
+    assert r1.metrics["mode"] == "mediate"
+    assert r1.metrics["candidate_count"] == 4
+    assert r1.metrics["random_control_count"] == 4
+    assert len(r1.raw_outputs) == 2
+    assert set(r1.raw_outputs[0]) == {"prompt_idx", "guided", "patched", "baseline"}
+    assert r1.metrics == r2.metrics
+    assert [g["patched"] for g in r1.raw_outputs] == [g["patched"] for g in r2.raw_outputs]
