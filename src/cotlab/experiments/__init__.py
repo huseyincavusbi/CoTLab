@@ -23,6 +23,7 @@ from .probing_classifier import ProbingClassifierExperiment
 from .residual_norm_ood import ResidualNormOODExperiment
 from .sae_feature_analysis import SAEFeatureAnalysisExperiment
 from .sae_feature_neuron_overlap import SAEFeatureNeuronOverlapExperiment
+from .safety_neurons import SafetyNeuronsExperiment
 from .steering_vectors import SteeringVectorsExperiment
 from .sycophancy_heads import SycophancyHeadsExperiment
 
@@ -31,6 +32,7 @@ __all__ = [
     "ConfabulationAnalysisExperiment",
     "EntropyNeuronOverlapExperiment",
     "SAEFeatureNeuronOverlapExperiment",
+    "SafetyNeuronsExperiment",
     "CompositeShiftDetectorExperiment",
     "ConfidenceRegulationExperiment",
     "CoTAblationExperiment",
