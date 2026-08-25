@@ -20,10 +20,14 @@ identify (paper Eq. 3):
     Neurons ranked descending by S; top-k percent (or top-n) form the
     candidate safety-neuron set.
 
-mediate (paper Eq. 4, follow-up commit):
-    Dynamic activation patching — greedy generation with candidate neurons'
-    activations replaced by the aligned checkpoint's cached values, scored by
-    normalized recovery of the safety cost metric C.
+mediate (paper Eq. 4):
+    Dynamic activation patching. Candidate neurons (re-derived via the
+    identify contrast on the same guided sequences) have their down_proj
+    inputs overwritten each greedy step with the aligned checkpoint's cached
+    activations at that absolute position. The paper's cost-model causal
+    effect C is applied post-hoc to persisted generations; the in-run proxy
+    metric is token agreement of the patched continuation with the guided
+    continuation versus an unpatched baseline.
 
 IA3 checkpoint loading:
     Per the paper, alignment uses IA3 applied exclusively to MLP layers.
@@ -307,6 +311,123 @@ class SafetyNeuronsExperiment(BaseExperiment):
         return [(int(i // d_mlp), int(i % d_mlp)) for i in idx]
 
     # ------------------------------------------------------------------
+    # mediate: dynamic activation patching (paper Eq. 4)
+    # ------------------------------------------------------------------
+
+    def _capture_full(
+        self, backend: InferenceBackend, rows: List[torch.Tensor]
+    ) -> List[torch.Tensor]:
+        """Per-sequence full-position capture ``[T, L, d_mlp]`` (no masking)."""
+        device = backend.device
+        num_layers = backend.hook_manager.num_layers
+        per_layer_store: Dict[int, List[torch.Tensor]] = {ly: [] for ly in range(num_layers)}
+
+        def make_hook(layer_idx):
+            def hook(_mod, inp):
+                per_layer_store[layer_idx].append(inp[0].detach().float().cpu())
+                return None
+
+            return hook
+
+        handles = []
+        try:
+            for layer_idx in range(num_layers):
+                mod = backend.hook_manager.get_mlp_down_proj_module(layer_idx)
+                handles.append(mod.register_forward_pre_hook(make_hook(layer_idx)))
+            for row in rows:
+                if row.dim() == 2:
+                    row = row[0]
+                with torch.inference_mode():
+                    backend.model(row.unsqueeze(0).to(device))
+        finally:
+            for h in handles:
+                h.remove()
+
+        return [
+            torch.stack([per_layer_store[ly][i] for ly in range(num_layers)], dim=-2)[0]
+            for i in range(len(rows))
+        ]
+
+    @staticmethod
+    def _model_logits(backend: InferenceBackend, tokens: torch.Tensor) -> torch.Tensor:
+        """Logits from a model call (HF output object or bare tensor)."""
+        out = backend.model(tokens)
+        return out.logits if hasattr(out, "logits") else out
+
+    @staticmethod
+    def _teacher_forced_nll(backend: InferenceBackend, row: torch.Tensor, prompt_len: int) -> float:
+        """Mean NLL of ``row[prompt_len:]`` under teacher forcing."""
+        if row.dim() == 2:
+            row = row[0]
+        tokens = row.unsqueeze(0).to(backend.device)
+        with torch.inference_mode():
+            logits = SafetyNeuronsExperiment._model_logits(backend, tokens).float()
+        targets = tokens[0, prompt_len:]
+        pred = logits[0, prompt_len - 1 : -1]
+        nll = torch.nn.functional.cross_entropy(pred, targets, reduction="mean")
+        return float(nll)
+
+    def _greedy_patch_loop(
+        self,
+        backend: InferenceBackend,
+        row: torch.Tensor,
+        prompt_len: int,
+        guided_acts: torch.Tensor,
+        candidates_by_layer: Dict[int, List[int]],
+        eos_id: Optional[int],
+    ) -> Tuple[List[int], bool]:
+        """Greedy generation replacing candidate-neuron activations each step.
+
+        At every generated position ``t`` the down_proj input of candidate
+        neurons is overwritten with the guided checkpoint's cached value at
+        that absolute position (paper Algorithm 1). Returns (tokens, patched).
+        """
+        device = backend.device
+        if row.dim() == 2:
+            row = row[0]
+        current = row[:prompt_len].tolist()
+
+        handles = []
+        if candidates_by_layer:
+
+            def make_patch_hook(layer_idx):
+                idx = candidates_by_layer.get(layer_idx, [])
+                cols = torch.tensor(idx, dtype=torch.long)
+
+                def hook(_mod, inp):
+                    x = inp[0].clone()
+                    t = x.shape[1] - 1  # absolute position being processed
+                    if t < guided_acts.shape[0]:
+                        vals = guided_acts[t, layer_idx, cols].to(x.dtype)
+                        x[0, -1, cols] = vals.to(x.device)
+                    return (x,) + tuple(inp[1:])
+
+                return hook
+
+            handles = [
+                backend.hook_manager.get_mlp_down_proj_module(ly).register_forward_pre_hook(
+                    make_patch_hook(ly)
+                )
+                for ly in candidates_by_layer
+            ]
+
+        try:
+            generated: List[int] = []
+            for _step in range(self.max_new_tokens):
+                tokens = torch.tensor([current], dtype=torch.long, device=device)
+                with torch.inference_mode():
+                    logits = self._model_logits(backend, tokens)[0, -1]
+                nxt = int(torch.argmax(logits).item())
+                if eos_id is not None and nxt == eos_id:
+                    break
+                current.append(nxt)
+                generated.append(nxt)
+            return generated, bool(candidates_by_layer)
+        finally:
+            for h in handles:
+                h.remove()
+
+    # ------------------------------------------------------------------
     # modes
     # ------------------------------------------------------------------
 
@@ -382,6 +503,133 @@ class SafetyNeuronsExperiment(BaseExperiment):
         )
 
     # ------------------------------------------------------------------
+    # mediate mode orchestration
+    # ------------------------------------------------------------------
+
+    def _run_mediate(self, backend: InferenceBackend, dataset: Any = None) -> ExperimentResult:
+        """Dynamic activation patching over ``mediate_num_samples`` prompts.
+
+        Candidates are re-derived by the identify contrast on the same guided
+        sequences (keeps the pipeline self-contained). Behavioral proxy metric:
+        greedy-patched continuation agreement with the guided checkpoint's
+        continuation, against an unpatched baseline — the paper's cost-model C
+        is applied post-hoc to the persisted generations.
+        """
+        prompts = (
+            self._collect_prompts(dataset)[: self.mediate_num_samples]
+            if dataset is not None
+            else ["Hello world"]
+        )
+        eos_id = getattr(getattr(backend, "tokenizer", None), "eos_token_id", None)
+
+        # guided continuations + their cached candidate activations
+        rows = self._build_full_ids(backend, prompts)
+        prompt_lens = [len(backend.tokenizer(p)["input_ids"]) for p in prompts]
+
+        self._apply_ia3(backend, self.second_peft_path)
+        try:
+            guided_acts_all = self._capture_full(backend, rows)
+            second_full_nll = [
+                self._teacher_forced_nll(backend, r, pl) for r, pl in zip(rows, prompt_lens)
+            ]
+        finally:
+            self._clear_ia3()
+
+        # candidates via identify contrast restricted to completion positions
+        masks = [self._select_mask(r, pl) for r, pl in zip(rows, prompt_lens)]
+        self._apply_ia3(backend, self.first_peft_path)
+        try:
+            first_sel = self._capture_activations(backend, rows, masks)
+            second_sel = self._capture_activations(backend, rows, masks)
+            base_nll = [
+                self._teacher_forced_nll(backend, r, pl) for r, pl in zip(rows, prompt_lens)
+            ]
+        finally:
+            self._clear_ia3()
+        scores = self._compute_change_scores(first_sel, second_sel)
+        selected = self._select_neurons(scores)
+
+        rng = torch.Generator().manual_seed(self.seed)
+        d_mlp = scores.shape[1]
+        num_layers = scores.shape[0]
+        rand_flat = torch.randint(0, num_layers * d_mlp, (len(selected),), generator=rng)
+        random_pairs = [(int(i // d_mlp), int(i % d_mlp)) for i in rand_flat.tolist()]
+
+        def by_layer(pairs):
+            out: Dict[int, List[int]] = {}
+            for layer, idx in pairs:
+                out.setdefault(layer, []).append(idx)
+            return out
+
+        cand_map, rand_map = by_layer(selected), by_layer(random_pairs)
+
+        agreements_patched, agreements_base = [], []
+        generations: List[Dict[str, Any]] = []
+        for i, (row, pl) in enumerate(zip(rows, prompt_lens)):
+            guided_tokens = row[pl:].tolist()
+            patched_toks, _ = self._greedy_patch_loop(
+                backend, row, pl, guided_acts_all[i], cand_map, eos_id
+            )
+            base_toks, _ = self._greedy_patch_loop(backend, row, pl, guided_acts_all[i], {}, eos_id)
+
+            def agreement(gen):
+                if not guided_tokens or not gen:
+                    return 0.0
+                n = min(len(guided_tokens), len(gen))
+                same = sum(a == b for a, b in zip(guided_tokens[:n], gen[:n]))
+                return same / max(1, n)
+
+            agreements_patched.append(agreement(patched_toks))
+            agreements_base.append(agreement(base_toks))
+            generations.append(
+                {
+                    "prompt_idx": i,
+                    "guided": backend.tokenizer.decode(guided_tokens),
+                    "patched": backend.tokenizer.decode(patched_toks),
+                    "baseline": backend.tokenizer.decode(base_toks),
+                }
+            )
+
+        print("\n" + "=" * 66)
+        print("SAFETY NEURONS -- MEDIATE (dynamic activation patching)")
+        print("=" * 66)
+        print(f"Prompts        : {len(rows)}")
+        print(f"Candidates     : {len(selected)} | random control {len(random_pairs)}")
+        print(
+            f"Agree w/guided : patched {sum(agreements_patched):.2f} vs "
+            f"base {sum(agreements_base):.2f} (token-rate sums)"
+        )
+        print(f"NLL guided     : second {sum(second_full_nll):.2f} vs first {sum(base_nll):.2f}")
+        print("=" * 66)
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy="n/a",
+            metrics={
+                "mode": "mediate",
+                "n_prompts": len(rows),
+                "candidate_count": len(selected),
+                "random_control_count": len(random_pairs),
+                "mean_agreement_patched": sum(agreements_patched) / max(1, len(rows)),
+                "mean_agreement_baseline": sum(agreements_base) / max(1, len(rows)),
+                "guided_nll_second_mean": sum(second_full_nll) / max(1, len(rows)),
+                "guided_nll_first_mean": sum(base_nll) / max(1, len(rows)),
+            },
+            raw_outputs=generations,
+            metadata={
+                "description": self.description,
+                "candidates_by_layer": {str(k): v for k, v in cand_map.items()},
+                "random_control_by_layer": {str(k): v for k, v in rand_map.items()},
+                "seed": self.seed,
+                "note": (
+                    "cost-model C (BeaverTails RM) applied post-hoc; "
+                    "agreement with guided continuation is the in-run proxy"
+                ),
+            },
+        )
+
+    # ------------------------------------------------------------------
     # entry point
     # ------------------------------------------------------------------
 
@@ -398,4 +646,6 @@ class SafetyNeuronsExperiment(BaseExperiment):
 
         if self.mode == "identify":
             return self._run_identify(backend, dataset)
-        raise NotImplementedError("mode 'mediate' lands in a follow-up commit; use identify")
+        if self.mode == "mediate":
+            return self._run_mediate(backend, dataset)
+        raise NotImplementedError(f"mode '{self.mode}' is not implemented")
