@@ -268,6 +268,8 @@ class SafetyNeuronsExperiment(BaseExperiment):
                 mod = backend.hook_manager.get_mlp_down_proj_module(layer_idx)
                 handles.append(mod.register_forward_pre_hook(make_hook(layer_idx)))
             for row in rows:
+                if row.dim() == 2:  # tolerate pre-batched [1, T] rows
+                    row = row[0]
                 tokens = row.unsqueeze(0).to(device)
                 with torch.inference_mode():
                     backend.model(tokens)
