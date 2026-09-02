@@ -46,6 +46,7 @@ from ..core.base import BaseExperiment, ExperimentResult
 from ..core.registry import Registry
 
 _DOWN_PROJ_SUFFIXES = ("down_proj", "w2", "fc2", "dense_4h_to_h")
+_PEFT_STEM_PREFIXES = ("base_model.model.", "base_model.")
 
 
 @Registry.register_experiment("safety_neurons")
@@ -156,18 +157,44 @@ class SafetyNeuronsExperiment(BaseExperiment):
             return candidates[0]
         return None
 
+    @staticmethod
+    def _peft_stem_candidates(stem: str):
+        """Yield a stem, then progressively peft-unprefixed variants.
+
+        peft stores adapter keys as ``base_model.model.<module path>.<param>``
+        (e.g. ``base_model.model.model.layers.0.mlp.down_proj.ia3_l``), so
+        stems carry prefixes that raw backend module names never have.
+        """
+        yield stem
+        trimmed = stem
+        stripped = True
+        while stripped:
+            stripped = False
+            for prefix in _PEFT_STEM_PREFIXES:
+                if trimmed.startswith(prefix) and len(trimmed) > len(prefix):
+                    trimmed = trimmed[len(prefix) :]
+                    stripped = True
+                    yield trimmed
+                    break
+
     def _apply_ia3(self, backend: InferenceBackend, peft_path: Optional[str]) -> int:
         """Attach IA3 input-scaling pre-hooks to matched down_proj modules.
 
         Returns the number of modules scaled. Safe to call when ``peft_path``
-        is None (base model pass) — applies nothing.
+        is None (base model pass) — applies nothing. Stems are retried without
+        their peft ``base_model.model.`` prefix so authentic peft-saved
+        adapters resolve on raw transformers backends.
         """
         if peft_path is None:
             return 0
         vectors = self._load_ia3_vectors(peft_path)
         applied = 0
         for key, vec in vectors.items():
-            module = self._match_module(backend.model, key)
+            module = None
+            for candidate in self._peft_stem_candidates(key):
+                module = self._match_module(backend.model, candidate)
+                if module is not None:
+                    break
             if module is None:
                 continue
             device = next(module.parameters(), torch.empty(0)).device

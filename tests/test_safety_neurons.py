@@ -243,6 +243,33 @@ def test_ia3_toggle_round_trip_restores_outputs():
     assert torch.allclose(base_out, restored_out)
 
 
+def test_apply_ia3_resolves_authentic_peft_key_format(tmp_path):
+    """Regression (Kaggle cross-validation): authentic peft-saved IA3 adapters
+    wrap module paths as 'base_model.model.<module path>' — resolution must
+    strip that prefix, else _apply_ia3 silently applies 0 vectors on a raw
+    transformers backend."""
+    torch.manual_seed(0)
+    model = _ToyModel(num_layers=3, seed=9)
+    backend = _Backend(model)
+    exp = SafetyNeuronsExperiment(first_peft_path="x")
+    ids = torch.tensor([[1, 2, 3]])
+    base_out = backend.model(ids)
+
+    # peft state-dict naming (feedforward '.ia3_l' suffix + module-path prefix)
+    tensors = {
+        f"base_model.model.layers.{i}.mlp.down_proj.ia3_l": torch.full((6,), 2.0) for i in range(3)
+    }
+    adapter_dir = _save_adapter(tmp_path, tensors)
+
+    applied = exp._apply_ia3(backend, str(adapter_dir))
+    assert applied == 3
+    scaled_out = backend.model(ids)
+    assert not torch.allclose(base_out, scaled_out)  # vectors actually bite
+    exp._clear_ia3()
+    restored_out = backend.model(ids)
+    assert torch.allclose(base_out, restored_out)
+
+
 def test_capture_activations_position_aligned_and_layered():
     torch.manual_seed(0)
     model = _ToyModel(num_layers=3, seed=5)
