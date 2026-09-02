@@ -1,0 +1,38 @@
+# Safety Neurons — activation contrasting + dynamic patching
+# (Chen et al., NeurIPS 2025, arXiv:2406.14144; code: THU-KEG/SafetyNeuron)
+_target_: cotlab.experiments.SafetyNeuronsExperiment
+
+name: safety_neurons
+description: "Safety-neuron identification via SFT-vs-DPO activation contrasting (Chen et al., NeurIPS 2025)"
+
+# identify | mediate
+mode: identify
+
+# Peft checkpoint dirs with IA3 adapter_model.safetensors (MLP-only IA3 per the
+# paper). first = weaker checkpoint (SFT or base), second = aligned checkpoint
+# (DPO) — the second one generates completions in identify mode.
+first_peft_path: null
+second_peft_path: null
+
+# Token positions contrasted: completion | prompt_last | prompt.
+# Paper App. D.2: completion works best, prompt_last close behind.
+token_type: completion
+
+# Number of dataset prompts and generation settings for completion contrasts.
+num_samples: 200
+batch_size: 8
+max_new_tokens: 128
+
+# Candidate set size after RMS ranking: top_n neurons total or top_percent of
+# all (layer x d_mlp) units.
+selection: top_percent
+top_percent: 0.05
+top_n: 500
+
+# --- mediate mode ---
+# Random-neuron control of matched size for the causal-effect comparison.
+random_baseline_count: 500
+# Max prompts evaluated in mediate (generation loop is slow).
+mediate_num_samples: 50
+
+seed: 42
