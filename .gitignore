@@ -5,9 +5,11 @@
 /venv/
 /env/
 
-# Experiment outputs
+# Experiment outputs (local only — never commit results)
 outputs/
 multirun/
+/results*/
+/lenses_bench/
 
 # Model configs (local only — never commit)
 conf/model/
