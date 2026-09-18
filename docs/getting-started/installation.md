@@ -79,30 +79,47 @@ The official way to run vLLM on AMD GPUs is via Docker:
 
 ### Apple Silicon (Metal)
 
-Requires **Python 3.12** and the vllm-metal plugin:
+vLLM runs on the Apple GPU through the **vllm-metal** plugin (MLX-accelerated).
+Requirements: **Apple Silicon**, **macOS 15 (Sequoia) or later**, **Python 3.12**.
+
+> **Note:** Upstream vLLM ships its macOS wheel tagged `+cpu` (upstream has no
+> Metal kernels). That tag only describes the engine host — the `vllm-metal`
+> plugin supplies the Metal/MLX compute path, so `backend=vllm` runs on the GPU,
+> not the CPU.
+
+Install with the official installer (recommended, no compiler — ships the
+matching prebuilt vLLM + plugin wheels into a dedicated environment):
 
 ```bash
-# Create venv with Python 3.12
-uv venv cotlab --python 3.12
-source cotlab/bin/activate
-uv pip install -e ".[dev]"
-
-# Install vLLM 0.13.0 from source (CPU build for macOS)
-cd /tmp
-curl -OL https://github.com/vllm-project/vllm/releases/download/v0.13.0/vllm-0.13.0.tar.gz
-tar xf vllm-0.13.0.tar.gz && cd vllm-0.13.0
-uv pip install -r requirements/cpu.txt --index-strategy unsafe-best-match
-uv pip install .
-cd -
-
-# Install vllm-metal plugin (MLX-accelerated)
-uv pip install vllm-metal
-
-# Verify
-python -c "from vllm import LLM; import vllm_metal; print('Metal ready!')"
+curl -fsSL https://raw.githubusercontent.com/vllm-project/vllm-metal/main/install.sh | bash
+source ~/.venv-vllm-metal/bin/activate
 ```
 
-Metal is auto-detected when you run with `backend=vllm` - no additional configuration needed.
+> Alternatively, Homebrew provides the `vllm` CLI:
+> ```bash
+> brew tap vllm-project/vllm-metal https://github.com/vllm-project/vllm-metal
+> brew install vllm-project/vllm-metal/vllm-metal
+> ```
+
+Add CoTLab to that environment (its runtime deps are already present, so skip
+dependency resolution to avoid clobbering the plugin's pinned `torch`):
+
+```bash
+cd /path/to/CoTLab
+uv pip install --no-deps -e .
+uv pip install omegaconf hydra-core
+```
+
+Verify both the plugin and CoTLab's backend:
+
+```bash
+python -c "from vllm import LLM; import vllm_metal; print('Metal ready!')"
+python -c "from cotlab.backends.vllm_backend import VLLMBackend; print('CoTLab vLLM backend OK')"
+```
+
+Metal is auto-detected when you run with `backend=vllm` — no additional
+configuration needed. You will see `MLX device set to: Device(gpu, 0)` and
+`PyTorch device set to: mps` in the logs when it is running on the GPU.
 
 ## Environment Setup
 
