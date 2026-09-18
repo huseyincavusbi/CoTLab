@@ -11,6 +11,12 @@ multirun/
 /results*/
 /lenses_bench/
 
+# Local validation/benchmark scripts (not part of the package)
+/scripts/compare_*.py
+/scripts/deep_compare.py
+/scripts/benchmark_all_experiments.py
+/scripts/run_lenses_bench.py
+
 # Model configs (local only — never commit)
 conf/model/
 
