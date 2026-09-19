@@ -8,7 +8,7 @@ version = "0.10.0"
 dynamic = []
 description = "CoTLab - Chain of Thought Research Toolkit for LLMs"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.14"
 license = "MIT"
 authors = [
     { name = "Huseyin Cavus", email = "huseyincavus@proton.me" }
@@ -26,7 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "click>=8.1.0",
-    "torch>=2.1.0",
+    "torch>=2.13.0,<2.14",
     "transformers>=4.56.0,<6",
     "hydra-core>=1.3.0",
     "omegaconf>=2.3.0",
@@ -50,7 +50,9 @@ dependencies = [
 # - NVIDIA: pip install vllm
 # - AMD ROCm: Use Docker (./scripts/cotlab-rocm.sh)
 vllm = [
-    "vllm>=0.6.0",
+    # Linux-only: vLLM publishes wheels for Linux GPUs only (macOS/Windows use
+    # their own vLLM builds, e.g. the vllm-metal plugin in a separate env).
+    "vllm>=0.29.0; sys_platform == 'linux'",
 ]
 dev = [
     "pytest>=7.0.0",
