@@ -923,6 +923,44 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 str(indices[r]): float(stats["flip_rate"][r]) for r in range(len(indices))
             }
 
+            def _rows_vals(tensor, rows):
+                return [float(tensor[r]) for r in rows]
+
+            metrics["baseline_entropy"] = float(stats.get("baseline_entropy", float("nan")))
+            metrics["baseline_max_prob"] = float(stats.get("baseline_max_prob", float("nan")))
+            metrics["baseline_margin"] = float(stats.get("baseline_margin", float("nan")))
+            metrics["baseline_accuracy"] = float(stats.get("baseline_accuracy", float("nan")))
+            if h_rows:
+                metrics["h_neuron_mean_d_entropy_rel"] = float(
+                    stats["d_entropy_rel"][h_rows].mean()
+                )
+                metrics["h_neuron_mean_entropy_up_frac"] = float(
+                    stats["entropy_up_frac"][h_rows].mean()
+                )
+                metrics["h_neuron_empirical_p_vs_random"] = self._empirical_p(
+                    _rows_vals(stats["d_entropy"], h_rows),
+                    _rows_vals(stats["d_entropy"], rand_rows),
+                )
+                metrics["h_neuron_empirical_p_vs_norm_matched"] = self._empirical_p(
+                    _rows_vals(stats["d_entropy"], h_rows),
+                    _rows_vals(stats["d_entropy"], nm_rows),
+                )
+            if rand_rows:
+                metrics["random_baseline_mean_entropy_up_frac"] = float(
+                    stats["entropy_up_frac"][rand_rows].mean()
+                )
+            mpos = stats.get("d_entropy_pos")
+            if mpos is not None:
+                for tag, rows in (
+                    ("h_neuron", h_rows),
+                    ("selected", sel_rows),
+                    ("random_baseline", rand_rows),
+                    ("norm_matched", nm_rows),
+                ):
+                    if rows:
+                        mean, lo, hi = self._bootstrap_ci(mpos[rows, :], seed=self.seed)
+                        metrics[f"{tag}_mean_d_entropy_ci"] = [mean, lo, hi]
+
         if mediated is not None:
             order = torch.argsort(mediated, descending=True)
         else:
@@ -1062,6 +1100,38 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "argmax": logp.argmax(-1),
         }
 
+    @staticmethod
+    def _empirical_p(target_vals: List[float], null_vals: List[float]) -> float:
+        """One-sided empirical p: fraction of the null >= the target mean.
+
+        Uses the add-one (conservative) estimator so a null of size R yields
+        p >= 1/(R+1). Returns NaN if either list is empty.
+        """
+        if not target_vals or not null_vals:
+            return float("nan")
+        target = sum(target_vals) / len(target_vals)
+        ge = sum(1 for v in null_vals if v >= target)
+        return (1 + ge) / (1 + len(null_vals))
+
+    @staticmethod
+    def _bootstrap_ci(
+        matrix: torch.Tensor, iters: int = 1000, seed: int = 0
+    ) -> Tuple[float, float, float]:
+        """Bootstrap CI over columns (positions) for the grand mean of ``matrix``.
+
+        Returns (mean, 2.5th percentile, 97.5th percentile). Columns are resampled
+        with replacement to respect per-position rather than per-neuron variance.
+        """
+        n, p = matrix.shape
+        if p == 0:
+            return float("nan"), float("nan"), float("nan")
+        g = torch.Generator().manual_seed(seed)
+        base = float(matrix.mean())
+        boots = sorted(
+            float(matrix[:, torch.randint(0, p, (p,), generator=g)].mean()) for _ in range(iters)
+        )
+        return base, boots[int(0.025 * iters)], boots[int(0.975 * iters)]
+
     def _ablate_neurons_forward(
         self,
         backend: InferenceBackend,
@@ -1092,7 +1162,14 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         n = len(indices)
         acc = {
             k: torch.zeros(n)
-            for k in ("te", "d_entropy", "abs_d_entropy", "flip_rate", "d_max_prob")
+            for k in (
+                "te",
+                "d_entropy",
+                "abs_d_entropy",
+                "flip_rate",
+                "d_max_prob",
+                "entropy_up_frac",
+            )
         }
         counter = {"positions": 0}
         chunk = max(1, self.mediate_neuron_chunk)
@@ -1108,6 +1185,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
         with torch.no_grad():
             base_loss, base_ent, base_maxp, base_arg = [], [], [], []
+            base_margin, base_tgt = [], []
             for seq in sequences:
                 tokens = seq["tokens"].to(device)
                 out = backend.model(tokens)
@@ -1119,12 +1197,21 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 st = self._distribution_stats(logits, logp=lp)
                 base_ent.append(st["entropy"].reshape(-1).cpu())
                 base_maxp.append(st["max_prob"].reshape(-1).cpu())
+                base_margin.append(st["margin"].reshape(-1).cpu())
                 base_arg.append(st["argmax"].reshape(-1).cpu())
+                base_tgt.append(tokens[:, 1:].reshape(-1).cpu())
                 counter["positions"] += base_loss[-1].numel()
             base_loss = torch.cat(base_loss)
             base_ent = torch.cat(base_ent)
             base_maxp = torch.cat(base_maxp)
+            base_margin = torch.cat(base_margin)
             base_arg = torch.cat(base_arg)
+            base_tgt = torch.cat(base_tgt)
+            base_ent_sum = float(base_ent.sum())
+            base_maxp_sum = float(base_maxp.sum())
+            positions = counter["positions"]
+            # (n_neurons, positions) signed entropy deltas for bootstrap CIs.
+            d_ent_pos = torch.zeros(n, positions) if n * positions <= 20_000_000 else None
 
             for start in range(0, n, chunk):
                 rows = list(range(start, min(start + chunk, n)))
@@ -1161,9 +1248,21 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 acc["abs_d_entropy"][start : start + c] += d_ent.abs().sum(dim=1)
                 acc["flip_rate"][start : start + c] += (arg != base_arg).float().sum(dim=1)
                 acc["d_max_prob"][start : start + c] += (maxp - base_maxp).sum(dim=1)
+                acc["entropy_up_frac"][start : start + c] += (d_ent > 0).float().sum(dim=1)
+                if d_ent_pos is not None:
+                    d_ent_pos[start : start + c, :] = d_ent
 
         pos = max(1, counter["positions"])
         out = {k: acc[k] / pos for k in acc}
+        out["d_entropy_rel"] = acc["d_entropy"] / base_ent_sum if base_ent_sum else torch.zeros(n)
+        out["d_max_prob_rel"] = (
+            acc["d_max_prob"] / base_maxp_sum if base_maxp_sum else torch.zeros(n)
+        )
+        out["d_entropy_pos"] = d_ent_pos
+        out["baseline_entropy"] = float(base_ent.mean())
+        out["baseline_max_prob"] = float(base_maxp.mean())
+        out["baseline_margin"] = float(base_margin.mean())
+        out["baseline_accuracy"] = float((base_arg == base_tgt).float().mean())
         out["positions"] = counter["positions"]
         out["de"] = torch.zeros(n)
         out["mediated"] = None

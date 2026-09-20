@@ -533,6 +533,22 @@ def test_norm_matched_indices_fallback_nearest_when_pool_empty():
     assert matched[0] in (1, 2)
 
 
+def test_empirical_p_bounds_and_add_one():
+    exp = ConfidenceRegulationExperiment()
+    null = [0.0, 0.0, 0.0, 0.0]
+    assert exp._empirical_p([10.0], null) == pytest.approx(1 / 5)  # none exceed
+    assert exp._empirical_p([-10.0], null) == pytest.approx(1.0)  # all exceed
+    assert exp._empirical_p([0.0], null) == pytest.approx(1.0)  # ties count as >=
+    assert exp._empirical_p([], null) != exp._empirical_p([], null)  # NaN
+
+
+def test_bootstrap_ci_contains_mean_and_orders_bounds():
+    exp = ConfidenceRegulationExperiment()
+    matrix = torch.randn(3, 50)
+    mean, lo, hi = exp._bootstrap_ci(matrix, iters=200, seed=0)
+    assert lo <= mean <= hi
+
+
 def test_percentile_rank_endpoints():
     from cotlab.experiments.confidence_regulation import _percentile_rank
 
