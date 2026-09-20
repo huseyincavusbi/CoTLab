@@ -1031,21 +1031,26 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         return "forward" if self._has_post_ffn_norm(backend) else "analytic"
 
     @staticmethod
-    def _distribution_stats(logits: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def _distribution_stats(
+        logits: torch.Tensor, logp: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
         """Per-position output-distribution statistics for the causal signature.
 
         Returns entropy, max probability, top1-top2 margin and argmax. These let
         an intervention be read as confidence-regulation (entropy moves, argmax
-        does not) versus a direct change to the prediction.
+        does not) versus a direct change to the prediction. Pass an already
+        computed ``logp`` (log-softmax of ``logits``) to avoid a second full-vocab
+        log-softmax pass per forward.
         """
-        logp = torch.log_softmax(logits.float(), dim=-1)
-        p = logp.exp()
-        top2 = torch.topk(p, 2, dim=-1).values
+        if logp is None:
+            logp = torch.log_softmax(logits.float(), dim=-1)
+        top2 = torch.topk(logp, 2, dim=-1).values
+        max_prob = top2[..., 0].exp()
         return {
-            "entropy": -(p * logp).sum(-1),
-            "max_prob": top2[..., 0],
-            "margin": top2[..., 0] - top2[..., 1],
-            "argmax": p.argmax(-1),
+            "entropy": -(logp.exp() * logp).sum(-1),
+            "max_prob": max_prob,
+            "margin": max_prob - top2[..., 1].exp(),
+            "argmax": logp.argmax(-1),
         }
 
     def _ablate_neurons_forward(
@@ -1102,7 +1107,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 base_loss.append(
                     -lp.gather(-1, tokens[:, 1:].unsqueeze(-1)).squeeze(-1).reshape(-1).cpu()
                 )
-                st = self._distribution_stats(logits)
+                st = self._distribution_stats(logits, logp=lp)
                 base_ent.append(st["entropy"].reshape(-1).cpu())
                 base_maxp.append(st["max_prob"].reshape(-1).cpu())
                 base_arg.append(st["argmax"].reshape(-1).cpu())
@@ -1130,7 +1135,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                         logits = out.logits.float()[:, :-1]
                         lp = torch.log_softmax(logits, dim=-1)
                         loss_rows.append(-lp.gather(-1, inp[:, 1:].unsqueeze(-1)).squeeze(-1))
-                        st = self._distribution_stats(logits)
+                        st = self._distribution_stats(logits, logp=lp)
                         ent_rows.append(st["entropy"])
                         maxp_rows.append(st["max_prob"])
                         arg_rows.append(st["argmax"])

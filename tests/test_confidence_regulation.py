@@ -497,6 +497,16 @@ def test_distribution_stats_uniform_is_max_entropy():
     assert torch.allclose(stats["margin"], torch.zeros(2, 3))
 
 
+def test_distribution_stats_accepts_precomputed_logp():
+    exp = ConfidenceRegulationExperiment()
+    logits = torch.randn(2, 3, 9)
+    logp = torch.log_softmax(logits, dim=-1)
+    a = exp._distribution_stats(logits)
+    b = exp._distribution_stats(logits, logp=logp)
+    for key in ("entropy", "max_prob", "margin", "argmax"):
+        assert torch.allclose(a[key].float(), b[key].float())
+
+
 def test_distribution_stats_peaked_entropy_and_argmax():
     exp = ConfidenceRegulationExperiment()
     logits = torch.zeros(1, 2, 5)
