@@ -485,6 +485,45 @@ def test_rejects_negative_mediate_alpha():
         ConfidenceRegulationExperiment(mediate_alpha=-1.0)
 
 
+def test_accepts_intervene_mode_and_defaults_alphas():
+    exp = ConfidenceRegulationExperiment(mode="intervene")
+    assert exp.mode == "intervene"
+    assert exp.intervene_alphas == [0.0, 2.0]
+    assert ConfidenceRegulationExperiment(intervene_alphas=[1.0]).intervene_alphas == [1.0]
+
+
+def test_rejects_negative_intervene_alpha():
+    with pytest.raises(ValueError, match="intervene_alphas"):
+        ConfidenceRegulationExperiment(intervene_alphas=[0.0, -2.0])
+
+
+def test_group_stats_means_and_empirical_p():
+    exp = ConfidenceRegulationExperiment(mode="intervene", seed=0)
+    stats = {
+        "te": torch.tensor([0.1, 0.2, 0.3, 0.4]),
+        "d_entropy": torch.tensor([0.01, 0.02, 0.03, 0.04]),
+        "abs_d_entropy": torch.tensor([0.01, 0.02, 0.03, 0.04]),
+        "d_entropy_rel": torch.tensor([0.1, 0.2, 0.3, 0.4]),
+        "flip_rate": torch.tensor([0.0, 0.1, 0.2, 0.3]),
+        "d_max_prob": torch.tensor([0.0, 0.0, 0.0, 0.0]),
+        "entropy_up_frac": torch.tensor([1.0, 1.0, 1.0, 1.0]),
+        "d_entropy_pos": torch.arange(8, dtype=torch.float).reshape(4, 2),
+        "baseline_entropy": 1.0,
+        "baseline_max_prob": 0.5,
+        "baseline_margin": 0.2,
+        "baseline_accuracy": 0.3,
+        "positions": 2,
+    }
+    groups = {"h_neuron": [0], "random_baseline": [1, 2, 3], "selected": [], "norm_matched": []}
+    out = exp._group_stats(stats, [0, 1, 2, 3], groups, seed=0)
+    assert out["h_neuron_mean_d_entropy"] == pytest.approx(0.01)
+    assert out["random_baseline_mean_d_entropy"] == pytest.approx((0.02 + 0.03 + 0.04) / 3)
+    assert out["h_neuron_mean_d_entropy_rel"] == pytest.approx(0.1)
+    assert out["h_neuron_mean_flip_rate"] == pytest.approx(0.0)
+    assert 0.0 <= out["h_neuron_empirical_p_vs_random"] <= 1.0
+    assert len(out["h_neuron_mean_d_entropy_ci"]) == 3
+
+
 def test_distribution_stats_uniform_is_max_entropy():
     exp = ConfidenceRegulationExperiment()
     v = 7

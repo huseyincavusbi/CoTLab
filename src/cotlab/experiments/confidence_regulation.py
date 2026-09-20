@@ -171,6 +171,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         # Forward-engine intervention scale on target activations: 0.0 is the
         # paper's mean-ablation, 1.0 is a no-op, >1 amplifies.
         mediate_alpha: float = 0.0,
+        # `intervene` mode: alpha values to sweep in one run (dose-response).
+        intervene_alphas: Optional[List[float]] = None,
         probe_path: Optional[str] = None,
         overlap_layers: str = "final",
         neuron_family: str = "entropy",
@@ -182,7 +184,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         seed: int = 42,
         **kwargs,
     ):
-        valid_modes = ("identify", "mediate", "overlap", "full", "induction")
+        valid_modes = ("identify", "mediate", "overlap", "full", "induction", "intervene")
         if mode not in valid_modes:
             raise ValueError(f"mode must be one of {valid_modes}, got '{mode}'")
         if selection not in ("top_n", "top_percent", "norm_logitvar"):
@@ -203,6 +205,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             raise ValueError(f"layer must be a non-negative int or None, got {layer}")
         if mediate_alpha < 0:
             raise ValueError(f"mediate_alpha must be >= 0, got {mediate_alpha}")
+        if intervene_alphas is not None and any(a < 0 for a in intervene_alphas):
+            raise ValueError(f"intervene_alphas must be >= 0, got {intervene_alphas}")
         if overlap_layers not in ("final", "probe", "all"):
             raise ValueError(
                 f"overlap_layers must be 'final', 'probe' or 'all', got '{overlap_layers}'"
@@ -227,6 +231,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.mediate_neuron_chunk = mediate_neuron_chunk
         self.random_baseline_count = random_baseline_count
         self.mediate_alpha = mediate_alpha
+        self.intervene_alphas = list(intervene_alphas) if intervene_alphas else [0.0, 2.0]
         self.probe_path = probe_path
         self.overlap_layers = overlap_layers
         self.neuron_family = neuron_family
@@ -1063,6 +1068,150 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             },
         )
 
+    def _group_stats(
+        self,
+        stats: Dict[str, Any],
+        indices: List[int],
+        groups: Dict[str, List[int]],
+        seed: int = 0,
+    ) -> Dict[str, Any]:
+        """Per-group aggregate stats from one intervention run (forward engine).
+
+        Reports scalar group means for the loss/entropy/flip metrics plus the
+        baseline levels, empirical p-values of the H-Neuron group against the
+        random / norm-matched nulls, and position-bootstrap CIs.
+        """
+
+        def vals(tensor, rows):
+            return [float(tensor[r]) for r in rows]
+
+        def mean_of(tensor, rows):
+            return float(torch.tensor(vals(tensor, rows)).mean()) if rows else None
+
+        out: Dict[str, Any] = {
+            "n_ablated_neurons": len(indices),
+            "positions": stats.get("positions"),
+            "baseline_entropy": float(stats.get("baseline_entropy", float("nan"))),
+            "baseline_max_prob": float(stats.get("baseline_max_prob", float("nan"))),
+            "baseline_margin": float(stats.get("baseline_margin", float("nan"))),
+            "baseline_accuracy": float(stats.get("baseline_accuracy", float("nan"))),
+        }
+        for tag, rows in groups.items():
+            if not rows:
+                continue
+            out[f"{tag}_mean_TE"] = mean_of(stats["te"], rows)
+            out[f"{tag}_mean_d_entropy"] = mean_of(stats["d_entropy"], rows)
+            out[f"{tag}_mean_abs_d_entropy"] = mean_of(stats["abs_d_entropy"], rows)
+            out[f"{tag}_mean_d_entropy_rel"] = mean_of(stats["d_entropy_rel"], rows)
+            out[f"{tag}_mean_flip_rate"] = mean_of(stats["flip_rate"], rows)
+            out[f"{tag}_mean_d_max_prob"] = mean_of(stats["d_max_prob"], rows)
+            out[f"{tag}_mean_entropy_up_frac"] = mean_of(stats["entropy_up_frac"], rows)
+            mpos = stats.get("d_entropy_pos")
+            if mpos is not None:
+                m, lo, hi = self._bootstrap_ci(mpos[rows, :], seed=seed)
+                out[f"{tag}_mean_d_entropy_ci"] = [m, lo, hi]
+        if groups.get("h_neuron") and groups.get("random_baseline"):
+            out["h_neuron_empirical_p_vs_random"] = self._empirical_p(
+                vals(stats["d_entropy"], groups["h_neuron"]),
+                vals(stats["d_entropy"], groups["random_baseline"]),
+            )
+        if groups.get("h_neuron") and groups.get("norm_matched"):
+            out["h_neuron_empirical_p_vs_norm_matched"] = self._empirical_p(
+                vals(stats["d_entropy"], groups["h_neuron"]),
+                vals(stats["d_entropy"], groups["norm_matched"]),
+            )
+        return out
+
+    def _run_intervene(self, backend: InferenceBackend) -> ExperimentResult:
+        """Sweep intervention strength (alpha) and report the confidence signature.
+
+        One forward-capture pass, then ``_ablate_neurons_forward`` per alpha on the
+        same neuron groups (their selected set, our H-Neurons, random and
+        norm-matched controls). Entropy rising monotonically with alpha while the
+        argmax-flip stays flat is the confidence-regulation dissociation.
+        """
+        ident, sequences, act_mean, _ = self._capture_sequences(backend)
+        score = ident["score"]
+        selected = ident["selected"]
+        norms = ident.get("norms")
+
+        rng = torch.Generator().manual_seed(self.seed)
+        rand_idx = torch.randperm(score.numel(), generator=rng)[
+            : self.random_baseline_count
+        ].tolist()
+        h_layer = []
+        if self.probe_path:
+            h_layer = sorted({i for lyr, i in self._load_probe_neurons() if lyr == ident["layer"]})
+        norm_matched = []
+        if norms is not None and h_layer:
+            norm_matched = self._norm_matched_indices(
+                norms, h_layer, exclude=tuple(selected), seed=self.seed
+            )
+        indices = sorted(set(selected) | set(rand_idx) | set(h_layer) | set(norm_matched))
+        groups = {
+            "selected": [indices.index(i) for i in selected],
+            "h_neuron": [indices.index(i) for i in h_layer],
+            "random_baseline": [indices.index(i) for i in rand_idx],
+            "norm_matched": [indices.index(i) for i in norm_matched],
+        }
+
+        per_alpha = []
+        for alpha in self.intervene_alphas:
+            stats = self._ablate_neurons_forward(backend, sequences, act_mean, indices, alpha=alpha)
+            per_alpha.append(
+                {"alpha": alpha, **self._group_stats(stats, indices, groups, self.seed)}
+            )
+
+        print("\n" + "=" * 66)
+        print("CONFIDENCE REGULATION -- INTERVENE (dose-response)")
+        print("=" * 66)
+        print(
+            f"Layer {ident['layer']} | {len(indices)} neurons | {len(sequences)} seq x {self.seq_len}"
+        )
+        print(
+            f"Baseline H={per_alpha[0]['baseline_entropy']:.4f} "
+            f"maxP={per_alpha[0]['baseline_max_prob']:.4f} "
+            f"acc={per_alpha[0]['baseline_accuracy']:.4f}"
+        )
+        print("-" * 66)
+        hdr = f"{'alpha':>6} {'group':>16} {'dH':>9} {'dH%':>7} {'flip':>7} {'up%':>6}"
+        print(hdr)
+        for row in per_alpha:
+            for tag in ("h_neuron", "selected", "random_baseline", "norm_matched"):
+                if row.get(f"{tag}_mean_d_entropy") is None:
+                    continue
+                print(
+                    f"{row['alpha']:>6.2f} {tag:>16} "
+                    f"{row[f'{tag}_mean_d_entropy']:>+9.4f} "
+                    f"{100 * row[f'{tag}_mean_d_entropy_rel']:>+6.2f}% "
+                    f"{row[f'{tag}_mean_flip_rate']:>7.3f} "
+                    f"{100 * row[f'{tag}_mean_entropy_up_frac']:>5.1f}%"
+                )
+        print("=" * 66)
+
+        metrics: Dict[str, Any] = {
+            "mode": "intervene",
+            "layer": ident["layer"],
+            "alphas": list(self.intervene_alphas),
+            "probe_path": self.probe_path,
+            "n_ablated_neurons": len(indices),
+            "n_sequences": len(sequences),
+            "seq_len": self.seq_len,
+            "per_alpha": per_alpha,
+            **{f"identify_{k}": v for k, v in ident["summary"].items()},
+        }
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy="n/a",
+            metrics=metrics,
+            metadata={
+                "description": self.description,
+                "ablated_indices": indices,
+                "groups": groups,
+            },
+        )
+
     @staticmethod
     def _has_post_ffn_norm(backend: InferenceBackend) -> bool:
         """True for architectures whose MLP output is renormalized before the
@@ -1822,6 +1971,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             return self._run_identify(backend)
         if self.mode == "mediate":
             return self._run_mediate(backend)
+        if self.mode == "intervene":
+            return self._run_intervene(backend)
         if self.mode == "overlap":
             return self._run_overlap(backend)
         if self.mode == "induction":

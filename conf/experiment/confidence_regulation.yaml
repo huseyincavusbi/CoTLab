@@ -5,7 +5,7 @@ _target_: cotlab.experiments.ConfidenceRegulationExperiment
 name: confidence_regulation
 description: "Entropy-neuron identification and mediation (Stolfo et al., NeurIPS 2024)"
 
-# identify | mediate | overlap | full (mediate/overlap land in follow-up commits)
+# identify | mediate | overlap | intervene | induction | full
 mode: identify
 
 # top_n | top_percent (ranking metric: rho, per the authors' released code)
@@ -34,6 +34,9 @@ seq_len: 256
 mediate_sequences: 8
 # Forward-engine intervention scale: 0.0 = paper mean-ablation, >1 = amplify.
 mediate_alpha: 0.0
+# intervene mode: alpha values swept in one run (dose-response). 0.0 replaces
+# the activation with its corpus mean; >1 amplifies by that factor.
+intervene_alphas: [0.0, 2.0]
 # candidates = identified set + random baseline (CPU-friendly); "all" sweeps
 # every final-layer neuron like the authors.
 mediate_scope: candidates
