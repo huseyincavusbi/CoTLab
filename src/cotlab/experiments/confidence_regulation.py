@@ -1141,7 +1141,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         print("CONFIDENCE REGULATION -- OVERLAP")
         print("=" * 66)
         print(f"Probe                 : {self.probe_path}")
-        print(f"H-Neurons total       : {h_all_count} ({n_h_final} in final layer {final_layer})")
+        print(
+            f"H-Neurons total       : {h_all_count} "
+            f"({n_h_final} in analysis layer {analysis_layer})"
+        )
         print(f"Entropy neurons       : {n_sel}")
         print(f"Overlap               : {len(overlap)} {sorted(overlap)}")
         print(f"Jaccard (final layer) : {jaccard:.4f}")

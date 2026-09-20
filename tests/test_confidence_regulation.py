@@ -255,18 +255,23 @@ class _FakeDownProj:
         self.weight = torch.randn(d_model, d_mlp, generator=g)
 
 
-def _fake_backend(hook_manager, d_model=8):
+def _fake_backend(hook_manager, d_model=8, vocab=50):
     class _Emb:
-        weight = torch.zeros(50, d_model)
+        weight = torch.zeros(vocab, d_model)
+
+    class _OutEmb:
+        weight = torch.randn(vocab, d_model, generator=torch.Generator().manual_seed(0))
 
     class _Model:
         get_input_embeddings = staticmethod(lambda: _Emb())
+        get_output_embeddings = staticmethod(lambda: _OutEmb())
 
     class _Backend:
         model = _Model()
 
     b = _Backend()
     b.hook_manager = hook_manager
+    b.model_name = "fake"
     return b
 
 
@@ -330,3 +335,27 @@ def test_load_probe_missing_data(exp, tmp_path):
     exp.probe_path = str(p)
     with pytest.raises(ValueError, match="missing neurons"):
         exp._load_probe_neurons()
+
+
+# ---------------------------------------------------------------------------
+# overlap mode
+# ---------------------------------------------------------------------------
+
+
+def test_overlap_mode_runs_and_reports(tmp_path):
+    """Regression: overlap mode used to raise NameError on an undefined
+    ``final_layer`` in its summary print, so it never returned a result."""
+    p = tmp_path / "probe.json"
+    p.write_text(json.dumps({"fit": {"h_neurons": [[3, 0], [3, 2]]}}))
+    exp = ConfidenceRegulationExperiment(mode="overlap", probe_path=str(p), seed=0)
+    backend = _fake_backend(_FakeHookManager(4))
+
+    result = exp._run_overlap(backend)
+
+    m = result.metrics
+    assert m["mode"] == "overlap"
+    assert m["h_neurons_total"] == 2
+    assert m["h_neurons_in_analysis_layer"] == 2
+    assert m["entropy_neuron_count"] >= 1
+    assert 0 <= m["overlap_count"] <= 2
+    assert 0.0 <= m["jaccard_analysis_layer"] <= 1.0
