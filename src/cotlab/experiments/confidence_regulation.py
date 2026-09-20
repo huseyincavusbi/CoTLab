@@ -93,6 +93,17 @@ def _hypergeom_sf(k: int, population: int, successes: int, draws: int) -> float:
     return float(tail / denom)
 
 
+def _percentile_rank(values: torch.Tensor) -> torch.Tensor:
+    """Within-vector percentile rank in [0, 100) via argsort (ties by order)."""
+    n = values.numel()
+    if n <= 1:
+        return torch.zeros(n, dtype=torch.float32)
+    order = torch.argsort(values)
+    ranks = torch.empty(n, dtype=torch.float32)
+    ranks[order] = torch.arange(n, dtype=torch.float32)
+    return ranks / n * 100.0
+
+
 @Registry.register_experiment("confidence_regulation")
 class ConfidenceRegulationExperiment(BaseExperiment):
     """Identify and validate confidence-regulating (entropy) neurons."""
@@ -118,6 +129,11 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         selection: str = "top_n",
         top_n: int = 20,
         top_percent: float = 0.01,
+        # norm_logitvar criterion (paper Fig. 2a): keep neurons whose output
+        # weight norm is in the top ``norm_percentile_min`` and whose logit
+        # variance is in the bottom ``logit_var_percentile_max``.
+        norm_percentile_min: float = 99.0,
+        logit_var_percentile_max: float = 1.0,
         k_null: Optional[int] = None,
         logit_chunk_size: int = 256,
         fold_final_norm: bool = True,
@@ -143,8 +159,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         valid_modes = ("identify", "mediate", "overlap", "full", "induction")
         if mode not in valid_modes:
             raise ValueError(f"mode must be one of {valid_modes}, got '{mode}'")
-        if selection not in ("top_n", "top_percent"):
-            raise ValueError(f"selection must be 'top_n' or 'top_percent', got '{selection}'")
+        if selection not in ("top_n", "top_percent", "norm_logitvar"):
+            raise ValueError(
+                f"selection must be 'top_n', 'top_percent' or 'norm_logitvar', got '{selection}'"
+            )
         if mediate_scope not in ("candidates", "all"):
             raise ValueError(f"mediate_scope must be 'candidates' or 'all', got '{mediate_scope}'")
         if neuron_family not in ("entropy", "frequency"):
@@ -168,6 +186,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.selection = selection
         self.top_n = top_n
         self.top_percent = top_percent
+        self.norm_percentile_min = norm_percentile_min
+        self.logit_var_percentile_max = logit_var_percentile_max
         self.k_null = k_null
         self.logit_chunk_size = logit_chunk_size
         self.fold_final_norm = fold_final_norm
@@ -313,8 +333,28 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         }
         return rho, diag
 
-    def _select_neurons(self, rho: torch.Tensor) -> List[int]:
-        """Rank neurons by rho descending (authors' released-code criterion)."""
+    def _select_neurons(
+        self,
+        rho: torch.Tensor,
+        norms: Optional[torch.Tensor] = None,
+        logit_vars: Optional[torch.Tensor] = None,
+    ) -> List[int]:
+        """Select neurons by the configured criterion.
+
+        ``top_n``/``top_percent`` rank by the score passed as ``rho`` (the
+        authors' released-code criterion). ``norm_logitvar`` instead matches the
+        paper's Fig. 2a heuristic -- high output-weight norm AND low logit
+        variance -- and requires ``norms``/``logit_vars``.
+        """
+        if self.selection == "norm_logitvar":
+            if norms is None or logit_vars is None:
+                raise ValueError("selection='norm_logitvar' requires norms and logit_vars")
+            norm_pct = _percentile_rank(norms)
+            lv_pct = _percentile_rank(logit_vars)
+            mask = (norm_pct >= self.norm_percentile_min) & (
+                lv_pct <= self.logit_var_percentile_max
+            )
+            return torch.nonzero(mask, as_tuple=False).flatten().tolist()
         if self.selection == "top_percent":
             n = max(1, int(self.top_percent * rho.numel()))
         else:
@@ -330,7 +370,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         norms = w_out.norm(dim=0)
         logit_vars = self._compute_logit_vars(w_u, w_out)
         rho, svd_diag = self._compute_rho(w_u, w_out)
-        selected = self._select_neurons(rho)
+        selected = self._select_neurons(rho, norms, logit_vars)
 
         sel_norms = norms[selected]
         sel_lv = logit_vars[selected]
@@ -1207,8 +1247,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     def _overlap_one_layer(self, backend, w_u, layer, h_indices) -> Dict[str, Any]:
         w_out = self._get_w_out(backend, layer)
         d_mlp = w_out.shape[1]
+        norms = w_out.norm(dim=0)
         rho, _ = self._compute_rho(w_u, w_out)
-        selected = set(self._select_neurons(rho))
+        logit_vars = (
+            self._compute_logit_vars(w_u, w_out) if self.selection == "norm_logitvar" else None
+        )
+        selected = set(self._select_neurons(rho, norms, logit_vars))
         h_set = set(h_indices)
         overlap = sorted(h_set & selected)
         n_sel, n_h = len(selected), len(h_set)

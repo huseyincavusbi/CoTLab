@@ -398,3 +398,33 @@ def test_overlap_multi_layer_runs_and_reports(tmp_path):
     for row in m["per_layer"]:
         assert 0.0 <= row["jaccard"] <= 1.0
         assert 0.0 <= row["hypergeom_p"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# norm_logitvar criterion (paper Fig. 2a)
+# ---------------------------------------------------------------------------
+
+
+def test_select_neurons_norm_logitvar():
+    exp = ConfidenceRegulationExperiment(
+        selection="norm_logitvar", norm_percentile_min=60.0, logit_var_percentile_max=10.0
+    )
+    norms = torch.tensor([1.0, 2.0, 3.0, 4.0, 5.0])
+    logit_vars = torch.tensor([0.05, 0.04, 0.03, 0.02, 0.01])
+    # only neuron 4 is both high-norm (top 40%) and low-logit-var (bottom 10%)
+    assert exp._select_neurons(torch.zeros(5), norms, logit_vars) == [4]
+
+
+def test_select_neurons_norm_logitvar_requires_metrics():
+    exp = ConfidenceRegulationExperiment(selection="norm_logitvar")
+    with pytest.raises(ValueError, match="norm_logitvar"):
+        exp._select_neurons(torch.zeros(5))
+
+
+def test_percentile_rank_endpoints():
+    from cotlab.experiments.confidence_regulation import _percentile_rank
+
+    pct = _percentile_rank(torch.tensor([10.0, 30.0, 20.0]))
+    assert pct[0] == 0.0  # smallest
+    assert pct[1].item() == pytest.approx(200.0 / 3)  # largest
+    assert pct[2].item() == pytest.approx(100.0 / 3)

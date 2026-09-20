@@ -9,9 +9,13 @@ description: "Entropy-neuron identification and mediation (Stolfo et al., NeurIP
 mode: identify
 
 # top_n | top_percent (ranking metric: rho, per the authors' released code)
+# norm_logitvar: the paper's Fig. 2a heuristic — high output-weight norm AND
+# low logit variance (thresholds below).
 selection: top_n
 top_n: 20
 top_percent: 0.01
+norm_percentile_min: 99.0
+logit_var_percentile_max: 1.0
 
 # Bottom-k right singular vectors of W_U treated as the effective null space.
 # null defaults to max(1, round(0.01 * d_model)) — 12 for GPT-2 Small,
