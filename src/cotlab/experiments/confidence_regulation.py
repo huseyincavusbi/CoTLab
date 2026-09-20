@@ -1100,12 +1100,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 logits = out.logits.float()[:, :-1]
                 lp = torch.log_softmax(logits, dim=-1)
                 base_loss.append(
-                    -lp.gather(-1, tokens[:, 1:].unsqueeze(-1)).squeeze(-1).reshape(-1)
+                    -lp.gather(-1, tokens[:, 1:].unsqueeze(-1)).squeeze(-1).reshape(-1).cpu()
                 )
                 st = self._distribution_stats(logits)
-                base_ent.append(st["entropy"].reshape(-1))
-                base_maxp.append(st["max_prob"].reshape(-1))
-                base_arg.append(st["argmax"].reshape(-1))
+                base_ent.append(st["entropy"].reshape(-1).cpu())
+                base_maxp.append(st["max_prob"].reshape(-1).cpu())
+                base_arg.append(st["argmax"].reshape(-1).cpu())
                 counter["positions"] += base_loss[-1].numel()
             base_loss = torch.cat(base_loss)
             base_ent = torch.cat(base_ent)
@@ -1134,10 +1134,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                         ent_rows.append(st["entropy"])
                         maxp_rows.append(st["max_prob"])
                         arg_rows.append(st["argmax"])
-                    loss = torch.cat(loss_rows, dim=1)
-                    ent = torch.cat(ent_rows, dim=1)
-                    maxp = torch.cat(maxp_rows, dim=1)
-                    arg = torch.cat(arg_rows, dim=1)
+                    loss = torch.cat(loss_rows, dim=1).cpu()
+                    ent = torch.cat(ent_rows, dim=1).cpu()
+                    maxp = torch.cat(maxp_rows, dim=1).cpu()
+                    arg = torch.cat(arg_rows, dim=1).cpu()
                 finally:
                     h.remove()
 
