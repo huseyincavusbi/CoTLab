@@ -377,6 +377,37 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             n = min(self.top_n, rho.numel())
         return torch.topk(rho, n).indices.tolist()
 
+    @staticmethod
+    def _norm_matched_indices(
+        norms: torch.Tensor,
+        targets: List[int],
+        window: float = 0.05,
+        exclude: Tuple[int, ...] = (),
+        seed: int = 0,
+    ) -> List[int]:
+        """Random neurons with norms within ``+/- window`` of each target.
+
+        Used as the honest control for weight-norm confounds when intervening on
+        a selected set (H-Neurons / entropy neurons).
+        """
+        import random
+
+        rng = random.Random(seed)
+        used = set(targets) | set(exclude)
+        out: List[int] = []
+        for j in targets:
+            lo, hi = norms[j] * (1 - window), norms[j] * (1 + window)
+            pool = ((norms >= lo) & (norms <= hi)).nonzero(as_tuple=True)[0].tolist()
+            pool = [p for p in pool if p not in used and p not in out]
+            if not pool:
+                order = torch.argsort((norms - norms[j]).abs()).tolist()
+                pool = [p for p in order if p not in used and p not in out][:32]
+            if pool:
+                pick = rng.choice(pool)
+                out.append(pick)
+                used.add(pick)
+        return sorted(out)
+
     def _identify_arrays(self, backend: InferenceBackend) -> Dict[str, Any]:
         """Compute all identify-mode quantities once; shared by all modes."""
         w_u = self._get_unembedding(backend)
@@ -771,15 +802,28 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         ident, sequences, act_mean, norm_cfg = self._capture_sequences(backend)
         score = ident["score"]
         selected = ident["selected"]
+        norms = ident.get("norms")
 
         rng = torch.Generator().manual_seed(self.seed)
         rand_idx = torch.randperm(score.numel(), generator=rng)[
             : self.random_baseline_count
         ].tolist()
+
+        # Optional probe arm: intervene on our H-Neurons at the analysis layer
+        # plus a norm-matched control group (the honest baseline for norm).
+        h_layer: List[int] = []
+        if self.probe_path:
+            h_layer = sorted({i for lyr, i in self._load_probe_neurons() if lyr == ident["layer"]})
+        norm_matched: List[int] = []
+        if norms is not None and h_layer:
+            norm_matched = self._norm_matched_indices(
+                norms, h_layer, exclude=tuple(selected), seed=self.seed
+            )
+
         if self.mediate_scope == "all":
             indices = list(range(score.numel()))
         else:
-            indices = sorted(set(selected) | set(rand_idx))
+            indices = sorted(set(selected) | set(rand_idx) | set(h_layer) | set(norm_matched))
 
         v_freq = ident.get("v_freq") if self.neuron_family == "frequency" else None
         engine = self._resolve_engine(backend)
@@ -802,6 +846,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
         sel_rows = [indices.index(i) for i in selected]
         rand_rows = [indices.index(i) for i in rand_idx]
+        h_rows = [indices.index(i) for i in h_layer]
+        nm_rows = [indices.index(i) for i in norm_matched]
 
         if mediated is not None:
             spearman = self._spearman(score[torch.tensor(indices)], mediated)
@@ -848,6 +894,30 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                     "random_baseline_mean_d_max_prob": float(stats["d_max_prob"][rand_rows].mean()),
                 }
             )
+
+        group_extra: Dict[str, Any] = {}
+        if h_rows:
+            group_extra["n_h_neurons_intervened"] = len(h_rows)
+            group_extra["h_neuron_mean_TE"] = float(stats["te"][h_rows].mean())
+        if nm_rows:
+            group_extra["n_norm_matched_intervened"] = len(nm_rows)
+            group_extra["norm_matched_mean_TE"] = float(stats["te"][nm_rows].mean())
+        if "d_entropy" in stats:
+            if h_rows:
+                group_extra["h_neuron_mean_d_entropy"] = float(stats["d_entropy"][h_rows].mean())
+                group_extra["h_neuron_mean_flip_rate"] = float(stats["flip_rate"][h_rows].mean())
+                group_extra["h_neuron_mean_d_max_prob"] = float(stats["d_max_prob"][h_rows].mean())
+            if nm_rows:
+                group_extra["norm_matched_mean_d_entropy"] = float(
+                    stats["d_entropy"][nm_rows].mean()
+                )
+                group_extra["norm_matched_mean_flip_rate"] = float(
+                    stats["flip_rate"][nm_rows].mean()
+                )
+                group_extra["norm_matched_mean_d_max_prob"] = float(
+                    stats["d_max_prob"][nm_rows].mean()
+                )
+        metrics.update(group_extra)
 
         if mediated is not None:
             order = torch.argsort(mediated, descending=True)
@@ -933,6 +1003,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                         "mediated": (float(mediated[row]) if mediated is not None else None),
                         "score": float(ident.get("signed_score", score)[indices[row]]),
                         "is_selected": indices[row] in set(selected),
+                        "is_h_neuron": indices[row] in set(h_layer),
+                        "is_norm_matched": indices[row] in set(norm_matched),
                         **(
                             {
                                 "d_entropy": float(stats["d_entropy"][row]),

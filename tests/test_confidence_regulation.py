@@ -501,6 +501,21 @@ def test_distribution_stats_peaked_entropy_and_argmax():
     assert stats["margin"][0, 0] > 0.99
 
 
+def test_norm_matched_indices_within_window_and_excludes():
+    norms = torch.tensor([1.0, 1.01, 1.02, 5.0, 5.05, 9.0])
+    matched = ConfidenceRegulationExperiment._norm_matched_indices(
+        norms, [0, 3], window=0.05, exclude=(1,), seed=0
+    )
+    assert matched == [2, 4]
+
+
+def test_norm_matched_indices_fallback_nearest_when_pool_empty():
+    norms = torch.tensor([1.0, 10.0, 20.0])
+    matched = ConfidenceRegulationExperiment._norm_matched_indices(norms, [0], window=0.001, seed=0)
+    assert len(matched) == 1
+    assert matched[0] in (1, 2)
+
+
 def test_percentile_rank_endpoints():
     from cotlab.experiments.confidence_regulation import _percentile_rank
 
