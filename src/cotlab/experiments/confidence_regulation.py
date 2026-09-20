@@ -913,6 +913,15 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                     stats["d_max_prob"][nm_rows].mean()
                 )
         metrics.update(group_extra)
+        if "d_entropy" in stats:
+            # Per-neuron values (persisted in results.json) so the selected /
+            # H-Neuron effects can be read against the random null distribution.
+            metrics["d_entropy_by_index"] = {
+                str(indices[r]): float(stats["d_entropy"][r]) for r in range(len(indices))
+            }
+            metrics["flip_rate_by_index"] = {
+                str(indices[r]): float(stats["flip_rate"][r]) for r in range(len(indices))
+            }
 
         if mediated is not None:
             order = torch.argsort(mediated, descending=True)
