@@ -145,6 +145,9 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         mediate_scope: str = "candidates",
         mediate_neuron_chunk: int = 16,
         random_baseline_count: int = 20,
+        # Forward-engine intervention scale on target activations: 0.0 is the
+        # paper's mean-ablation, 1.0 is a no-op, >1 amplifies.
+        mediate_alpha: float = 0.0,
         probe_path: Optional[str] = None,
         overlap_layers: str = "final",
         neuron_family: str = "entropy",
@@ -175,6 +178,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             )
         if layer is not None and layer < 0:
             raise ValueError(f"layer must be a non-negative int or None, got {layer}")
+        if mediate_alpha < 0:
+            raise ValueError(f"mediate_alpha must be >= 0, got {mediate_alpha}")
         if overlap_layers not in ("final", "probe", "all"):
             raise ValueError(
                 f"overlap_layers must be 'final', 'probe' or 'all', got '{overlap_layers}'"
@@ -198,6 +203,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.mediate_scope = mediate_scope
         self.mediate_neuron_chunk = mediate_neuron_chunk
         self.random_baseline_count = random_baseline_count
+        self.mediate_alpha = mediate_alpha
         self.probe_path = probe_path
         self.overlap_layers = overlap_layers
         self.neuron_family = neuron_family
@@ -775,7 +781,9 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 "for non-final layers."
             )
         if engine == "forward":
-            stats = self._ablate_neurons_forward(backend, sequences, act_mean, indices)
+            stats = self._ablate_neurons_forward(
+                backend, sequences, act_mean, indices, alpha=self.mediate_alpha
+            )
         else:
             stats = self._ablate_neurons(
                 backend, sequences, act_mean, norm_cfg, indices, v_freq=v_freq
@@ -796,6 +804,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "neuron_family": self.neuron_family,
             "mediate_engine": engine,
             "mediate_scope": self.mediate_scope,
+            "mediate_alpha": self.mediate_alpha,
             "n_ablated_neurons": len(indices),
             "n_sequences": len(sequences),
             "seq_len": self.seq_len,
@@ -820,6 +829,13 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 {
                     "random_baseline_mean_TE": float(stats["te"][rand_rows].mean()),
                     "spearman_score_TE": spearman,
+                    "selected_mean_d_entropy": float(stats["d_entropy"][sel_rows].mean()),
+                    "selected_mean_abs_d_entropy": float(stats["abs_d_entropy"][sel_rows].mean()),
+                    "selected_mean_flip_rate": float(stats["flip_rate"][sel_rows].mean()),
+                    "selected_mean_d_max_prob": float(stats["d_max_prob"][sel_rows].mean()),
+                    "random_baseline_mean_d_entropy": float(stats["d_entropy"][rand_rows].mean()),
+                    "random_baseline_mean_flip_rate": float(stats["flip_rate"][rand_rows].mean()),
+                    "random_baseline_mean_d_max_prob": float(stats["d_max_prob"][rand_rows].mean()),
                 }
             )
 
@@ -864,10 +880,16 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 if self._has_post_ffn_norm(backend)
                 else f"non-final layer {self._resolve_layer(backend)}"
             )
-            print(f"Engine           : forward ({reason})")
+            print(f"Engine           : forward ({reason}, alpha={self.mediate_alpha})")
             print(f"Selected ({len(selected)}): mean |dLoss| = {sel_te:.4f}")
             print(f"Random baseline  : mean {rand_te:.4f} (R={self.random_baseline_count})")
             print(f"spearman(score, TE)          : {spearman:+.3f}")
+            print(
+                f"Confidence sign. : selected dH={metrics['selected_mean_d_entropy']:+.4f} "
+                f"flip={metrics['selected_mean_flip_rate']:.3f} | "
+                f"random dH={metrics['random_baseline_mean_d_entropy']:+.4f} "
+                f"flip={metrics['random_baseline_mean_flip_rate']:.3f}"
+            )
             print("Top-5 ablated neurons by causal effect (|dLoss|):")
             for row in top_rows:
                 tag = "*" if indices[row] in set(selected) else " "
@@ -901,6 +923,16 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                         "mediated": (float(mediated[row]) if mediated is not None else None),
                         "score": float(ident.get("signed_score", score)[indices[row]]),
                         "is_selected": indices[row] in set(selected),
+                        **(
+                            {
+                                "d_entropy": float(stats["d_entropy"][row]),
+                                "abs_d_entropy": float(stats["abs_d_entropy"][row]),
+                                "flip_rate": float(stats["flip_rate"][row]),
+                                "d_max_prob": float(stats["d_max_prob"][row]),
+                            }
+                            if mediated is None
+                            else {}
+                        ),
                     }
                     for row in range(len(indices))
                 ],
@@ -921,85 +953,130 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             return self.mediate_engine
         return "forward" if self._has_post_ffn_norm(backend) else "analytic"
 
+    @staticmethod
+    def _distribution_stats(logits: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Per-position output-distribution statistics for the causal signature.
+
+        Returns entropy, max probability, top1-top2 margin and argmax. These let
+        an intervention be read as confidence-regulation (entropy moves, argmax
+        does not) versus a direct change to the prediction.
+        """
+        logp = torch.log_softmax(logits.float(), dim=-1)
+        p = logp.exp()
+        top2 = torch.topk(p, 2, dim=-1).values
+        return {
+            "entropy": -(p * logp).sum(-1),
+            "max_prob": top2[..., 0],
+            "margin": top2[..., 0] - top2[..., 1],
+            "argmax": p.argmax(-1),
+        }
+
     def _ablate_neurons_forward(
         self,
         backend: InferenceBackend,
         sequences: List[Dict[str, torch.Tensor]],
         act_mean: torch.Tensor,
         indices: List[int],
+        alpha: float = 0.0,
     ) -> Dict[str, Any]:
-        """Causal mean-ablation via real forwards, batched over neurons.
+        """Causal intervention via real forwards, batched over neurons.
 
-        Required for architectures with a post-FFN norm (Gemma 2/3 family)
-        where no analytic shortcut exists. A single forward passes ``c``
-        copies of each sequence, one copy per ablated neuron (batch row), so
-        the run scales with ``ceil(n_neurons / c) * n_sequences`` forwards of
-        ``(c, T)`` instead of one ``(1, T)`` forward per neuron -- much larger
-        matmuls, far better CPU utilization. On CPU fp32 this is exactly
-        equivalent to per-neuron sequential runs (validated path).
+        ``alpha == 0`` replaces each target activation with its corpus mean (the
+        paper's ablation); ``alpha > 1`` amplifies it by that factor. Required
+        for architectures with a post-FFN norm (Gemma 2/3 family) where no
+        analytic shortcut exists. A single forward passes ``c`` copies of each
+        sequence, one copy per intervened neuron (batch row), so the run scales
+        with ``ceil(n_neurons / c) * n_sequences`` forwards of ``(c, T)`` instead
+        of one ``(1, T)`` forward per neuron -- much larger matmuls, far better
+        utilization. On CPU fp32 this is exactly equivalent to per-neuron
+        sequential runs (validated path).
 
-        Reports total causal effect only; the LN-mediated fraction is not
-        defined on these architectures.
+        Reports the total causal effect (mean |dLoss| per position) plus the
+        confidence signature: signed change in output entropy, argmax-flip rate
+        and change in max probability. The LN-mediated fraction is not defined
+        on these architectures.
         """
         device = backend.device
         mod = backend.hook_manager.get_mlp_down_proj_module(self._resolve_layer(backend))
-        te_sum = torch.zeros(len(indices))
+        n = len(indices)
+        acc = {
+            k: torch.zeros(n)
+            for k in ("te", "d_entropy", "abs_d_entropy", "flip_rate", "d_max_prob")
+        }
         counter = {"positions": 0}
         chunk = max(1, self.mediate_neuron_chunk)
 
-        def nominal():
-            losses = []
-            for seq in sequences:
-                tokens = seq["tokens"].to(device)
-                with torch.no_grad():
-                    out = backend.model(tokens)
-                logits = out.logits.float()[:, :-1]
-                lp = torch.log_softmax(logits, dim=-1)
-                loss = -lp.gather(-1, tokens[:, 1:].unsqueeze(-1)).squeeze(-1)
-                counter["positions"] += loss.numel()
-                losses.append(loss.cpu())
-            return torch.cat(losses)
-
-        def ablate_chunk(rows: List[int]):
-            # rows: global neuron rows in `indices`. Build one (c, T) forward
-            # per sequence with row j = sequence copy with neuron rows[j] ablated.
-            c = len(rows)
-            losses = []
-            neuron_cols = [indices[r] for r in rows]
-
-            def hook(m, inp):
-                new = inp[0].clone()
-                for j, col in enumerate(neuron_cols):
+        def intervene(m, inp, neuron_cols):
+            new = inp[0].clone()
+            for j, col in enumerate(neuron_cols):
+                if alpha == 0.0:
                     new[j, :, col] = act_mean[col].to(inp[0].device)
-                return (new,) + tuple(inp[1:])
-
-            h = mod.register_forward_pre_hook(hook)
-            for seq in sequences:
-                tokens = seq["tokens"].to(device)
-                inp = tokens.repeat(c, 1)
-                with torch.no_grad():
-                    out = backend.model(inp)
-                logits = out.logits.float()[:, :-1]
-                lp = torch.log_softmax(logits, dim=-1)
-                loss = -lp.gather(-1, inp[:, 1:].unsqueeze(-1)).squeeze(-1)
-                losses.append(loss.cpu())
-            h.remove()
-            return torch.cat(losses, dim=1)  # (c, total_positions)
+                else:
+                    new[j, :, col] = new[j, :, col] * alpha
+            return (new,) + tuple(inp[1:])
 
         with torch.no_grad():
-            base_l = nominal().reshape(-1)
-            for start in range(0, len(indices), chunk):
-                rows = list(range(start, min(start + chunk, len(indices))))
-                abl = ablate_chunk(rows)
-                te_sum[start : start + len(rows)] += (abl - base_l).abs().sum(dim=1)
-        te_mean = te_sum / max(1, counter["positions"])
-        zeros = torch.zeros(len(indices))
-        return {
-            "te": te_mean,
-            "de": zeros,
-            "mediated": None,
-            "positions": counter["positions"],
-        }
+            base_loss, base_ent, base_maxp, base_arg = [], [], [], []
+            for seq in sequences:
+                tokens = seq["tokens"].to(device)
+                out = backend.model(tokens)
+                logits = out.logits.float()[:, :-1]
+                lp = torch.log_softmax(logits, dim=-1)
+                base_loss.append(
+                    -lp.gather(-1, tokens[:, 1:].unsqueeze(-1)).squeeze(-1).reshape(-1)
+                )
+                st = self._distribution_stats(logits)
+                base_ent.append(st["entropy"].reshape(-1))
+                base_maxp.append(st["max_prob"].reshape(-1))
+                base_arg.append(st["argmax"].reshape(-1))
+                counter["positions"] += base_loss[-1].numel()
+            base_loss = torch.cat(base_loss)
+            base_ent = torch.cat(base_ent)
+            base_maxp = torch.cat(base_maxp)
+            base_arg = torch.cat(base_arg)
+
+            for start in range(0, n, chunk):
+                rows = list(range(start, min(start + chunk, n)))
+                neuron_cols = [indices[r] for r in rows]
+                c = len(rows)
+
+                def hook(m, inp, _cols=neuron_cols):
+                    return intervene(m, inp, _cols)
+
+                h = mod.register_forward_pre_hook(hook)
+                try:
+                    loss_rows, ent_rows, maxp_rows, arg_rows = [], [], [], []
+                    for seq in sequences:
+                        tokens = seq["tokens"].to(device)
+                        inp = tokens.repeat(c, 1)
+                        out = backend.model(inp)
+                        logits = out.logits.float()[:, :-1]
+                        lp = torch.log_softmax(logits, dim=-1)
+                        loss_rows.append(-lp.gather(-1, inp[:, 1:].unsqueeze(-1)).squeeze(-1))
+                        st = self._distribution_stats(logits)
+                        ent_rows.append(st["entropy"])
+                        maxp_rows.append(st["max_prob"])
+                        arg_rows.append(st["argmax"])
+                    loss = torch.cat(loss_rows, dim=1)
+                    ent = torch.cat(ent_rows, dim=1)
+                    maxp = torch.cat(maxp_rows, dim=1)
+                    arg = torch.cat(arg_rows, dim=1)
+                finally:
+                    h.remove()
+
+                d_ent = ent - base_ent
+                acc["te"][start : start + c] += (loss - base_loss).abs().sum(dim=1)
+                acc["d_entropy"][start : start + c] += d_ent.sum(dim=1)
+                acc["abs_d_entropy"][start : start + c] += d_ent.abs().sum(dim=1)
+                acc["flip_rate"][start : start + c] += (arg != base_arg).float().sum(dim=1)
+                acc["d_max_prob"][start : start + c] += (maxp - base_maxp).sum(dim=1)
+
+        pos = max(1, counter["positions"])
+        out = {k: acc[k] / pos for k in acc}
+        out["positions"] = counter["positions"]
+        out["de"] = torch.zeros(n)
+        out["mediated"] = None
+        return out
 
     def _ablate_neurons(
         self,

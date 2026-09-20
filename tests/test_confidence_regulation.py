@@ -421,6 +421,34 @@ def test_select_neurons_norm_logitvar_requires_metrics():
         exp._select_neurons(torch.zeros(5))
 
 
+def test_rejects_negative_mediate_alpha():
+    with pytest.raises(ValueError, match="mediate_alpha"):
+        ConfidenceRegulationExperiment(mediate_alpha=-1.0)
+
+
+def test_distribution_stats_uniform_is_max_entropy():
+    exp = ConfidenceRegulationExperiment()
+    v = 7
+    logits = torch.zeros(2, 3, v)
+    stats = exp._distribution_stats(logits)
+    assert torch.allclose(
+        stats["entropy"], torch.full((2, 3), float(torch.log(torch.tensor(float(v)))))
+    )
+    assert torch.allclose(stats["max_prob"], torch.full((2, 3), 1.0 / v))
+    assert torch.allclose(stats["margin"], torch.zeros(2, 3))
+
+
+def test_distribution_stats_peaked_entropy_and_argmax():
+    exp = ConfidenceRegulationExperiment()
+    logits = torch.zeros(1, 2, 5)
+    logits[0, 0, 3] = 20.0  # near-one-hot at index 3
+    stats = exp._distribution_stats(logits)
+    assert stats["argmax"][0, 0].item() == 3
+    assert stats["max_prob"][0, 0] > 0.99
+    assert stats["entropy"][0, 0] < 0.01
+    assert stats["margin"][0, 0] > 0.99
+
+
 def test_percentile_rank_endpoints():
     from cotlab.experiments.confidence_regulation import _percentile_rank
 

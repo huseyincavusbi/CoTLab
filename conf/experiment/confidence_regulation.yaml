@@ -32,6 +32,8 @@ corpus_text: null
 n_tokens: 8192
 seq_len: 256
 mediate_sequences: 8
+# Forward-engine intervention scale: 0.0 = paper mean-ablation, >1 = amplify.
+mediate_alpha: 0.0
 # candidates = identified set + random baseline (CPU-friendly); "all" sweeps
 # every final-layer neuron like the authors.
 mediate_scope: candidates
