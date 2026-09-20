@@ -467,6 +467,13 @@ def test_final_norm_gain_resolves_nested_language_model():
     assert torch.equal(gain, torch.full((4,), 2.0))
 
 
+def test_resolve_final_norm_module_nested():
+    exp = ConfidenceRegulationExperiment()
+    mod = exp._resolve_final_norm_module(_nested_norm_backend())
+    assert mod is not None
+    assert torch.equal(mod.weight, torch.full((4,), 2.0))
+
+
 def test_get_unembedding_folds_nested_norm_gain():
     exp = ConfidenceRegulationExperiment(fold_final_norm=True)
     w = exp._get_unembedding(_nested_norm_backend())

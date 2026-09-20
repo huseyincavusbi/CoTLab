@@ -104,6 +104,29 @@ def _percentile_rank(values: torch.Tensor) -> torch.Tensor:
     return ranks / n * 100.0
 
 
+def _norm_containers(model) -> List[Any]:
+    """Candidate modules that may hold the final normalization layer.
+
+    Multimodal wrappers nest the language model (e.g. Gemma 3:
+    ``model.model.language_model.model.norm``); without resolving these the
+    final norm is silently dropped and rho is computed on the raw unembedding.
+    """
+    containers = [
+        model,
+        getattr(model, "model", None),
+        getattr(model, "transformer", None),
+        getattr(model, "gpt_neox", None),
+    ]
+    for root in list(containers):
+        if root is None:
+            continue
+        lm = getattr(root, "language_model", None)
+        if lm is not None:
+            containers.append(lm)
+            containers.append(getattr(lm, "model", None))
+    return [c for c in containers if c is not None]
+
+
 @Registry.register_experiment("confidence_regulation")
 class ConfidenceRegulationExperiment(BaseExperiment):
     """Identify and validate confidence-regulating (entropy) neurons."""
@@ -250,26 +273,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     @staticmethod
     def _get_final_norm_gain(backend: InferenceBackend):
         """Resolve the final normalization gain ``gamma`` (d_model,) or None."""
-        model = backend.model
-        containers = [
-            model,
-            getattr(model, "model", None),
-            getattr(model, "transformer", None),
-            getattr(model, "gpt_neox", None),
-        ]
-        # Multimodal wrappers nest the language model (e.g. Gemma 3:
-        # model.model.language_model.model.norm); without resolving these the
-        # gain is silently dropped and rho is computed on the raw unembedding.
-        for root in list(containers):
-            if root is None:
-                continue
-            lm = getattr(root, "language_model", None)
-            if lm is not None:
-                containers.append(lm)
-                containers.append(getattr(lm, "model", None))
-        for container in containers:
-            if container is None:
-                continue
+        for container in _norm_containers(backend.model):
             for attr in ("norm", "ln_f", "final_layernorm", "final_layer_norm"):
                 mod = getattr(container, attr, None)
                 if mod is not None and hasattr(mod, "weight"):
@@ -655,16 +659,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
     def _resolve_final_norm_module(self, backend: InferenceBackend):
         """Return the final normalization module (or None)."""
-        model = backend.model
-        containers = [
-            model,
-            getattr(model, "model", None),
-            getattr(model, "transformer", None),
-            getattr(model, "gpt_neox", None),
-        ]
-        for container in containers:
-            if container is None:
-                continue
+        for container in _norm_containers(backend.model):
             for attr in ("norm", "ln_f", "final_layernorm", "final_layer_norm"):
                 mod = getattr(container, attr, None)
                 if mod is not None and hasattr(mod, "weight"):
