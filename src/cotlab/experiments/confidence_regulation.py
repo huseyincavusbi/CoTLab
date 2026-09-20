@@ -162,6 +162,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         fold_final_norm: bool = True,
         # --- mediate ---
         corpus_text: Optional[str] = None,
+        corpus_path: Optional[str] = None,
+        corpus_field: Optional[str] = None,
         n_tokens: int = 8192,
         seq_len: int = 256,
         mediate_sequences: int = 8,
@@ -224,6 +226,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.logit_chunk_size = logit_chunk_size
         self.fold_final_norm = fold_final_norm
         self.corpus_text = corpus_text
+        self.corpus_path = corpus_path
+        self.corpus_field = corpus_field
         self.n_tokens = n_tokens
         self.seq_len = seq_len
         self.mediate_sequences = mediate_sequences
@@ -512,7 +516,46 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         return (log_p - log_p.mean()).float()
 
     def _corpus_text_or_default(self) -> str:
+        if self.corpus_path:
+            return self._load_corpus_file(self.corpus_path)
         return self.corpus_text if self.corpus_text else self._DEFAULT_CORPUS
+
+    def _load_corpus_file(self, path: str) -> str:
+        """Load corpus texts from a .parquet / .jsonl / plain-text file.
+
+        For parquet/jsonl, ``corpus_field`` selects the text column/key; it
+        defaults to ``question`` then ``text`` then the first available. This is
+        how real prompts (e.g. TriviaQA ``*_train.parquet``) are fed into the
+        mediation/intervention forward passes instead of the embedded default.
+        """
+        import json
+        from pathlib import Path
+
+        p = Path(path)
+        if p.suffix == ".parquet":
+            import pandas as pd
+
+            df = pd.read_parquet(p)
+            field = self.corpus_field or ("question" if "question" in df.columns else df.columns[0])
+            texts = df[field].astype(str).tolist()
+        elif p.suffix in (".jsonl", ".ndjson"):
+            texts = []
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    key = self.corpus_field or next(
+                        (k for k in ("question", "text", "prompt", "response") if k in obj),
+                        next(iter(obj)),
+                    )
+                    texts.append(str(obj[key]))
+                else:
+                    texts.append(str(obj))
+        else:
+            texts = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        return "\n".join(texts)
 
     @staticmethod
     def _compute_freq_scores(
@@ -654,7 +697,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     def _build_corpus_batches(self, backend: InferenceBackend) -> torch.Tensor:
         """Tokenize the corpus into an ``(n_sequences, seq_len)`` CPU tensor."""
         tokenizer = backend.tokenizer
-        text = self.corpus_text if self.corpus_text else self._DEFAULT_CORPUS
+        text = self._corpus_text_or_default()
         ids = tokenizer(text, return_tensors=None, add_special_tokens=False)["input_ids"]
         ids = torch.tensor(ids, dtype=torch.long)
         reps = -(-self.n_tokens // ids.numel())

@@ -572,6 +572,41 @@ def test_norm_matched_indices_fallback_nearest_when_pool_empty():
     assert matched[0] in (1, 2)
 
 
+def test_load_corpus_file_txt(tmp_path):
+    p = tmp_path / "c.txt"
+    p.write_text("hello world\n\nfoo bar\n")
+    exp = ConfidenceRegulationExperiment(corpus_path=str(p))
+    assert exp._corpus_text_or_default() == "hello world\nfoo bar"
+
+
+def test_load_corpus_file_jsonl_field(tmp_path):
+    p = tmp_path / "c.jsonl"
+    p.write_text('{"question": "Q1", "x": 1}\n{"question": "Q2", "x": 2}\n')
+    exp = ConfidenceRegulationExperiment(corpus_path=str(p))
+    assert exp._corpus_text_or_default() == "Q1\nQ2"
+
+
+def test_load_corpus_file_jsonl_default_key(tmp_path):
+    p = tmp_path / "c.jsonl"
+    p.write_text('{"text": "T1"}\n')
+    exp = ConfidenceRegulationExperiment(corpus_path=str(p))
+    assert exp._corpus_text_or_default() == "T1"
+
+
+def test_load_corpus_file_parquet(tmp_path):
+    import pandas as pd
+
+    p = tmp_path / "c.parquet"
+    pd.DataFrame({"question": ["Qa", "Qb"]}).to_parquet(p)
+    exp = ConfidenceRegulationExperiment(corpus_path=str(p))
+    assert exp._corpus_text_or_default() == "Qa\nQb"
+
+
+def test_corpus_text_used_when_no_path():
+    exp = ConfidenceRegulationExperiment(corpus_text="explicit")
+    assert exp._corpus_text_or_default() == "explicit"
+
+
 def test_empirical_p_bounds_and_add_one():
     exp = ConfidenceRegulationExperiment()
     null = [0.0, 0.0, 0.0, 0.0]

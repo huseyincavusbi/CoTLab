@@ -29,6 +29,11 @@ logit_chunk_size: 256
 # Corpus for mean activations; null uses an embedded default text
 # (original work used C4 — approximation, see module docstring).
 corpus_text: null
+# Real prompts for the forward passes instead of the embedded default:
+# .parquet / .jsonl / .txt. corpus_field selects the text column/key
+# (defaults to question -> text -> first).
+corpus_path: null
+corpus_field: null
 n_tokens: 8192
 seq_len: 256
 mediate_sequences: 8
