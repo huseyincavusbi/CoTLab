@@ -257,6 +257,16 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             getattr(model, "transformer", None),
             getattr(model, "gpt_neox", None),
         ]
+        # Multimodal wrappers nest the language model (e.g. Gemma 3:
+        # model.model.language_model.model.norm); without resolving these the
+        # gain is silently dropped and rho is computed on the raw unembedding.
+        for root in list(containers):
+            if root is None:
+                continue
+            lm = getattr(root, "language_model", None)
+            if lm is not None:
+                containers.append(lm)
+                containers.append(getattr(lm, "model", None))
         for container in containers:
             if container is None:
                 continue

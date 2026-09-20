@@ -421,6 +421,58 @@ def test_select_neurons_norm_logitvar_requires_metrics():
         exp._select_neurons(torch.zeros(5))
 
 
+def _nested_norm_backend(d_model=4, vocab=3):
+    """Mimics Gemma 3's wrapper path: model.model.language_model.model.norm."""
+
+    class _Norm(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.full((d_model,), 2.0))
+
+    class _Text(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.norm = _Norm()
+
+    class _Causal(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = _Text()
+
+    class _Gemma3(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.language_model = _Causal()
+
+    class _Emb:
+        weight = torch.ones(vocab, d_model)
+
+    class _Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.model = _Gemma3()
+
+        def get_output_embeddings(self):
+            return _Emb()
+
+    class _Backend:
+        model = _Model()
+
+    return _Backend()
+
+
+def test_final_norm_gain_resolves_nested_language_model():
+    gain = ConfidenceRegulationExperiment._get_final_norm_gain(_nested_norm_backend())
+    assert gain is not None
+    assert torch.equal(gain, torch.full((4,), 2.0))
+
+
+def test_get_unembedding_folds_nested_norm_gain():
+    exp = ConfidenceRegulationExperiment(fold_final_norm=True)
+    w = exp._get_unembedding(_nested_norm_backend())
+    assert torch.allclose(w, torch.full((3, 4), 2.0))
+
+
 def test_rejects_negative_mediate_alpha():
     with pytest.raises(ValueError, match="mediate_alpha"):
         ConfidenceRegulationExperiment(mediate_alpha=-1.0)
