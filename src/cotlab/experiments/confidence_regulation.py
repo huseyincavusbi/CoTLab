@@ -70,6 +70,29 @@ from ..core.base import BaseExperiment, ExperimentResult
 from ..core.registry import Registry
 
 
+def _hypergeom_sf(k: int, population: int, successes: int, draws: int) -> float:
+    """Upper-tail hypergeometric P(X >= k) without a scipy dependency.
+
+    ``population`` = neurons per layer, ``successes`` = entropy neurons,
+    ``draws`` = H-Neurons in the layer. Returns 1.0 when undefined (no draws
+    or no successes) and clamps ``k`` to the feasible range.
+    """
+    from math import comb
+
+    n = min(draws, population)
+    lo = max(0, n - (population - successes))
+    hi = min(successes, n)
+    if k <= lo:
+        return 1.0
+    if k > hi or n == 0 or successes == 0:
+        return 0.0
+    denom = comb(population, n)
+    if denom == 0:
+        return float("nan")
+    tail = sum(comb(successes, i) * comb(population - successes, n - i) for i in range(k, hi + 1))
+    return float(tail / denom)
+
+
 @Registry.register_experiment("confidence_regulation")
 class ConfidenceRegulationExperiment(BaseExperiment):
     """Identify and validate confidence-regulating (entropy) neurons."""
@@ -107,6 +130,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         mediate_neuron_chunk: int = 16,
         random_baseline_count: int = 20,
         probe_path: Optional[str] = None,
+        overlap_layers: str = "final",
         neuron_family: str = "entropy",
         unigram_path: Optional[str] = None,
         mediate_engine: str = "auto",
@@ -133,6 +157,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             )
         if layer is not None and layer < 0:
             raise ValueError(f"layer must be a non-negative int or None, got {layer}")
+        if overlap_layers not in ("final", "probe", "all"):
+            raise ValueError(
+                f"overlap_layers must be 'final', 'probe' or 'all', got '{overlap_layers}'"
+            )
 
         self._name = name
         self.description = description
@@ -151,6 +179,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.mediate_neuron_chunk = mediate_neuron_chunk
         self.random_baseline_count = random_baseline_count
         self.probe_path = probe_path
+        self.overlap_layers = overlap_layers
         self.neuron_family = neuron_family
         self.unigram_path = unigram_path
         self.mediate_engine = mediate_engine
@@ -1102,11 +1131,18 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     def _run_overlap(self, backend: InferenceBackend) -> ExperimentResult:
         """Jaccard overlap between identified entropy neurons and H-Neurons.
 
-        The comparison is restricted to the final layer, where the entropy-
-        neuron criterion is defined. Reports the hypergeometric expectation
-        under random placement so the observed overlap can be read as an
-        enrichment ratio.
+        ``overlap_layers='final'`` compares only the configured analysis layer
+        (paper-faithful, back-compatible). ``'probe'``/``'all'`` compare every
+        layer that hosts an H-Neuron (or every layer), emitting per-layer and
+        pooled overlap with hypergeometric p-values. The entropy criterion is
+        defined w.r.t. the final ``W_U``, so mid-layer descriptors are candidate
+        features rather than the operating mechanism.
         """
+        if self.overlap_layers == "final":
+            return self._run_overlap_single_layer(backend)
+        return self._run_overlap_multi_layer(backend)
+
+    def _run_overlap_single_layer(self, backend: InferenceBackend) -> ExperimentResult:
         ident = self._identify_dispatch(backend)
         analysis_layer = ident["layer"]
         d_mlp = ident["summary"]["d_mlp"]
@@ -1123,10 +1159,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         union_size = n_sel + n_h_final - len(overlap)
         jaccard = len(overlap) / union_size if union_size else 0.0
         enrichment = len(overlap) / expected if expected > 0 else 0.0
+        hypergeom_p = _hypergeom_sf(len(overlap), d_mlp, n_sel, n_h_final)
 
         metrics: Dict[str, Any] = {
             **{f"identify_{k}": v for k, v in ident["summary"].items()},
             "mode": "overlap",
+            "overlap_layers": "final",
             "probe_path": self.probe_path,
             "h_neurons_total": h_all_count,
             "h_neurons_in_analysis_layer": n_h_final,
@@ -1135,6 +1173,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "jaccard_analysis_layer": jaccard,
             "expected_random_overlap": expected,
             "enrichment_observed_over_random": enrichment,
+            "hypergeom_p": hypergeom_p,
         }
 
         print("\n" + "=" * 66)
@@ -1149,6 +1188,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         print(f"Overlap               : {len(overlap)} {sorted(overlap)}")
         print(f"Jaccard (final layer) : {jaccard:.4f}")
         print(f"Expected at random    : {expected:.3f}  ->  enrichment x{enrichment:.2f}")
+        print(f"Hypergeometric p      : {hypergeom_p:.3e}")
         print("=" * 66)
 
         return ExperimentResult(
@@ -1162,6 +1202,94 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 "entropy_selected": sorted(selected_set),
                 "overlap": overlap,
             },
+        )
+
+    def _overlap_one_layer(self, backend, w_u, layer, h_indices) -> Dict[str, Any]:
+        w_out = self._get_w_out(backend, layer)
+        d_mlp = w_out.shape[1]
+        rho, _ = self._compute_rho(w_u, w_out)
+        selected = set(self._select_neurons(rho))
+        h_set = set(h_indices)
+        overlap = sorted(h_set & selected)
+        n_sel, n_h = len(selected), len(h_set)
+        expected = n_sel * n_h / d_mlp if d_mlp else 0.0
+        union = n_sel + n_h - len(overlap)
+        return {
+            "layer": int(layer),
+            "n_neurons_in_layer": int(d_mlp),
+            "h_neurons": n_h,
+            "entropy_neurons": n_sel,
+            "overlap_count": len(overlap),
+            "overlap_neurons": overlap,
+            "expected_random_overlap": expected,
+            "enrichment_observed_over_random": (len(overlap) / expected) if expected else 0.0,
+            "jaccard": (len(overlap) / union) if union else 0.0,
+            "hypergeom_p": _hypergeom_sf(len(overlap), d_mlp, n_sel, n_h),
+        }
+
+    def _run_overlap_multi_layer(self, backend: InferenceBackend) -> ExperimentResult:
+        if self.neuron_family != "entropy":
+            raise ValueError("overlap_layers != 'final' supports neuron_family='entropy' only")
+        w_u = self._get_unembedding(backend)
+        h_pairs = self._load_probe_neurons()
+        if self.overlap_layers == "probe":
+            layers = sorted({lyr for lyr, _ in h_pairs})
+        else:
+            layers = list(range(backend.hook_manager.num_layers))
+
+        by_layer: Dict[int, List[int]] = {lyr: [] for lyr in layers}
+        for lyr, i in h_pairs:
+            if lyr in by_layer:
+                by_layer[lyr].append(i)
+
+        per_layer = [
+            self._overlap_one_layer(backend, w_u, layer, sorted(set(by_layer[layer])))
+            for layer in layers
+        ]
+        pop = sum(r["n_neurons_in_layer"] for r in per_layer)
+        tot_sel = sum(r["entropy_neurons"] for r in per_layer)
+        tot_h = sum(r["h_neurons"] for r in per_layer)
+        tot_ov = sum(r["overlap_count"] for r in per_layer)
+        pooled_expected = tot_sel * tot_h / pop if pop else 0.0
+        enrichment = (tot_ov / pooled_expected) if pooled_expected else 0.0
+        metrics: Dict[str, Any] = {
+            "mode": "overlap",
+            "overlap_layers": self.overlap_layers,
+            "probe_path": self.probe_path,
+            "h_neurons_total": len(h_pairs),
+            "layers_analyzed": layers,
+            "pooled_entropy_neurons": tot_sel,
+            "pooled_h_neurons": tot_h,
+            "pooled_overlap_count": tot_ov,
+            "pooled_expected_random_overlap": pooled_expected,
+            "pooled_enrichment_observed_over_random": enrichment,
+            "pooled_hypergeom_p": _hypergeom_sf(tot_ov, pop, tot_sel, tot_h),
+            "per_layer": per_layer,
+        }
+
+        print("\n" + "=" * 66)
+        print(f"CONFIDENCE REGULATION -- OVERLAP ({self.overlap_layers} layers)")
+        print("=" * 66)
+        print(f"Probe             : {self.probe_path}")
+        print(f"Layers analysed   : {layers}")
+        print(f"Pooled overlap    : {tot_ov} / {tot_h} H-Neurons in {tot_sel} entropy neurons")
+        print(f"Expected at random: {pooled_expected:.4f}  ->  enrichment x{enrichment:.2f}")
+        print(f"Pooled hypergeom p: {metrics['pooled_hypergeom_p']:.3e}")
+        print("-" * 66)
+        for r in per_layer:
+            print(
+                f"  L{r['layer']:>2} H={r['h_neurons']:>2} ent={r['entropy_neurons']:>4} "
+                f"ov={r['overlap_count']:>2} jac={r['jaccard']:.3f} "
+                f"enr={r['enrichment_observed_over_random']:5.1f} p={r['hypergeom_p']:.2e}"
+            )
+        print("=" * 66)
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy="n/a",
+            metrics=metrics,
+            metadata={"description": self.description, "per_layer": per_layer},
         )
 
     # ------------------------------------------------------------------

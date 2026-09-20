@@ -37,6 +37,11 @@ random_baseline_count: 20
 # --- overlap mode ---
 # Probe JSON with H-Neuron indices (legacy "neurons" or "fit.h_neurons" format).
 probe_path: null
+# Which layers to compare against the probe: final (paper-faithful single
+# layer) | probe (every layer hosting an H-Neuron) | all (every layer).
+# Non-final modes are entropy-family only and report per-layer + pooled
+# overlap with hypergeometric p-values.
+overlap_layers: final
 
 # --- neuron family ---
 # entropy: null-space rho ranking + DE with frozen LayerNorm scale (Eq. 6)

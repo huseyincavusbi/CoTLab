@@ -359,3 +359,42 @@ def test_overlap_mode_runs_and_reports(tmp_path):
     assert m["entropy_neuron_count"] >= 1
     assert 0 <= m["overlap_count"] <= 2
     assert 0.0 <= m["jaccard_analysis_layer"] <= 1.0
+    assert 0.0 <= m["hypergeom_p"] <= 1.0
+
+
+def test_rejects_unknown_overlap_layers():
+    with pytest.raises(ValueError, match="overlap_layers"):
+        ConfidenceRegulationExperiment(overlap_layers="bogus")
+
+
+def test_hypergeom_sf_matches_exact_enumeration():
+    from math import comb
+
+    from cotlab.experiments.confidence_regulation import _hypergeom_sf
+
+    # N=10, K=3, n=4 -> P(X>=2) = [C(3,2)C(7,2) + C(3,3)C(7,1)] / C(10,4)
+    want = (comb(3, 2) * comb(7, 2) + comb(3, 3) * comb(7, 1)) / comb(10, 4)
+    assert _hypergeom_sf(2, 10, 3, 4) == pytest.approx(want)
+    assert _hypergeom_sf(0, 10, 3, 4) == 1.0
+    assert _hypergeom_sf(5, 10, 3, 4) == 0.0  # k above the feasible max
+
+
+def test_overlap_multi_layer_runs_and_reports(tmp_path):
+    p = tmp_path / "probe.json"
+    p.write_text(json.dumps({"fit": {"h_neurons": [[1, 0], [3, 2]]}}))
+    exp = ConfidenceRegulationExperiment(
+        mode="overlap", probe_path=str(p), overlap_layers="probe", seed=0
+    )
+    backend = _fake_backend(_FakeHookManager(4))
+
+    result = exp._run_overlap(backend)
+
+    m = result.metrics
+    assert m["overlap_layers"] == "probe"
+    assert m["layers_analyzed"] == [1, 3]
+    assert len(m["per_layer"]) == 2
+    assert m["pooled_h_neurons"] == 2
+    assert 0.0 <= m["pooled_hypergeom_p"] <= 1.0
+    for row in m["per_layer"]:
+        assert 0.0 <= row["jaccard"] <= 1.0
+        assert 0.0 <= row["hypergeom_p"] <= 1.0
