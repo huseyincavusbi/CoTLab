@@ -676,6 +676,61 @@ def test_null_basis_cached_and_identical():
     assert torch.allclose(rho_cached, rho_nocache)
 
 
+def test_intervene_persists_per_neuron_and_group_indices(monkeypatch):
+    exp = ConfidenceRegulationExperiment(
+        mode="intervene",
+        layer=0,
+        top_n=2,
+        random_baseline_count=3,
+        intervene_alphas=[0.0, 2.0],
+        seed=0,
+    )
+    backend = _fake_backend(_FakeHookManager(4))
+    n = 6
+    ident = {
+        "score": torch.zeros(n),
+        "selected": [0, 1],
+        "norms": torch.arange(n).float(),
+        "layer": 0,
+        "summary": {"d_mlp": n},
+    }
+    monkeypatch.setattr(exp, "_capture_sequences", lambda b: (ident, [], torch.zeros(n), None))
+
+    def fake_ablate(backend, seqs, act_mean, indices, alpha=0.0):
+        m = len(indices)
+        return {
+            "te": torch.full((m,), 0.1),
+            "d_entropy": torch.arange(m).float() * 0.01,
+            "abs_d_entropy": torch.arange(m).float() * 0.01,
+            "flip_rate": torch.full((m,), 0.02),
+            "d_max_prob": torch.zeros(m),
+            "entropy_up_frac": torch.full((m,), 0.5),
+            "d_entropy_rel": torch.zeros(m),
+            "d_max_prob_rel": torch.zeros(m),
+            "d_entropy_pos": torch.zeros(m, 4),
+            "baseline_entropy": 1.0,
+            "baseline_max_prob": 0.5,
+            "baseline_margin": 0.2,
+            "baseline_accuracy": 0.3,
+            "positions": 4,
+            "de": torch.zeros(m),
+            "mediated": None,
+        }
+
+    monkeypatch.setattr(exp, "_ablate_neurons_forward", fake_ablate)
+    m = exp._run_intervene(backend).metrics
+    assert len(m["ablated_indices"]) == len(m["group_indices"]["random_baseline"]) + len(
+        m["group_indices"]["selected"]
+    )
+    assert len(m["group_indices"]["random_baseline"]) == 3
+    keys = {str(i) for i in m["ablated_indices"]}
+    for row in m["per_alpha"]:
+        assert set(row["d_entropy_by_index"]) == keys
+        assert set(row["flip_rate_by_index"]) == keys
+        assert set(row["abs_d_entropy_by_index"]) == keys
+        assert row["alpha"] in (0.0, 2.0)
+
+
 def test_empirical_p_bounds_and_add_one():
     exp = ConfidenceRegulationExperiment()
     null = [0.0, 0.0, 0.0, 0.0]

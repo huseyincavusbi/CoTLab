@@ -1273,9 +1273,19 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         per_alpha = []
         for alpha in self.intervene_alphas:
             stats = self._ablate_neurons_forward(backend, sequences, act_mean, indices, alpha=alpha)
-            per_alpha.append(
-                {"alpha": alpha, **self._group_stats(stats, indices, groups, self.seed)}
-            )
+            row = {"alpha": alpha, **self._group_stats(stats, indices, groups, self.seed)}
+            # Per-neuron values so a downstream two-sided null can be built (the
+            # group means alone only support a one-sided upper test).
+            row["d_entropy_by_index"] = {
+                str(indices[r]): float(stats["d_entropy"][r]) for r in range(len(indices))
+            }
+            row["flip_rate_by_index"] = {
+                str(indices[r]): float(stats["flip_rate"][r]) for r in range(len(indices))
+            }
+            row["abs_d_entropy_by_index"] = {
+                str(indices[r]): float(stats["abs_d_entropy"][r]) for r in range(len(indices))
+            }
+            per_alpha.append(row)
 
         print("\n" + "=" * 66)
         print("CONFIDENCE REGULATION -- INTERVENE (dose-response)")
@@ -1313,6 +1323,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "n_sequences": len(sequences),
             "seq_len": self.seq_len,
             "eval_positions": self.eval_positions,
+            "ablated_indices": list(indices),
+            "group_indices": {tag: [indices[r] for r in rows] for tag, rows in groups.items()},
             "per_alpha": per_alpha,
             **{f"identify_{k}": v for k, v in ident["summary"].items()},
         }
