@@ -37,6 +37,10 @@ corpus_field: null
 # Deterministic head-cap on corpus rows (full TriviaQA/NQ train splits hold
 # ~88k questions; the probes were fit on ~2k-sample subsets).
 corpus_max_rows: null
+# Position subset for the vocab-heavy forward statistics: null/all (default),
+# "last:N" or "stride:N". Trade-off: fewer positions = faster but changes the
+# averaging window (recorded in the results metadata).
+eval_positions: null
 n_tokens: 8192
 seq_len: 256
 mediate_sequences: 8

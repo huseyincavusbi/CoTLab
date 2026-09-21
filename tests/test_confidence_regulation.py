@@ -621,6 +621,61 @@ def test_corpus_text_used_when_no_path():
     assert exp._corpus_text_or_default() == "explicit"
 
 
+def test_position_selector_specs():
+    from cotlab.experiments.confidence_regulation import _position_selector
+
+    assert _position_selector(None, 100) == slice(None)
+    assert _position_selector("all", 100) == slice(None)
+    assert _position_selector("last:16", 100) == slice(84, 100)
+    assert _position_selector("last:999", 100) == slice(0, 100)  # clamped
+    assert _position_selector("stride:4", 100) == slice(None, None, 4)
+
+
+def test_eval_positions_validation():
+    for good in ("all", "last:16", "stride:2"):
+        assert ConfidenceRegulationExperiment(eval_positions=good).eval_positions == good
+    for bad in ("bogus", "last:0", "last:x", "stride:-1"):
+        with pytest.raises(ValueError, match="eval_positions"):
+            ConfidenceRegulationExperiment(eval_positions=bad)
+
+
+def test_identify_arrays_skips_logit_vars_for_rho_selection():
+    exp = ConfidenceRegulationExperiment(selection="top_n", top_n=2, seed=0)
+    backend = _fake_backend(_FakeHookManager(4))
+    out = exp._identify_arrays(backend)
+    assert out["logit_vars"] is None
+    s = out["summary"]
+    assert s["selected_mean_logit_var"] is None
+    assert s["all_mean_logit_var"] is None
+    assert s["pearson_rho_logit_var"] is None
+    assert all(d["logit_var"] is None for d in out["detail"])
+    assert s["selected_mean_rho"] is not None  # rho still computed
+
+
+def test_identify_arrays_computes_logit_vars_for_norm_logitvar():
+    exp = ConfidenceRegulationExperiment(selection="norm_logitvar", seed=0)
+    backend = _fake_backend(_FakeHookManager(4))
+    out = exp._identify_arrays(backend)
+    assert out["logit_vars"] is not None
+    assert out["summary"]["all_mean_logit_var"] is not None
+
+
+def test_null_basis_cached_and_identical():
+    exp = ConfidenceRegulationExperiment(seed=0)
+    backend = _fake_backend(_FakeHookManager(4))
+    w_u = torch.randn(20, 8, generator=torch.Generator().manual_seed(0))
+    w_out = torch.randn(8, 6, generator=torch.Generator().manual_seed(1))
+
+    rho_cached, _ = exp._compute_rho(w_u, w_out, backend)
+    cache_obj = backend._v_bottom_cache
+    rho_again, _ = exp._compute_rho(w_u, w_out, backend)
+    assert backend._v_bottom_cache is cache_obj  # reused, not recomputed
+    assert torch.allclose(rho_cached, rho_again)
+
+    rho_nocache, _ = exp._compute_rho(w_u, w_out)  # fresh computation
+    assert torch.allclose(rho_cached, rho_nocache)
+
+
 def test_empirical_p_bounds_and_add_one():
     exp = ConfidenceRegulationExperiment()
     null = [0.0, 0.0, 0.0, 0.0]

@@ -93,6 +93,25 @@ def _hypergeom_sf(k: int, population: int, successes: int, draws: int) -> float:
     return float(tail / denom)
 
 
+def _position_selector(spec: Optional[str], n_positions: int) -> slice:
+    """Slice for the position axis given an ``eval_positions`` spec.
+
+    ``None``/"all" -> every position; "last:N" -> the final N positions;
+    "stride:N" -> every Nth position. Restricting the vocab-heavy statistics to
+    a subset of positions is the main speed lever for forward interventions (the
+    model forward still runs over all tokens).
+    """
+    if spec in (None, "all"):
+        return slice(None)
+    kind, _, val = spec.partition(":")
+    if kind == "last":
+        m = max(1, min(int(val), n_positions))
+        return slice(n_positions - m, n_positions)
+    if kind == "stride":
+        return slice(None, None, max(1, int(val)))
+    raise ValueError(f"invalid eval_positions spec: {spec!r}")
+
+
 def _percentile_rank(values: torch.Tensor) -> torch.Tensor:
     """Within-vector percentile rank in [0, 100) via argsort (ties by order)."""
     n = values.numel()
@@ -165,6 +184,9 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         corpus_path: Optional[str] = None,
         corpus_field: Optional[str] = None,
         corpus_max_rows: Optional[int] = None,
+        # Position subset for the vocab-heavy forward statistics: "all"
+        # (default), "last:N", or "stride:N". The model forward is unaffected.
+        eval_positions: Optional[str] = None,
         n_tokens: int = 8192,
         seq_len: int = 256,
         mediate_sequences: int = 8,
@@ -212,6 +234,15 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             raise ValueError(f"intervene_alphas must be >= 0, got {intervene_alphas}")
         if corpus_max_rows is not None and corpus_max_rows <= 0:
             raise ValueError(f"corpus_max_rows must be a positive int, got {corpus_max_rows}")
+        if eval_positions is not None:
+            ok = eval_positions == "all"
+            if not ok and ":" in eval_positions:
+                kind, _, val = eval_positions.partition(":")
+                ok = kind in ("last", "stride") and val.isdigit() and int(val) > 0
+            if not ok:
+                raise ValueError(
+                    f"eval_positions must be 'all', 'last:N' or 'stride:N', got {eval_positions!r}"
+                )
         if overlap_layers not in ("final", "probe", "all"):
             raise ValueError(
                 f"overlap_layers must be 'final', 'probe' or 'all', got '{overlap_layers}'"
@@ -232,6 +263,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.corpus_path = corpus_path
         self.corpus_field = corpus_field
         self.corpus_max_rows = corpus_max_rows
+        self.eval_positions = eval_positions
         self.n_tokens = n_tokens
         self.seq_len = seq_len
         self.mediate_sequences = mediate_sequences
@@ -343,28 +375,49 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             logit_vars[sl] = (proj / denom).var(dim=0)
         return logit_vars
 
-    def _compute_rho(self, w_u: torch.Tensor, w_out: torch.Tensor):
+    def _compute_rho(self, w_u: torch.Tensor, w_out: torch.Tensor, backend=None):
         """Null-space fraction rho per neuron plus diagnostics.
 
         The bottom-k right singular vectors of ``W_U`` are obtained from the
         eigendecomposition of the small Gram matrix ``W_U^T W_U``
         (``d_model x d_model``) instead of a full SVD of the tall
-        ``(vocab, d_model)`` matrix; the subspaces coincide up to sign.
+        ``(vocab, d_model)`` matrix; the subspaces coincide up to sign. The basis
+        depends only on ``W_U``, so it is cached on ``backend`` when provided and
+        reused across layers.
         """
         d_model = w_u.shape[1]
         k = self.k_null if self.k_null is not None else max(1, round(0.01 * d_model))
         k = min(k, d_model)
+        v_bottom, diag = self._null_basis(w_u, k, backend)
+        rho = (v_bottom.T @ w_out).norm(dim=0) / w_out.norm(dim=0)
+        return rho, diag
+
+    def _null_basis(self, w_u: torch.Tensor, k: int, backend=None):
+        """Bottom-k right singular vectors of ``W_U`` (cached per backend).
+
+        ``W_U`` is constant across layers for a given model/fold setting, so the
+        ``d_model^2`` eigendecomposition is computed once and reused instead of
+        once per layer.
+        """
+        key = (k, tuple(w_u.shape), bool(self.fold_final_norm))
+        cache = getattr(backend, "_v_bottom_cache", None) if backend is not None else None
+        if cache is not None and cache.get("key") == key:
+            return cache["v"], cache["diag"]
         gram = w_u.T @ w_u
         eigvals, eigvecs = torch.linalg.eigh(gram)  # ascending eigenvalues
-        v_bottom = eigvecs[:, :k]  # (d_model, k)
-        rho = (v_bottom.T @ w_out).norm(dim=0) / w_out.norm(dim=0)
+        v_bottom = eigvecs[:, :k].contiguous()
         diag = {
             "k_null": k,
             "bottom_eigval_min": float(eigvals[:k].min()),
             "bottom_eigval_max": float(eigvals[:k].max()),
             "median_eigval": float(eigvals.median()),
         }
-        return rho, diag
+        if backend is not None:
+            try:
+                backend._v_bottom_cache = {"key": key, "v": v_bottom, "diag": diag}
+            except AttributeError:  # pragma: no cover - exotic backends
+                pass
+        return v_bottom, diag
 
     def _select_neurons(
         self,
@@ -432,12 +485,15 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         w_out = self._get_w_out(backend, layer)
 
         norms = w_out.norm(dim=0)
-        logit_vars = self._compute_logit_vars(w_u, w_out)
-        rho, svd_diag = self._compute_rho(w_u, w_out)
+        # LogitVar is a full-vocab projection (vocab x d_mlp); only the
+        # norm_logitvar criterion needs it, so skip it for rho-based selection
+        # (the summary/detail logit_var fields become None).
+        need_lv = self.selection == "norm_logitvar"
+        logit_vars = self._compute_logit_vars(w_u, w_out) if need_lv else None
+        rho, svd_diag = self._compute_rho(w_u, w_out, backend)
         selected = self._select_neurons(rho, norms, logit_vars)
 
         sel_norms = norms[selected]
-        sel_lv = logit_vars[selected]
         sel_rho = rho[selected]
 
         summary = {
@@ -447,20 +503,24 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             **svd_diag,
             "selected_count": len(selected),
             "selected_mean_norm": float(sel_norms.mean()),
-            "selected_mean_logit_var": float(sel_lv.mean()),
+            "selected_mean_logit_var": (
+                float(logit_vars[selected].mean()) if logit_vars is not None else None
+            ),
             "selected_mean_rho": float(sel_rho.mean()),
             "all_mean_norm": float(norms.mean()),
-            "all_mean_logit_var": float(logit_vars.mean()),
+            "all_mean_logit_var": (float(logit_vars.mean()) if logit_vars is not None else None),
             "all_mean_rho": float(rho.mean()),
             "pearson_rho_norm": self._pearson(rho, norms),
-            "pearson_rho_logit_var": self._pearson(rho, -logit_vars),
+            "pearson_rho_logit_var": (
+                self._pearson(rho, -logit_vars) if logit_vars is not None else None
+            ),
         }
         detail = [
             {
                 "layer": layer,
                 "index": int(i),
                 "norm": float(norms[i]),
-                "logit_var": float(logit_vars[i]),
+                "logit_var": float(logit_vars[i]) if logit_vars is not None else None,
                 "rho": float(rho[i]),
             }
             for i in selected
@@ -661,12 +721,15 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 f"(bottom eig {s['bottom_eigval_max']:.2e} vs median {s['median_eigval']:.2e})"
             )
             print(f"rho   selected   : {s['selected_mean_rho']:.4f} | all {s['all_mean_rho']:.4f}")
-            print(
-                f"logitVar selected: {s['selected_mean_logit_var']:.3e} | "
-                f"all {s['all_mean_logit_var']:.3e}"
-            )
+            if s.get("selected_mean_logit_var") is not None:
+                print(
+                    f"logitVar selected: {s['selected_mean_logit_var']:.3e} | "
+                    f"all {s['all_mean_logit_var']:.3e}"
+                )
+                print(f"pearson(rho, -logitVar)     : {s['pearson_rho_logit_var']:+.3f}")
+            else:
+                print(f"logitVar         : skipped (selection='{self.selection}')")
             print(f"pearson(rho, norm)          : {s['pearson_rho_norm']:+.3f}")
-            print(f"pearson(rho, -logitVar)     : {s['pearson_rho_logit_var']:+.3f}")
         else:
             print("Score            : |cosine(write, v_freq)|")
             print(
@@ -912,6 +975,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "mediate_engine": engine,
             "mediate_scope": self.mediate_scope,
             "mediate_alpha": self.mediate_alpha,
+            "eval_positions": self.eval_positions,
             "n_ablated_neurons": len(indices),
             "n_sequences": len(sequences),
             "seq_len": self.seq_len,
@@ -1248,6 +1312,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "n_ablated_neurons": len(indices),
             "n_sequences": len(sequences),
             "seq_len": self.seq_len,
+            "eval_positions": self.eval_positions,
             "per_alpha": per_alpha,
             **{f"identify_{k}": v for k, v in ident["summary"].items()},
         }
@@ -1390,16 +1455,17 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 tokens = seq["tokens"].to(device)
                 out = backend.model(tokens)
                 logits = out.logits.float()[:, :-1]
+                sl = _position_selector(self.eval_positions, logits.shape[1])
+                logits = logits[:, sl]
+                tgt = tokens[:, 1:][:, sl]
                 lp = torch.log_softmax(logits, dim=-1)
-                base_loss.append(
-                    -lp.gather(-1, tokens[:, 1:].unsqueeze(-1)).squeeze(-1).reshape(-1).cpu()
-                )
+                base_loss.append(-lp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1).reshape(-1).cpu())
                 st = self._distribution_stats(logits, logp=lp)
                 base_ent.append(st["entropy"].reshape(-1).cpu())
                 base_maxp.append(st["max_prob"].reshape(-1).cpu())
                 base_margin.append(st["margin"].reshape(-1).cpu())
                 base_arg.append(st["argmax"].reshape(-1).cpu())
-                base_tgt.append(tokens[:, 1:].reshape(-1).cpu())
+                base_tgt.append(tgt.reshape(-1).cpu())
                 counter["positions"] += base_loss[-1].numel()
             base_loss = torch.cat(base_loss)
             base_ent = torch.cat(base_ent)
@@ -1429,8 +1495,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                         inp = tokens.repeat(c, 1)
                         out = backend.model(inp)
                         logits = out.logits.float()[:, :-1]
+                        sl = _position_selector(self.eval_positions, logits.shape[1])
+                        logits = logits[:, sl]
                         lp = torch.log_softmax(logits, dim=-1)
-                        loss_rows.append(-lp.gather(-1, inp[:, 1:].unsqueeze(-1)).squeeze(-1))
+                        loss_rows.append(
+                            -lp.gather(-1, inp[:, 1:][:, sl].unsqueeze(-1)).squeeze(-1)
+                        )
                         st = self._distribution_stats(logits, logp=lp)
                         ent_rows.append(st["entropy"])
                         maxp_rows.append(st["max_prob"])
@@ -1715,7 +1785,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         w_out = self._get_w_out(backend, layer)
         d_mlp = w_out.shape[1]
         norms = w_out.norm(dim=0)
-        rho, _ = self._compute_rho(w_u, w_out)
+        rho, _ = self._compute_rho(w_u, w_out, backend)
         logit_vars = (
             self._compute_logit_vars(w_u, w_out) if self.selection == "norm_logitvar" else None
         )
