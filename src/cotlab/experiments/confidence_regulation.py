@@ -164,6 +164,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         corpus_text: Optional[str] = None,
         corpus_path: Optional[str] = None,
         corpus_field: Optional[str] = None,
+        corpus_max_rows: Optional[int] = None,
         n_tokens: int = 8192,
         seq_len: int = 256,
         mediate_sequences: int = 8,
@@ -209,6 +210,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             raise ValueError(f"mediate_alpha must be >= 0, got {mediate_alpha}")
         if intervene_alphas is not None and any(a < 0 for a in intervene_alphas):
             raise ValueError(f"intervene_alphas must be >= 0, got {intervene_alphas}")
+        if corpus_max_rows is not None and corpus_max_rows <= 0:
+            raise ValueError(f"corpus_max_rows must be a positive int, got {corpus_max_rows}")
         if overlap_layers not in ("final", "probe", "all"):
             raise ValueError(
                 f"overlap_layers must be 'final', 'probe' or 'all', got '{overlap_layers}'"
@@ -228,6 +231,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.corpus_text = corpus_text
         self.corpus_path = corpus_path
         self.corpus_field = corpus_field
+        self.corpus_max_rows = corpus_max_rows
         self.n_tokens = n_tokens
         self.seq_len = seq_len
         self.mediate_sequences = mediate_sequences
@@ -555,6 +559,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                     texts.append(str(obj))
         else:
             texts = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        # Deterministic head-cap: full parquet slices (e.g. 87k TriviaQA
+        # questions) are far larger than the probe-fitting subsets (~2k).
+        if self.corpus_max_rows is not None and len(texts) > self.corpus_max_rows:
+            texts = texts[: self.corpus_max_rows]
         return "\n".join(texts)
 
     @staticmethod

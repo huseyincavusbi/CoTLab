@@ -34,6 +34,9 @@ corpus_text: null
 # (defaults to question -> text -> first).
 corpus_path: null
 corpus_field: null
+# Deterministic head-cap on corpus rows (full TriviaQA/NQ train splits hold
+# ~88k questions; the probes were fit on ~2k-sample subsets).
+corpus_max_rows: null
 n_tokens: 8192
 seq_len: 256
 mediate_sequences: 8

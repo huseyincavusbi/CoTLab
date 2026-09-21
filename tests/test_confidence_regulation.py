@@ -602,6 +602,20 @@ def test_load_corpus_file_parquet(tmp_path):
     assert exp._corpus_text_or_default() == "Qa\nQb"
 
 
+def test_corpus_max_rows_caps_deterministic_head(tmp_path):
+    import pandas as pd
+
+    p = tmp_path / "c.parquet"
+    pd.DataFrame({"question": [f"Q{i}" for i in range(10)]}).to_parquet(p)
+    exp = ConfidenceRegulationExperiment(corpus_path=str(p), corpus_max_rows=3)
+    assert exp._corpus_text_or_default() == "Q0\nQ1\nQ2"
+
+
+def test_rejects_bad_corpus_max_rows():
+    with pytest.raises(ValueError, match="corpus_max_rows"):
+        ConfidenceRegulationExperiment(corpus_max_rows=0)
+
+
 def test_corpus_text_used_when_no_path():
     exp = ConfidenceRegulationExperiment(corpus_text="explicit")
     assert exp._corpus_text_or_default() == "explicit"
