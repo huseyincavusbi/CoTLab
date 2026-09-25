@@ -602,6 +602,15 @@ def test_load_corpus_file_parquet(tmp_path):
     assert exp._corpus_text_or_default() == "Qa\nQb"
 
 
+def test_load_corpus_file_parquet_prefers_text_over_first_column(tmp_path):
+    import pandas as pd
+
+    p = tmp_path / "c.parquet"
+    pd.DataFrame({"id": [1, 2], "text": ["Ta", "Tb"]}).to_parquet(p)
+    exp = ConfidenceRegulationExperiment(corpus_path=str(p))
+    assert exp._corpus_text_or_default() == "Ta\nTb"
+
+
 def test_corpus_max_rows_caps_deterministic_head(tmp_path):
     import pandas as pd
 

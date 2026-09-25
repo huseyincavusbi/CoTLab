@@ -863,7 +863,9 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             import pandas as pd
 
             df = pd.read_parquet(p)
-            field = self.corpus_field or ("question" if "question" in df.columns else df.columns[0])
+            field = self.corpus_field or next(
+                (c for c in ("question", "text") if c in df.columns), df.columns[0]
+            )
             texts = df[field].astype(str).tolist()
         elif p.suffix in (".jsonl", ".ndjson"):
             texts = []
