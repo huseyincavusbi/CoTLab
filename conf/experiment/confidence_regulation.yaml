@@ -83,6 +83,20 @@ layer: null
 # identification — without it GPT-2 Small reproduction drops to 1/6.
 fold_final_norm: true
 
+# --- descriptor ---
+# static: the paper's weight-space rho (alignment of the raw w_out with the
+# unembedding null space; final-layer semantics).
+# propagated: effective rho after the write is carried to the final residual by
+# a data-estimated linear operator, so mid-layer neurons are scored by where the
+# write lands rather than where it is born; reduces to static at the final
+# layer. Requires a corpus forward pass (uses the mediate corpus settings).
+descriptor: static
+# Relative ridge on the operator's normal equations (needed when the corpus has
+# fewer positions than d_model).
+propagation_ridge: 0.001
+# Corpus sequences for the propagated descriptor; null reuses mediate_sequences.
+propagation_sequences: null
+
 seed: 42
 
 # --- induction function mode (Sec. 6) ---

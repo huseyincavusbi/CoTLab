@@ -146,6 +146,11 @@ def _norm_containers(model) -> List[Any]:
     return [c for c in containers if c is not None]
 
 
+def _extract_hidden_output(output: Any) -> torch.Tensor:
+    """Hidden states from a decoder layer output (bare tensor or tuple)."""
+    return output[0] if isinstance(output, tuple) else output
+
+
 @Registry.register_experiment("confidence_regulation")
 class ConfidenceRegulationExperiment(BaseExperiment):
     """Identify and validate confidence-regulating (entropy) neurons."""
@@ -179,6 +184,16 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         k_null: Optional[int] = None,
         logit_chunk_size: int = 256,
         fold_final_norm: bool = True,
+        # --- descriptor ---
+        # "static" (default): the paper's weight-space rho -- alignment of the
+        # raw ``w_out`` with the unembedding null space (final-layer semantics).
+        # "propagated": effective alignment after the write is carried to the
+        # final residual by a data-estimated operator (see ``_propagated_rho``);
+        # mid-layer neurons are scored by where the write lands, not where it is
+        # born. Reduces to "static" at the final layer.
+        descriptor: str = "static",
+        propagation_ridge: float = 1e-3,
+        propagation_sequences: Optional[int] = None,
         # --- mediate ---
         corpus_text: Optional[str] = None,
         corpus_path: Optional[str] = None,
@@ -247,6 +262,14 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             raise ValueError(
                 f"overlap_layers must be 'final', 'probe' or 'all', got '{overlap_layers}'"
             )
+        if descriptor not in ("static", "propagated"):
+            raise ValueError(f"descriptor must be 'static' or 'propagated', got '{descriptor}'")
+        if propagation_ridge < 0:
+            raise ValueError(f"propagation_ridge must be >= 0, got {propagation_ridge}")
+        if propagation_sequences is not None and propagation_sequences <= 0:
+            raise ValueError(
+                f"propagation_sequences must be a positive int or None, got {propagation_sequences}"
+            )
 
         self._name = name
         self.description = description
@@ -259,6 +282,9 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.k_null = k_null
         self.logit_chunk_size = logit_chunk_size
         self.fold_final_norm = fold_final_norm
+        self.descriptor = descriptor
+        self.propagation_ridge = propagation_ridge
+        self.propagation_sequences = propagation_sequences
         self.corpus_text = corpus_text
         self.corpus_path = corpus_path
         self.corpus_field = corpus_field
@@ -540,6 +566,118 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         }
 
     # ------------------------------------------------------------------
+    # propagated (effective-write) descriptor
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _effective_operator(
+        post: torch.Tensor, final: torch.Tensor, ridge: float = 1e-3
+    ) -> torch.Tensor:
+        """Data-estimated map from the analysis-layer residual to the final one.
+
+        Regresses the final residual ``h_L`` on the post-layer residual ``h_l``
+        over corpus positions (centered), returning ``J`` with ``h_L ~ J h_l``.
+        At the final layer ``post == final``, so ``J -> I`` (exactly for
+        ``ridge == 0``) -- that identity is what makes the propagated descriptor
+        reduce to the paper's static rho there.
+
+        The estimate is a *data-averaged linear* map: it captures downstream
+        attention and nonlinearity on average rather than a single Jacobian at
+        one point. Ridge stabilises the normal equations when the corpus has
+        fewer positions than ``d_model``.
+        """
+        post_c = post - post.mean(dim=0, keepdim=True)
+        final_c = final - final.mean(dim=0, keepdim=True)
+        n, d = post_c.shape
+        denom = max(n - 1, 1)
+        c_pp = (post_c.T @ post_c) / denom
+        c_fp = (final_c.T @ post_c) / denom
+        lam = ridge * float(torch.diagonal(c_pp).mean().clamp_min(1e-12))
+        reg = c_pp + lam * torch.eye(d, dtype=c_pp.dtype)
+        # normal equations: J = c_fp @ c_pp^-1  <=>  J^T = reg^-1 c_fp^T
+        j_t = torch.linalg.solve(reg, c_fp.T)
+        return j_t.T
+
+    @staticmethod
+    def _null_fraction(v_bottom: torch.Tensor, writes: torch.Tensor) -> torch.Tensor:
+        """Fraction of each write's norm on the orthonormal null-basis columns."""
+        num = (v_bottom.T @ writes).norm(dim=0)
+        den = writes.norm(dim=0).clamp_min(1e-12)
+        return num / den
+
+    def _capture_residual_pair(self, backend: InferenceBackend, layer: int):
+        """Corpus capture of (post-layer residual, final-norm input) pairs.
+
+        Both are ``(n_positions, d_model)`` fp32 CPU tensors. Hooks the layer
+        block output (residual after ``layer``) and the final-norm input (the
+        residual read by the unembedding path). Deliberately independent of the
+        identify dispatch so it can be called from identify mode without
+        recursion.
+        """
+        device = backend.device
+        batches = self._build_corpus_batches(backend)
+        norm_mod = self._resolve_final_norm_module(backend)
+        if norm_mod is None:
+            raise ValueError("could not resolve the final normalization module")
+        layer_mod = backend.hook_manager.get_layer_module(layer)
+        captured: Dict[str, torch.Tensor] = {}
+
+        def grab_post(_mod, _inp, output):
+            captured["post"] = _extract_hidden_output(output)
+
+        def grab_final(_mod, inp):
+            captured["final"] = inp[0]
+
+        handle_post = layer_mod.register_forward_hook(grab_post)
+        handle_final = norm_mod.register_forward_pre_hook(grab_final)
+        posts: List[torch.Tensor] = []
+        finals: List[torch.Tensor] = []
+        n_seq = self.propagation_sequences or self.mediate_sequences
+        try:
+            for b in range(min(n_seq, batches.shape[0])):
+                tokens = batches[b : b + 1].to(device)
+                with torch.no_grad():
+                    backend.model(tokens)
+                posts.append(
+                    captured["post"].detach().float().cpu().reshape(-1, captured["post"].shape[-1])
+                )
+                finals.append(
+                    captured["final"]
+                    .detach()
+                    .float()
+                    .cpu()
+                    .reshape(-1, captured["final"].shape[-1])
+                )
+        finally:
+            handle_post.remove()
+            handle_final.remove()
+        return torch.cat(posts, dim=0), torch.cat(finals, dim=0)
+
+    def _propagated_rho(self, ident: Dict[str, Any], backend: InferenceBackend):
+        """Effective null-space fraction after propagating each write to output.
+
+        Replaces the static ``w_out`` in rho with ``J w_out`` where ``J`` is the
+        data-estimated map from the analysis-layer residual to the final
+        residual. The null basis is the same (folded) unembedding basis used by
+        the static rho, so the two are directly comparable.
+        """
+        w_u = self._get_unembedding(backend)
+        d_model = w_u.shape[1]
+        k = self.k_null if self.k_null is not None else max(1, round(0.01 * d_model))
+        k = min(k, d_model)
+        v_bottom, _ = self._null_basis(w_u, k, backend)
+        post, final = self._capture_residual_pair(backend, ident["layer"])
+        operator = self._effective_operator(post, final, self.propagation_ridge)
+        writes = operator @ ident["w_out"]
+        rho_prop = self._null_fraction(v_bottom, writes)
+        diag = {
+            "propagation_positions": int(post.shape[0]),
+            "propagation_ridge": self.propagation_ridge,
+            "propagation_mean_abs": float(operator.abs().mean()),
+        }
+        return rho_prop, diag
+
+    # ------------------------------------------------------------------
     # token-frequency family (paper Sec. 4)
     # ------------------------------------------------------------------
 
@@ -704,6 +842,16 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     def _run_identify(self, backend: InferenceBackend) -> ExperimentResult:
         ident = self._identify_dispatch(backend)
         s = ident["summary"]
+        s["descriptor"] = self.descriptor
+        if self.descriptor == "propagated" and self.neuron_family == "entropy":
+            rho_prop, prop_diag = self._propagated_rho(ident, backend)
+            selected = ident["selected"]
+            s.update(prop_diag)
+            s["selected_mean_rho_propagated"] = float(rho_prop[selected].mean())
+            s["all_mean_rho_propagated"] = float(rho_prop.mean())
+            s["pearson_rho_propagated"] = self._pearson(ident["rho"], rho_prop)
+            for rec in ident["detail"]:
+                rec["rho_propagated"] = float(rho_prop[rec["index"]])
         metrics = {
             "mode": "identify",
             "fold_final_norm": self.fold_final_norm,
@@ -730,6 +878,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             else:
                 print(f"logitVar         : skipped (selection='{self.selection}')")
             print(f"pearson(rho, norm)          : {s['pearson_rho_norm']:+.3f}")
+            if s.get("selected_mean_rho_propagated") is not None:
+                print(
+                    f"rho_prop selected: {s['selected_mean_rho_propagated']:.4f} | "
+                    f"all {s['all_mean_rho_propagated']:.4f} "
+                    f"(pearson rho vs rho_prop {s['pearson_rho_propagated']:+.3f})"
+                )
         else:
             print("Score            : |cosine(write, v_freq)|")
             print(
@@ -754,6 +908,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 "fold_final_norm": self.fold_final_norm,
                 "neuron_family": self.neuron_family,
                 "selection": self.selection,
+                "descriptor": self.descriptor,
                 "top_n": self.top_n,
                 "top_percent": self.top_percent,
                 "seed": self.seed,
