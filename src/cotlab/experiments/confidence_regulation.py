@@ -684,6 +684,76 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         }
         return rho_prop, diag
 
+    def _finite_difference_writes(
+        self,
+        backend: InferenceBackend,
+        layer: int,
+        indices: List[int],
+        eps: float = 1e-2,
+        sequences: int = 1,
+    ) -> torch.Tensor:
+        """Ground-truth propagated writes via finite differences.
+
+        For each neuron ``i``, adds ``eps * w_out_i`` to the analysis-layer
+        residual at every position, re-forwards the downstream layers, and
+        averages ``(h_L' - h_L) / eps`` over positions. The result
+        ``(len(indices), d_model)`` is the empirically measured propagation of
+        each write -- the reference the data-estimated operator is validated
+        against (``_effective_operator``). Perturbing all positions at once is a
+        corpus-average response; eps controls the finite-difference bias.
+        """
+        device = backend.device
+        batches = self._build_corpus_batches(backend)
+        norm_mod = self._resolve_final_norm_module(backend)
+        if norm_mod is None:
+            raise ValueError("could not resolve the final normalization module")
+        layer_mod = backend.hook_manager.get_layer_module(layer)
+        w_out = self._get_w_out(backend, layer)
+        idx = list(indices)
+        if not idx:
+            return torch.zeros(0, w_out.shape[0])
+        n_seq = max(1, min(sequences, batches.shape[0]))
+        captured: Dict[str, torch.Tensor] = {}
+
+        def grab_final(_mod, inp):  # noqa: ANN001 - hook signature
+            captured["final"] = inp[0].detach().float().cpu()
+
+        def run_all() -> List[torch.Tensor]:
+            rows: List[torch.Tensor] = []
+            handle = norm_mod.register_forward_pre_hook(grab_final)
+            try:
+                for b in range(n_seq):
+                    tokens = batches[b : b + 1].to(device)
+                    with torch.no_grad():
+                        backend.model(tokens)
+                    resid = captured["final"]
+                    rows.append(resid.reshape(-1, resid.shape[-1]))
+            finally:
+                handle.remove()
+            return rows
+
+        bases = run_all()
+        rows: List[torch.Tensor] = []
+        for i in idx:
+            vec = w_out[:, i]
+
+            def hook(_mod, _inp, output, _vec=vec):  # noqa: ANN001 - hook signature
+                if isinstance(output, tuple):
+                    return (output[0] + eps * _vec.to(output[0].dtype),) + output[1:]
+                return output + eps * _vec.to(output.dtype)
+
+            handle = layer_mod.register_forward_hook(hook)
+            try:
+                perturbed = run_all()
+                deltas = [
+                    ((pert - base).mean(dim=0)) / eps
+                    for pert, base in zip(perturbed, bases, strict=False)
+                ]
+            finally:
+                handle.remove()
+            rows.append(torch.stack(deltas).mean(dim=0))
+        return torch.stack(rows)
+
     # ------------------------------------------------------------------
     # token-frequency family (paper Sec. 4)
     # ------------------------------------------------------------------
