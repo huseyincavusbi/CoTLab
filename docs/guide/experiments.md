@@ -20,6 +20,26 @@
 | `confidence_regulation` | Entropy/frequency-neuron recipe | Two neuron families in one experiment: entropy (norm/LogitVar/null-space ρ, frozen-scale mediation) and token-frequency (v_freq cosine, component-restoration mediation); Jaccard vs probe sets; `descriptor: propagated` scores mid-layer writes by their effective null-space fraction after propagation to the final residual (reduces to static ρ at the final layer); `induction` mode replicates the Sec. 6 hedging case study on repeated sequences (Stolfo et al., NeurIPS 2024) |
 | `probe_confidence` | Probe diagnostics | Correlate probe scores with model output entropy per sample; Spearman/AUROC with length control — is the probe detecting behavior or just low confidence? |
 
+## Propagated descriptor (`confidence_regulation`)
+
+`descriptor: propagated` replaces the paper's static, final-layer null-space
+fraction `rho` with an *effective* one: each neuron's write is carried to the
+final residual by a data-estimated linear operator and scored against the same
+null basis. It reduces **exactly** to the static `rho` at the final layer, so it
+is only a re-parameterization where the paper is defined (mid-layer neurons are
+scored by where the write lands, not where it is born).
+
+Validation gates (see `tests/test_confidence_regulation.py`):
+
+| Gate | Checks |
+|------|--------|
+| **G1 Fidelity** | reduces to the paper's static `rho` at the final layer |
+| **G2 Ground-truth** | matches the finite-difference propagated write |
+| **G3 Stability** | robust to ridge/corpus; not a spurious pairing |
+| **G4 Validity** | predicts causal function — follow-up experiment (not a unit test) |
+| **G5 Generality** | holds across dense / SwiGLU / gated architectures |
+| **G6 Context** | `rho_prop` ranking stable across corpora |
+
 ## Creating a probe (for `confabulation_analysis`)
 
 Probes are discovered with [hprobes](https://github.com/huseyincavusbi/hprobes) — it
