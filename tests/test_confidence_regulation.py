@@ -754,3 +754,85 @@ def test_percentile_rank_endpoints():
     assert pct[0] == 0.0  # smallest
     assert pct[1].item() == pytest.approx(200.0 / 3)  # largest
     assert pct[2].item() == pytest.approx(100.0 / 3)
+
+
+# ---------------------------------------------------------------------------
+# propagated (effective-write) descriptor
+# ---------------------------------------------------------------------------
+
+
+def test_rejects_unknown_descriptor():
+    with pytest.raises(ValueError, match="descriptor"):
+        ConfidenceRegulationExperiment(descriptor="bogus")
+
+
+def test_rejects_negative_propagation_ridge():
+    with pytest.raises(ValueError, match="propagation_ridge"):
+        ConfidenceRegulationExperiment(propagation_ridge=-1.0)
+
+
+def test_rejects_nonpositive_propagation_sequences():
+    with pytest.raises(ValueError, match="propagation_sequences"):
+        ConfidenceRegulationExperiment(propagation_sequences=0)
+
+
+def test_effective_operator_identity_at_final_layer():
+    torch.manual_seed(0)
+    post = torch.randn(200, 8)
+    operator = ConfidenceRegulationExperiment._effective_operator(post, post, ridge=0.0)
+    assert operator.shape == (8, 8)
+    assert torch.allclose(operator, torch.eye(8), atol=1e-5)
+
+
+def test_effective_operator_ridge_keeps_finite():
+    torch.manual_seed(0)
+    # fewer positions than dimensions -> rank deficient without ridge
+    post = torch.randn(5, 12)
+    final = torch.randn(5, 12)
+    operator = ConfidenceRegulationExperiment._effective_operator(post, final, ridge=1e-3)
+    assert operator.shape == (12, 12)
+    assert torch.isfinite(operator).all()
+
+
+def test_null_fraction_matches_static_rho():
+    torch.manual_seed(0)
+    exp = ConfidenceRegulationExperiment(k_null=2)
+    d, m = 16, 6
+    w_u = torch.randn(40, d)
+    w_out = torch.randn(d, m)
+    v_bottom, _ = exp._null_basis(w_u, 2, None)
+    rho_static, _ = exp._compute_rho(w_u, w_out)
+    assert torch.allclose(exp._null_fraction(v_bottom, w_out), rho_static, atol=1e-6)
+
+
+class _PropEmb:
+    def __init__(self, weight):
+        self.weight = weight
+
+
+class _PropModel:
+    def __init__(self, w_u):
+        self._w_u = w_u
+
+    def get_output_embeddings(self):
+        return _PropEmb(self._w_u)
+
+
+class _PropBackend:
+    def __init__(self, w_u):
+        self.model = _PropModel(w_u)
+
+
+def test_propagated_rho_equals_static_at_final_layer(monkeypatch):
+    torch.manual_seed(0)
+    exp = ConfidenceRegulationExperiment(k_null=2, descriptor="propagated", propagation_ridge=0.0)
+    d, m, vocab = 16, 6, 40
+    w_u = torch.randn(vocab, d)
+    w_out = torch.randn(d, m)
+    backend = _PropBackend(w_u)
+    post = torch.randn(120, d)  # final layer: post-layer residual == final-norm input
+    monkeypatch.setattr(exp, "_capture_residual_pair", lambda _backend, _layer: (post, post))
+    rho_prop, diag = exp._propagated_rho({"w_out": w_out, "layer": 0}, backend)
+    rho_static, _ = exp._compute_rho(w_u, w_out)
+    assert torch.allclose(rho_prop, rho_static, atol=1e-5)
+    assert diag["propagation_positions"] == 120
