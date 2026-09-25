@@ -28,6 +28,14 @@ identify:
     it entered their named set through earlier manual analysis
     (Gurnee et al., arXiv:2401.12181).
 
+    The ``descriptor`` config selects how alignment is measured. ``static``
+    (default) uses the raw ``w_out`` -- final-layer semantics. ``propagated``
+    carries the write to the final residual with a data-estimated linear
+    operator and scores its effective null-space fraction, so mid-layer
+    neurons are judged by where the write lands; it reduces to ``static`` at
+    the final layer for write-direct architectures, while post-FFN-norm models
+    (Gemma 2/3, MedGemma) estimate the map from the down-projection write point.
+
 mediate:
     Causal mediation via analytic mean-ablation on the cached final residual
     stream (paper Eqs. 4-6). Each candidate neuron's activation is set to its
@@ -70,6 +78,126 @@ from ..core.base import BaseExperiment, ExperimentResult
 from ..core.registry import Registry
 
 
+def _hypergeom_sf(k: int, population: int, successes: int, draws: int) -> float:
+    """Upper-tail hypergeometric P(X >= k) without a scipy dependency.
+
+    ``population`` = neurons per layer, ``successes`` = entropy neurons,
+    ``draws`` = H-Neurons in the layer. Returns 1.0 when undefined (no draws
+    or no successes) and clamps ``k`` to the feasible range.
+    """
+    from math import comb
+
+    n = min(draws, population)
+    lo = max(0, n - (population - successes))
+    hi = min(successes, n)
+    if k <= lo:
+        return 1.0
+    if k > hi or n == 0 or successes == 0:
+        return 0.0
+    denom = comb(population, n)
+    if denom == 0:
+        return float("nan")
+    tail = sum(comb(successes, i) * comb(population - successes, n - i) for i in range(k, hi + 1))
+    return float(tail / denom)
+
+
+def _hypergeom_pmf(population: int, successes: int, draws: int) -> Dict[int, float]:
+    """Hypergeometric probability mass ``P(X = k)`` for ``k`` in the support."""
+    from math import comb
+
+    if population <= 0 or draws <= 0 or successes <= 0:
+        return {0: 1.0}
+    lo = max(0, draws - (population - successes))
+    hi = min(successes, draws)
+    denom = comb(population, draws)
+    if denom == 0:
+        return {0: 1.0}
+    return {
+        k: comb(successes, k) * comb(population - successes, draws - k) / denom
+        for k in range(lo, hi + 1)
+    }
+
+
+def _hypergeom_conv_sf(per_layer: List[Dict[str, Any]], observed: int) -> float:
+    """Upper tail of the sum of independent per-layer hypergeometric counts.
+
+    The pooled overlap null is **layer-stratified**: each layer's H-Neurons are
+    placed at random among that layer's neurons, so layer widths, identified
+    counts and H-Neuron counts all differ. Pooling everything into a single
+    hypergeometric treats the layers as exchangeable and mis-states the null.
+    Convolving the per-layer PMFs gives the exact distribution of the total.
+    """
+    dist: Dict[int, float] = {0: 1.0}
+    for r in per_layer:
+        pmf = _hypergeom_pmf(
+            int(r["n_neurons_in_layer"]), int(r["entropy_neurons"]), int(r["h_neurons"])
+        )
+        nxt: Dict[int, float] = {}
+        for a, pa in dist.items():
+            for b, pb in pmf.items():
+                nxt[a + b] = nxt.get(a + b, 0.0) + pa * pb
+        dist = nxt
+    return float(sum(p for k, p in dist.items() if k >= observed))
+
+
+def _position_selector(spec: Optional[str], n_positions: int) -> slice:
+    """Slice for the position axis given an ``eval_positions`` spec.
+
+    ``None``/"all" -> every position; "last:N" -> the final N positions;
+    "stride:N" -> every Nth position. Restricting the vocab-heavy statistics to
+    a subset of positions is the main speed lever for forward interventions (the
+    model forward still runs over all tokens).
+    """
+    if spec in (None, "all"):
+        return slice(None)
+    kind, _, val = spec.partition(":")
+    if kind == "last":
+        m = max(1, min(int(val), n_positions))
+        return slice(n_positions - m, n_positions)
+    if kind == "stride":
+        return slice(None, None, max(1, int(val)))
+    raise ValueError(f"invalid eval_positions spec: {spec!r}")
+
+
+def _percentile_rank(values: torch.Tensor) -> torch.Tensor:
+    """Within-vector percentile rank in [0, 100) via argsort (ties by order)."""
+    n = values.numel()
+    if n <= 1:
+        return torch.zeros(n, dtype=torch.float32)
+    order = torch.argsort(values)
+    ranks = torch.empty(n, dtype=torch.float32)
+    ranks[order] = torch.arange(n, dtype=torch.float32)
+    return ranks / n * 100.0
+
+
+def _norm_containers(model) -> List[Any]:
+    """Candidate modules that may hold the final normalization layer.
+
+    Multimodal wrappers nest the language model (e.g. Gemma 3:
+    ``model.model.language_model.model.norm``); without resolving these the
+    final norm is silently dropped and rho is computed on the raw unembedding.
+    """
+    containers = [
+        model,
+        getattr(model, "model", None),
+        getattr(model, "transformer", None),
+        getattr(model, "gpt_neox", None),
+    ]
+    for root in list(containers):
+        if root is None:
+            continue
+        lm = getattr(root, "language_model", None)
+        if lm is not None:
+            containers.append(lm)
+            containers.append(getattr(lm, "model", None))
+    return [c for c in containers if c is not None]
+
+
+def _extract_hidden_output(output: Any) -> torch.Tensor:
+    """Hidden states from a decoder layer output (bare tensor or tuple)."""
+    return output[0] if isinstance(output, tuple) else output
+
+
 @Registry.register_experiment("confidence_regulation")
 class ConfidenceRegulationExperiment(BaseExperiment):
     """Identify and validate confidence-regulating (entropy) neurons."""
@@ -95,18 +223,45 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         selection: str = "top_n",
         top_n: int = 20,
         top_percent: float = 0.01,
+        # norm_logitvar criterion (paper Fig. 2a): keep neurons whose output
+        # weight norm is in the top ``norm_percentile_min`` and whose logit
+        # variance is in the bottom ``logit_var_percentile_max``.
+        norm_percentile_min: float = 99.0,
+        logit_var_percentile_max: float = 1.0,
         k_null: Optional[int] = None,
         logit_chunk_size: int = 256,
         fold_final_norm: bool = True,
+        # --- descriptor ---
+        # "static" (default): the paper's weight-space rho -- alignment of the
+        # raw ``w_out`` with the unembedding null space (final-layer semantics).
+        # "propagated": effective alignment after the write is carried to the
+        # final residual by a data-estimated operator (see ``_propagated_rho``);
+        # mid-layer neurons are scored by where the write lands, not where it is
+        # born. Reduces to "static" at the final layer.
+        descriptor: str = "static",
+        propagation_ridge: float = 1e-3,
+        propagation_sequences: Optional[int] = None,
         # --- mediate ---
         corpus_text: Optional[str] = None,
+        corpus_path: Optional[str] = None,
+        corpus_field: Optional[str] = None,
+        corpus_max_rows: Optional[int] = None,
+        # Position subset for the vocab-heavy forward statistics: "all"
+        # (default), "last:N", or "stride:N". The model forward is unaffected.
+        eval_positions: Optional[str] = None,
         n_tokens: int = 8192,
         seq_len: int = 256,
         mediate_sequences: int = 8,
         mediate_scope: str = "candidates",
         mediate_neuron_chunk: int = 16,
         random_baseline_count: int = 20,
+        # Forward-engine intervention scale on target activations: 0.0 is the
+        # paper's mean-ablation, 1.0 is a no-op, >1 amplifies.
+        mediate_alpha: float = 0.0,
+        # `intervene` mode: alpha values to sweep in one run (dose-response).
+        intervene_alphas: Optional[List[float]] = None,
         probe_path: Optional[str] = None,
+        overlap_layers: str = "final",
         neuron_family: str = "entropy",
         unigram_path: Optional[str] = None,
         mediate_engine: str = "auto",
@@ -116,11 +271,13 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         seed: int = 42,
         **kwargs,
     ):
-        valid_modes = ("identify", "mediate", "overlap", "full", "induction")
+        valid_modes = ("identify", "mediate", "overlap", "full", "induction", "intervene")
         if mode not in valid_modes:
             raise ValueError(f"mode must be one of {valid_modes}, got '{mode}'")
-        if selection not in ("top_n", "top_percent"):
-            raise ValueError(f"selection must be 'top_n' or 'top_percent', got '{selection}'")
+        if selection not in ("top_n", "top_percent", "norm_logitvar"):
+            raise ValueError(
+                f"selection must be 'top_n', 'top_percent' or 'norm_logitvar', got '{selection}'"
+            )
         if mediate_scope not in ("candidates", "all"):
             raise ValueError(f"mediate_scope must be 'candidates' or 'all', got '{mediate_scope}'")
         if neuron_family not in ("entropy", "frequency"):
@@ -133,6 +290,33 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             )
         if layer is not None and layer < 0:
             raise ValueError(f"layer must be a non-negative int or None, got {layer}")
+        if mediate_alpha < 0:
+            raise ValueError(f"mediate_alpha must be >= 0, got {mediate_alpha}")
+        if intervene_alphas is not None and any(a < 0 for a in intervene_alphas):
+            raise ValueError(f"intervene_alphas must be >= 0, got {intervene_alphas}")
+        if corpus_max_rows is not None and corpus_max_rows <= 0:
+            raise ValueError(f"corpus_max_rows must be a positive int, got {corpus_max_rows}")
+        if eval_positions is not None:
+            ok = eval_positions == "all"
+            if not ok and ":" in eval_positions:
+                kind, _, val = eval_positions.partition(":")
+                ok = kind in ("last", "stride") and val.isdigit() and int(val) > 0
+            if not ok:
+                raise ValueError(
+                    f"eval_positions must be 'all', 'last:N' or 'stride:N', got {eval_positions!r}"
+                )
+        if overlap_layers not in ("final", "probe", "all"):
+            raise ValueError(
+                f"overlap_layers must be 'final', 'probe' or 'all', got '{overlap_layers}'"
+            )
+        if descriptor not in ("static", "propagated"):
+            raise ValueError(f"descriptor must be 'static' or 'propagated', got '{descriptor}'")
+        if propagation_ridge < 0:
+            raise ValueError(f"propagation_ridge must be >= 0, got {propagation_ridge}")
+        if propagation_sequences is not None and propagation_sequences <= 0:
+            raise ValueError(
+                f"propagation_sequences must be a positive int or None, got {propagation_sequences}"
+            )
 
         self._name = name
         self.description = description
@@ -140,17 +324,29 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.selection = selection
         self.top_n = top_n
         self.top_percent = top_percent
+        self.norm_percentile_min = norm_percentile_min
+        self.logit_var_percentile_max = logit_var_percentile_max
         self.k_null = k_null
         self.logit_chunk_size = logit_chunk_size
         self.fold_final_norm = fold_final_norm
+        self.descriptor = descriptor
+        self.propagation_ridge = propagation_ridge
+        self.propagation_sequences = propagation_sequences
         self.corpus_text = corpus_text
+        self.corpus_path = corpus_path
+        self.corpus_field = corpus_field
+        self.corpus_max_rows = corpus_max_rows
+        self.eval_positions = eval_positions
         self.n_tokens = n_tokens
         self.seq_len = seq_len
         self.mediate_sequences = mediate_sequences
         self.mediate_scope = mediate_scope
         self.mediate_neuron_chunk = mediate_neuron_chunk
         self.random_baseline_count = random_baseline_count
+        self.mediate_alpha = mediate_alpha
+        self.intervene_alphas = list(intervene_alphas) if intervene_alphas else [0.0, 2.0]
         self.probe_path = probe_path
+        self.overlap_layers = overlap_layers
         self.neuron_family = neuron_family
         self.unigram_path = unigram_path
         self.mediate_engine = mediate_engine
@@ -195,16 +391,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     @staticmethod
     def _get_final_norm_gain(backend: InferenceBackend):
         """Resolve the final normalization gain ``gamma`` (d_model,) or None."""
-        model = backend.model
-        containers = [
-            model,
-            getattr(model, "model", None),
-            getattr(model, "transformer", None),
-            getattr(model, "gpt_neox", None),
-        ]
-        for container in containers:
-            if container is None:
-                continue
+        for container in _norm_containers(backend.model):
             for attr in ("norm", "ln_f", "final_layernorm", "final_layer_norm"):
                 mod = getattr(container, attr, None)
                 if mod is not None and hasattr(mod, "weight"):
@@ -261,36 +448,121 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             logit_vars[sl] = (proj / denom).var(dim=0)
         return logit_vars
 
-    def _compute_rho(self, w_u: torch.Tensor, w_out: torch.Tensor):
+    def _compute_rho(self, w_u: torch.Tensor, w_out: torch.Tensor, backend=None):
         """Null-space fraction rho per neuron plus diagnostics.
 
         The bottom-k right singular vectors of ``W_U`` are obtained from the
         eigendecomposition of the small Gram matrix ``W_U^T W_U``
         (``d_model x d_model``) instead of a full SVD of the tall
-        ``(vocab, d_model)`` matrix; the subspaces coincide up to sign.
+        ``(vocab, d_model)`` matrix; the subspaces coincide up to sign. The basis
+        depends only on ``W_U``, so it is cached on ``backend`` when provided and
+        reused across layers.
         """
         d_model = w_u.shape[1]
         k = self.k_null if self.k_null is not None else max(1, round(0.01 * d_model))
         k = min(k, d_model)
+        v_bottom, diag = self._null_basis(w_u, k, backend)
+        rho = (v_bottom.T @ w_out).norm(dim=0) / w_out.norm(dim=0)
+        return rho, diag
+
+    def _null_basis(self, w_u: torch.Tensor, k: int, backend=None):
+        """Bottom-k right singular vectors of ``W_U`` (cached per backend).
+
+        ``W_U`` is constant across layers for a given model/fold setting, so the
+        ``d_model^2`` eigendecomposition is computed once and reused instead of
+        once per layer.
+        """
+        key = (k, tuple(w_u.shape), bool(self.fold_final_norm))
+        cache = getattr(backend, "_v_bottom_cache", None) if backend is not None else None
+        if cache is not None and cache.get("key") == key:
+            return cache["v"], cache["diag"]
         gram = w_u.T @ w_u
         eigvals, eigvecs = torch.linalg.eigh(gram)  # ascending eigenvalues
-        v_bottom = eigvecs[:, :k]  # (d_model, k)
-        rho = (v_bottom.T @ w_out).norm(dim=0) / w_out.norm(dim=0)
+        v_bottom = eigvecs[:, :k].contiguous()
         diag = {
             "k_null": k,
             "bottom_eigval_min": float(eigvals[:k].min()),
             "bottom_eigval_max": float(eigvals[:k].max()),
             "median_eigval": float(eigvals.median()),
         }
-        return rho, diag
+        if backend is not None:
+            try:
+                backend._v_bottom_cache = {"key": key, "v": v_bottom, "diag": diag}
+            except AttributeError:  # pragma: no cover - exotic backends
+                pass
+        return v_bottom, diag
 
-    def _select_neurons(self, rho: torch.Tensor) -> List[int]:
-        """Rank neurons by rho descending (authors' released-code criterion)."""
+    def _select_neurons(
+        self,
+        rho: torch.Tensor,
+        norms: Optional[torch.Tensor] = None,
+        logit_vars: Optional[torch.Tensor] = None,
+    ) -> List[int]:
+        """Select neurons by the configured criterion.
+
+        ``top_n``/``top_percent`` rank by the score passed as ``rho`` (the
+        authors' released-code criterion). ``norm_logitvar`` instead matches the
+        paper's Fig. 2a heuristic -- high output-weight norm AND low logit
+        variance -- and requires ``norms``/``logit_vars``.
+        """
+        if self.selection == "norm_logitvar":
+            if norms is None or logit_vars is None:
+                raise ValueError("selection='norm_logitvar' requires norms and logit_vars")
+            norm_pct = _percentile_rank(norms)
+            lv_pct = _percentile_rank(logit_vars)
+            mask = (norm_pct >= self.norm_percentile_min) & (
+                lv_pct <= self.logit_var_percentile_max
+            )
+            return torch.nonzero(mask, as_tuple=False).flatten().tolist()
         if self.selection == "top_percent":
             n = max(1, int(self.top_percent * rho.numel()))
         else:
             n = min(self.top_n, rho.numel())
         return torch.topk(rho, n).indices.tolist()
+
+    @staticmethod
+    def _norm_matched_indices(
+        norms: torch.Tensor,
+        targets: List[int],
+        window: float = 0.05,
+        exclude: Tuple[int, ...] = (),
+        seed: int = 0,
+    ) -> List[int]:
+        """Random neurons with norms within ``+/- window`` of each target.
+
+        Used as the honest control for weight-norm confounds when intervening on
+        a selected set (H-Neurons / entropy neurons).
+        """
+        import random
+
+        rng = random.Random(seed)
+        used = set(targets) | set(exclude)
+        out: List[int] = []
+        for j in targets:
+            lo, hi = norms[j] * (1 - window), norms[j] * (1 + window)
+            pool = ((norms >= lo) & (norms <= hi)).nonzero(as_tuple=True)[0].tolist()
+            pool = [p for p in pool if p not in used and p not in out]
+            if not pool:
+                order = torch.argsort((norms - norms[j]).abs()).tolist()
+                pool = [p for p in order if p not in used and p not in out][:32]
+            if pool:
+                pick = rng.choice(pool)
+                out.append(pick)
+                used.add(pick)
+        return sorted(out)
+
+    @staticmethod
+    def _random_control_indices(population: int, exclude: set, count: int, seed: int) -> List[int]:
+        """Random neuron indices drawn from the complement of ``exclude``.
+
+        The control group must not overlap the treated groups (selected /
+        H-Neurons / norm-matched), otherwise a neuron is counted as both
+        treatment and control and contaminates the group means and p-values.
+        """
+        pool = [i for i in range(population) if i not in exclude]
+        rng = torch.Generator().manual_seed(seed)
+        draw = torch.randperm(len(pool), generator=rng)[: min(count, len(pool))].tolist()
+        return sorted(pool[j] for j in draw)
 
     def _identify_arrays(self, backend: InferenceBackend) -> Dict[str, Any]:
         """Compute all identify-mode quantities once; shared by all modes."""
@@ -299,12 +571,15 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         w_out = self._get_w_out(backend, layer)
 
         norms = w_out.norm(dim=0)
-        logit_vars = self._compute_logit_vars(w_u, w_out)
-        rho, svd_diag = self._compute_rho(w_u, w_out)
-        selected = self._select_neurons(rho)
+        # LogitVar is a full-vocab projection (vocab x d_mlp); only the
+        # norm_logitvar criterion needs it, so skip it for rho-based selection
+        # (the summary/detail logit_var fields become None).
+        need_lv = self.selection == "norm_logitvar"
+        logit_vars = self._compute_logit_vars(w_u, w_out) if need_lv else None
+        rho, svd_diag = self._compute_rho(w_u, w_out, backend)
+        selected = self._select_neurons(rho, norms, logit_vars)
 
         sel_norms = norms[selected]
-        sel_lv = logit_vars[selected]
         sel_rho = rho[selected]
 
         summary = {
@@ -314,20 +589,24 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             **svd_diag,
             "selected_count": len(selected),
             "selected_mean_norm": float(sel_norms.mean()),
-            "selected_mean_logit_var": float(sel_lv.mean()),
+            "selected_mean_logit_var": (
+                float(logit_vars[selected].mean()) if logit_vars is not None else None
+            ),
             "selected_mean_rho": float(sel_rho.mean()),
             "all_mean_norm": float(norms.mean()),
-            "all_mean_logit_var": float(logit_vars.mean()),
+            "all_mean_logit_var": (float(logit_vars.mean()) if logit_vars is not None else None),
             "all_mean_rho": float(rho.mean()),
             "pearson_rho_norm": self._pearson(rho, norms),
-            "pearson_rho_logit_var": self._pearson(rho, -logit_vars),
+            "pearson_rho_logit_var": (
+                self._pearson(rho, -logit_vars) if logit_vars is not None else None
+            ),
         }
         detail = [
             {
                 "layer": layer,
                 "index": int(i),
                 "norm": float(norms[i]),
-                "logit_var": float(logit_vars[i]),
+                "logit_var": float(logit_vars[i]) if logit_vars is not None else None,
                 "rho": float(rho[i]),
             }
             for i in selected
@@ -345,6 +624,222 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "summary": summary,
             "detail": detail,
         }
+
+    # ------------------------------------------------------------------
+    # propagated (effective-write) descriptor
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _effective_operator(
+        post: torch.Tensor, final: torch.Tensor, ridge: float = 1e-3
+    ) -> torch.Tensor:
+        """Data-estimated map from the analysis-layer residual to the final one.
+
+        Regresses the final residual ``h_L`` on the post-layer residual ``h_l``
+        over corpus positions (centered), returning ``J`` with ``h_L ~ J h_l``.
+        At the final layer ``post == final``, so ``J -> I`` (exactly for
+        ``ridge == 0``) -- that identity is what makes the propagated descriptor
+        reduce to the paper's static rho there.
+
+        The estimate is a *data-averaged linear* map: it captures downstream
+        attention and nonlinearity on average rather than a single Jacobian at
+        one point. Ridge stabilises the normal equations when the corpus has
+        fewer positions than ``d_model``; the solve is QR-based (row-augmented
+        least squares) so the condition number is not squared the way it is in
+        the normal equations.
+        """
+        post_c = post - post.mean(dim=0, keepdim=True)
+        final_c = final - final.mean(dim=0, keepdim=True)
+        n, d = post_c.shape
+        scale = float((post_c.pow(2).sum(dim=0) / max(n - 1, 1)).mean().clamp_min(1e-12))
+        lam = (ridge * scale) ** 0.5
+        if lam > 0:
+            eye = torch.eye(d, dtype=post_c.dtype)
+            a = torch.cat([post_c, lam * eye], dim=0)
+            b = torch.cat([final_c, torch.zeros(d, d, dtype=final_c.dtype)], dim=0)
+        else:
+            a, b = post_c, final_c
+        # least squares for X (d, d) with final_c ~ post_c @ X, so J = X^T
+        return torch.linalg.lstsq(a, b).solution.T
+
+    @staticmethod
+    def _null_fraction(v_bottom: torch.Tensor, writes: torch.Tensor) -> torch.Tensor:
+        """Fraction of each write's norm on the orthonormal null-basis columns."""
+        num = (v_bottom.T @ writes).norm(dim=0)
+        den = writes.norm(dim=0).clamp_min(1e-12)
+        return num / den
+
+    def _write_point_module(self, backend: InferenceBackend, layer: int):
+        """Module whose output is the neuron's residual write point.
+
+        Without a post-FFN norm the down-projection output is added straight to
+        the residual, so the layer block output is the write point. With one
+        (Gemma 2/3, MedGemma) the write first passes through
+        ``post_feedforward_layernorm``; the down-projection output is then the
+        write point, so the estimated operator captures that normalization
+        instead of silently assuming it away.
+        """
+        if self._has_post_ffn_norm(backend):
+            return backend.hook_manager.get_mlp_down_proj_module(layer)
+        return backend.hook_manager.get_layer_module(layer)
+
+    def _capture_residual_pair(self, backend: InferenceBackend, layer: int):
+        """Corpus capture of (write point, final-norm input) pairs.
+
+        Both are ``(n_positions, d_model)`` fp32 CPU tensors. The write point is
+        the module from :meth:`_write_point_module` (layer output, or the
+        down-projection output for post-FFN-norm architectures); the final-norm
+        input is the residual read by the unembedding path. Deliberately
+        independent of the identify dispatch so it can be called from identify
+        mode without recursion.
+        """
+        device = backend.device
+        batches = self._build_corpus_batches(backend)
+        norm_mod = self._resolve_final_norm_module(backend)
+        if norm_mod is None:
+            raise ValueError("could not resolve the final normalization module")
+        write_mod = self._write_point_module(backend, layer)
+        captured: Dict[str, torch.Tensor] = {}
+
+        def grab_post(_mod, _inp, output):
+            captured["post"] = _extract_hidden_output(output)
+
+        def grab_final(_mod, inp):
+            captured["final"] = inp[0]
+
+        handle_post = write_mod.register_forward_hook(grab_post)
+        handle_final = norm_mod.register_forward_pre_hook(grab_final)
+        posts: List[torch.Tensor] = []
+        finals: List[torch.Tensor] = []
+        n_seq = self.propagation_sequences or self.mediate_sequences
+        try:
+            for b in range(min(n_seq, batches.shape[0])):
+                tokens = batches[b : b + 1].to(device)
+                with torch.no_grad():
+                    backend.model(tokens)
+                posts.append(
+                    captured["post"].detach().float().cpu().reshape(-1, captured["post"].shape[-1])
+                )
+                finals.append(
+                    captured["final"]
+                    .detach()
+                    .float()
+                    .cpu()
+                    .reshape(-1, captured["final"].shape[-1])
+                )
+        finally:
+            handle_post.remove()
+            handle_final.remove()
+        return torch.cat(posts, dim=0), torch.cat(finals, dim=0)
+
+    def _propagated_rho(self, ident: Dict[str, Any], backend: InferenceBackend):
+        """Effective null-space fraction after propagating each write to output.
+
+        Replaces the static ``w_out`` in rho with ``J w_out`` where ``J`` is the
+        data-estimated map from the analysis-layer residual to the final
+        residual. The null basis is the same (folded) unembedding basis used by
+        the static rho, so the two are directly comparable.
+        """
+        w_u = self._get_unembedding(backend)
+        d_model = w_u.shape[1]
+        k = self.k_null if self.k_null is not None else max(1, round(0.01 * d_model))
+        k = min(k, d_model)
+        v_bottom, _ = self._null_basis(w_u, k, backend)
+        post, final = self._capture_residual_pair(backend, ident["layer"])
+        hook_manager = getattr(backend, "hook_manager", None)
+        at_final = hook_manager is not None and ident["layer"] == hook_manager.num_layers - 1
+        post_ffn_norm = self._has_post_ffn_norm(backend) if hook_manager is not None else False
+        if at_final and not post_ffn_norm:
+            # The write already enters the final residual directly, so the
+            # operator is the identity -- exact regardless of ridge (which would
+            # otherwise shrink it and break G1). Architectures with a post-FFN
+            # norm (Gemma 2/3, MedGemma) are excluded: their write is normalized
+            # before the residual add, so the map is estimated from the
+            # down-projection write point instead.
+            operator = torch.eye(post.shape[1], dtype=post.dtype)
+        else:
+            operator = self._effective_operator(post, final, self.propagation_ridge)
+        writes = operator @ ident["w_out"]
+        rho_prop = self._null_fraction(v_bottom, writes)
+        diag = {
+            "propagation_positions": int(post.shape[0]),
+            "propagation_ridge": self.propagation_ridge,
+            "propagation_mean_abs": float(operator.abs().mean()),
+        }
+        return rho_prop, diag
+
+    def _finite_difference_writes(
+        self,
+        backend: InferenceBackend,
+        layer: int,
+        indices: List[int],
+        eps: float = 1e-2,
+        sequences: int = 1,
+    ) -> torch.Tensor:
+        """Ground-truth propagated writes via finite differences.
+
+        For each neuron ``i``, adds ``eps * w_out_i`` at the write point (the
+        layer output, or the down-projection output for post-FFN-norm models),
+        re-forwards the downstream layers, and averages ``(h_L' - h_L) / eps``
+        over positions. The result ``(len(indices), d_model)`` is the empirically
+        measured propagation of each write -- the reference the data-estimated
+        operator is validated against (``_effective_operator``). Perturbing all
+        positions at once is a corpus-average response; eps controls the
+        finite-difference bias.
+        """
+        device = backend.device
+        batches = self._build_corpus_batches(backend)
+        norm_mod = self._resolve_final_norm_module(backend)
+        if norm_mod is None:
+            raise ValueError("could not resolve the final normalization module")
+        write_mod = self._write_point_module(backend, layer)
+        w_out = self._get_w_out(backend, layer)
+        idx = list(indices)
+        if not idx:
+            return torch.zeros(0, w_out.shape[0])
+        n_seq = max(1, min(sequences, batches.shape[0]))
+        captured: Dict[str, torch.Tensor] = {}
+
+        def grab_final(_mod, inp):  # noqa: ANN001 - hook signature
+            captured["final"] = inp[0].detach().float().cpu()
+
+        def run_all() -> List[torch.Tensor]:
+            rows: List[torch.Tensor] = []
+            handle = norm_mod.register_forward_pre_hook(grab_final)
+            try:
+                for b in range(n_seq):
+                    tokens = batches[b : b + 1].to(device)
+                    with torch.no_grad():
+                        backend.model(tokens)
+                    resid = captured["final"]
+                    rows.append(resid.reshape(-1, resid.shape[-1]))
+            finally:
+                handle.remove()
+            return rows
+
+        bases = run_all()
+        rows: List[torch.Tensor] = []
+        for i in idx:
+            vec = w_out[:, i]
+
+            def hook(_mod, _inp, output, _vec=vec):  # noqa: ANN001 - hook signature
+                if isinstance(output, tuple):
+                    delta = eps * _vec.to(device=output[0].device, dtype=output[0].dtype)
+                    return (output[0] + delta,) + output[1:]
+                delta = eps * _vec.to(device=output.device, dtype=output.dtype)
+                return output + delta
+
+            handle = write_mod.register_forward_hook(hook)
+            try:
+                perturbed = run_all()
+                deltas = [
+                    ((pert - base).mean(dim=0)) / eps
+                    for pert, base in zip(perturbed, bases, strict=False)
+                ]
+            finally:
+                handle.remove()
+            rows.append(torch.stack(deltas).mean(dim=0))
+        return torch.stack(rows)
 
     # ------------------------------------------------------------------
     # token-frequency family (paper Sec. 4)
@@ -387,7 +882,52 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         return (log_p - log_p.mean()).float()
 
     def _corpus_text_or_default(self) -> str:
+        if self.corpus_path:
+            return self._load_corpus_file(self.corpus_path)
         return self.corpus_text if self.corpus_text else self._DEFAULT_CORPUS
+
+    def _load_corpus_file(self, path: str) -> str:
+        """Load corpus texts from a .parquet / .jsonl / plain-text file.
+
+        For parquet/jsonl, ``corpus_field`` selects the text column/key; it
+        defaults to ``question`` then ``text`` then the first available. This is
+        how real prompts (e.g. TriviaQA ``*_train.parquet``) are fed into the
+        mediation/intervention forward passes instead of the embedded default.
+        """
+        import json
+        from pathlib import Path
+
+        p = Path(path)
+        if p.suffix == ".parquet":
+            import pandas as pd
+
+            df = pd.read_parquet(p)
+            field = self.corpus_field or next(
+                (c for c in ("question", "text") if c in df.columns), df.columns[0]
+            )
+            texts = df[field].astype(str).tolist()
+        elif p.suffix in (".jsonl", ".ndjson"):
+            texts = []
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                obj = json.loads(line)
+                if isinstance(obj, dict):
+                    key = self.corpus_field or next(
+                        (k for k in ("question", "text", "prompt", "response") if k in obj),
+                        next(iter(obj)),
+                    )
+                    texts.append(str(obj[key]))
+                else:
+                    texts.append(str(obj))
+        else:
+            texts = [ln.strip() for ln in p.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        # Deterministic head-cap: full parquet slices (e.g. 87k TriviaQA
+        # questions) are far larger than the probe-fitting subsets (~2k).
+        if self.corpus_max_rows is not None and len(texts) > self.corpus_max_rows:
+            texts = texts[: self.corpus_max_rows]
+        return "\n".join(texts)
 
     @staticmethod
     def _compute_freq_scores(
@@ -468,6 +1008,16 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     def _run_identify(self, backend: InferenceBackend) -> ExperimentResult:
         ident = self._identify_dispatch(backend)
         s = ident["summary"]
+        s["descriptor"] = self.descriptor
+        if self.descriptor == "propagated" and self.neuron_family == "entropy":
+            rho_prop, prop_diag = self._propagated_rho(ident, backend)
+            selected = ident["selected"]
+            s.update(prop_diag)
+            s["selected_mean_rho_propagated"] = float(rho_prop[selected].mean())
+            s["all_mean_rho_propagated"] = float(rho_prop.mean())
+            s["pearson_rho_propagated"] = self._pearson(ident["rho"], rho_prop)
+            for rec in ident["detail"]:
+                rec["rho_propagated"] = float(rho_prop[rec["index"]])
         metrics = {
             "mode": "identify",
             "fold_final_norm": self.fold_final_norm,
@@ -485,12 +1035,21 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 f"(bottom eig {s['bottom_eigval_max']:.2e} vs median {s['median_eigval']:.2e})"
             )
             print(f"rho   selected   : {s['selected_mean_rho']:.4f} | all {s['all_mean_rho']:.4f}")
-            print(
-                f"logitVar selected: {s['selected_mean_logit_var']:.3e} | "
-                f"all {s['all_mean_logit_var']:.3e}"
-            )
+            if s.get("selected_mean_logit_var") is not None:
+                print(
+                    f"logitVar selected: {s['selected_mean_logit_var']:.3e} | "
+                    f"all {s['all_mean_logit_var']:.3e}"
+                )
+                print(f"pearson(rho, -logitVar)     : {s['pearson_rho_logit_var']:+.3f}")
+            else:
+                print(f"logitVar         : skipped (selection='{self.selection}')")
             print(f"pearson(rho, norm)          : {s['pearson_rho_norm']:+.3f}")
-            print(f"pearson(rho, -logitVar)     : {s['pearson_rho_logit_var']:+.3f}")
+            if s.get("selected_mean_rho_propagated") is not None:
+                print(
+                    f"rho_prop selected: {s['selected_mean_rho_propagated']:.4f} | "
+                    f"all {s['all_mean_rho_propagated']:.4f} "
+                    f"(pearson rho vs rho_prop {s['pearson_rho_propagated']:+.3f})"
+                )
         else:
             print("Score            : |cosine(write, v_freq)|")
             print(
@@ -515,6 +1074,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 "fold_final_norm": self.fold_final_norm,
                 "neuron_family": self.neuron_family,
                 "selection": self.selection,
+                "descriptor": self.descriptor,
                 "top_n": self.top_n,
                 "top_percent": self.top_percent,
                 "seed": self.seed,
@@ -529,7 +1089,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     def _build_corpus_batches(self, backend: InferenceBackend) -> torch.Tensor:
         """Tokenize the corpus into an ``(n_sequences, seq_len)`` CPU tensor."""
         tokenizer = backend.tokenizer
-        text = self.corpus_text if self.corpus_text else self._DEFAULT_CORPUS
+        text = self._corpus_text_or_default()
         ids = tokenizer(text, return_tensors=None, add_special_tokens=False)["input_ids"]
         ids = torch.tensor(ids, dtype=torch.long)
         reps = -(-self.n_tokens // ids.numel())
@@ -539,16 +1099,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
     def _resolve_final_norm_module(self, backend: InferenceBackend):
         """Return the final normalization module (or None)."""
-        model = backend.model
-        containers = [
-            model,
-            getattr(model, "model", None),
-            getattr(model, "transformer", None),
-            getattr(model, "gpt_neox", None),
-        ]
-        for container in containers:
-            if container is None:
-                continue
+        for container in _norm_containers(backend.model):
             for attr in ("norm", "ln_f", "final_layernorm", "final_layer_norm"):
                 mod = getattr(container, attr, None)
                 if mod is not None and hasattr(mod, "weight"):
@@ -686,15 +1237,30 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         ident, sequences, act_mean, norm_cfg = self._capture_sequences(backend)
         score = ident["score"]
         selected = ident["selected"]
+        norms = ident.get("norms")
 
-        rng = torch.Generator().manual_seed(self.seed)
-        rand_idx = torch.randperm(score.numel(), generator=rng)[
-            : self.random_baseline_count
-        ].tolist()
+        # Optional probe arm: intervene on our H-Neurons at the analysis layer
+        # plus a norm-matched control group (the honest baseline for norm).
+        h_layer: List[int] = []
+        if self.probe_path:
+            h_layer = sorted({i for lyr, i in self._load_probe_neurons() if lyr == ident["layer"]})
+        norm_matched: List[int] = []
+        if norms is not None and h_layer:
+            norm_matched = self._norm_matched_indices(
+                norms, h_layer, exclude=tuple(selected), seed=self.seed
+            )
+        # Random control drawn from the complement of every treated group.
+        rand_idx = self._random_control_indices(
+            score.numel(),
+            exclude=set(selected) | set(h_layer) | set(norm_matched),
+            count=self.random_baseline_count,
+            seed=self.seed,
+        )
+
         if self.mediate_scope == "all":
             indices = list(range(score.numel()))
         else:
-            indices = sorted(set(selected) | set(rand_idx))
+            indices = sorted(set(selected) | set(rand_idx) | set(h_layer) | set(norm_matched))
 
         v_freq = ident.get("v_freq") if self.neuron_family == "frequency" else None
         engine = self._resolve_engine(backend)
@@ -706,7 +1272,9 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 "for non-final layers."
             )
         if engine == "forward":
-            stats = self._ablate_neurons_forward(backend, sequences, act_mean, indices)
+            stats = self._ablate_neurons_forward(
+                backend, sequences, act_mean, indices, alpha=self.mediate_alpha
+            )
         else:
             stats = self._ablate_neurons(
                 backend, sequences, act_mean, norm_cfg, indices, v_freq=v_freq
@@ -715,6 +1283,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
         sel_rows = [indices.index(i) for i in selected]
         rand_rows = [indices.index(i) for i in rand_idx]
+        h_rows = [indices.index(i) for i in h_layer]
+        nm_rows = [indices.index(i) for i in norm_matched]
 
         if mediated is not None:
             spearman = self._spearman(score[torch.tensor(indices)], mediated)
@@ -727,6 +1297,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "neuron_family": self.neuron_family,
             "mediate_engine": engine,
             "mediate_scope": self.mediate_scope,
+            "mediate_alpha": self.mediate_alpha,
+            "eval_positions": self.eval_positions,
             "n_ablated_neurons": len(indices),
             "n_sequences": len(sequences),
             "seq_len": self.seq_len,
@@ -751,8 +1323,86 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 {
                     "random_baseline_mean_TE": float(stats["te"][rand_rows].mean()),
                     "spearman_score_TE": spearman,
+                    "selected_mean_d_entropy": float(stats["d_entropy"][sel_rows].mean()),
+                    "selected_mean_abs_d_entropy": float(stats["abs_d_entropy"][sel_rows].mean()),
+                    "selected_mean_flip_rate": float(stats["flip_rate"][sel_rows].mean()),
+                    "selected_mean_d_max_prob": float(stats["d_max_prob"][sel_rows].mean()),
+                    "random_baseline_mean_d_entropy": float(stats["d_entropy"][rand_rows].mean()),
+                    "random_baseline_mean_flip_rate": float(stats["flip_rate"][rand_rows].mean()),
+                    "random_baseline_mean_d_max_prob": float(stats["d_max_prob"][rand_rows].mean()),
                 }
             )
+
+        group_extra: Dict[str, Any] = {}
+        if h_rows:
+            group_extra["n_h_neurons_intervened"] = len(h_rows)
+            group_extra["h_neuron_mean_TE"] = float(stats["te"][h_rows].mean())
+        if nm_rows:
+            group_extra["n_norm_matched_intervened"] = len(nm_rows)
+            group_extra["norm_matched_mean_TE"] = float(stats["te"][nm_rows].mean())
+        if "d_entropy" in stats:
+            if h_rows:
+                group_extra["h_neuron_mean_d_entropy"] = float(stats["d_entropy"][h_rows].mean())
+                group_extra["h_neuron_mean_flip_rate"] = float(stats["flip_rate"][h_rows].mean())
+                group_extra["h_neuron_mean_d_max_prob"] = float(stats["d_max_prob"][h_rows].mean())
+            if nm_rows:
+                group_extra["norm_matched_mean_d_entropy"] = float(
+                    stats["d_entropy"][nm_rows].mean()
+                )
+                group_extra["norm_matched_mean_flip_rate"] = float(
+                    stats["flip_rate"][nm_rows].mean()
+                )
+                group_extra["norm_matched_mean_d_max_prob"] = float(
+                    stats["d_max_prob"][nm_rows].mean()
+                )
+        metrics.update(group_extra)
+        if "d_entropy" in stats:
+            # Per-neuron values (persisted in results.json) so the selected /
+            # H-Neuron effects can be read against the random null distribution.
+            metrics["d_entropy_by_index"] = {
+                str(indices[r]): float(stats["d_entropy"][r]) for r in range(len(indices))
+            }
+            metrics["flip_rate_by_index"] = {
+                str(indices[r]): float(stats["flip_rate"][r]) for r in range(len(indices))
+            }
+
+            def _rows_vals(tensor, rows):
+                return [float(tensor[r]) for r in rows]
+
+            metrics["baseline_entropy"] = float(stats.get("baseline_entropy", float("nan")))
+            metrics["baseline_max_prob"] = float(stats.get("baseline_max_prob", float("nan")))
+            metrics["baseline_margin"] = float(stats.get("baseline_margin", float("nan")))
+            metrics["baseline_accuracy"] = float(stats.get("baseline_accuracy", float("nan")))
+            if h_rows:
+                metrics["h_neuron_mean_d_entropy_rel"] = float(
+                    stats["d_entropy_rel"][h_rows].mean()
+                )
+                metrics["h_neuron_mean_entropy_up_frac"] = float(
+                    stats["entropy_up_frac"][h_rows].mean()
+                )
+                metrics["h_neuron_empirical_p_vs_random"] = self._empirical_p(
+                    _rows_vals(stats["d_entropy"], h_rows),
+                    _rows_vals(stats["d_entropy"], rand_rows),
+                )
+                metrics["h_neuron_empirical_p_vs_norm_matched"] = self._empirical_p(
+                    _rows_vals(stats["d_entropy"], h_rows),
+                    _rows_vals(stats["d_entropy"], nm_rows),
+                )
+            if rand_rows:
+                metrics["random_baseline_mean_entropy_up_frac"] = float(
+                    stats["entropy_up_frac"][rand_rows].mean()
+                )
+            mpos = stats.get("d_entropy_pos")
+            if mpos is not None:
+                for tag, rows in (
+                    ("h_neuron", h_rows),
+                    ("selected", sel_rows),
+                    ("random_baseline", rand_rows),
+                    ("norm_matched", nm_rows),
+                ):
+                    if rows:
+                        mean, lo, hi = self._bootstrap_ci(mpos[rows, :], seed=self.seed)
+                        metrics[f"{tag}_mean_d_entropy_ci"] = [mean, lo, hi]
 
         if mediated is not None:
             order = torch.argsort(mediated, descending=True)
@@ -795,10 +1445,16 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 if self._has_post_ffn_norm(backend)
                 else f"non-final layer {self._resolve_layer(backend)}"
             )
-            print(f"Engine           : forward ({reason})")
+            print(f"Engine           : forward ({reason}, alpha={self.mediate_alpha})")
             print(f"Selected ({len(selected)}): mean |dLoss| = {sel_te:.4f}")
             print(f"Random baseline  : mean {rand_te:.4f} (R={self.random_baseline_count})")
             print(f"spearman(score, TE)          : {spearman:+.3f}")
+            print(
+                f"Confidence sign. : selected dH={metrics['selected_mean_d_entropy']:+.4f} "
+                f"flip={metrics['selected_mean_flip_rate']:.3f} | "
+                f"random dH={metrics['random_baseline_mean_d_entropy']:+.4f} "
+                f"flip={metrics['random_baseline_mean_flip_rate']:.3f}"
+            )
             print("Top-5 ablated neurons by causal effect (|dLoss|):")
             for row in top_rows:
                 tag = "*" if indices[row] in set(selected) else " "
@@ -832,9 +1488,181 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                         "mediated": (float(mediated[row]) if mediated is not None else None),
                         "score": float(ident.get("signed_score", score)[indices[row]]),
                         "is_selected": indices[row] in set(selected),
+                        "is_h_neuron": indices[row] in set(h_layer),
+                        "is_norm_matched": indices[row] in set(norm_matched),
+                        **(
+                            {
+                                "d_entropy": float(stats["d_entropy"][row]),
+                                "abs_d_entropy": float(stats["abs_d_entropy"][row]),
+                                "flip_rate": float(stats["flip_rate"][row]),
+                                "d_max_prob": float(stats["d_max_prob"][row]),
+                            }
+                            if mediated is None
+                            else {}
+                        ),
                     }
                     for row in range(len(indices))
                 ],
+            },
+        )
+
+    def _group_stats(
+        self,
+        stats: Dict[str, Any],
+        indices: List[int],
+        groups: Dict[str, List[int]],
+        seed: int = 0,
+    ) -> Dict[str, Any]:
+        """Per-group aggregate stats from one intervention run (forward engine).
+
+        Reports scalar group means for the loss/entropy/flip metrics plus the
+        baseline levels, empirical p-values of the H-Neuron group against the
+        random / norm-matched nulls, and position-bootstrap CIs.
+        """
+
+        def vals(tensor, rows):
+            return [float(tensor[r]) for r in rows]
+
+        def mean_of(tensor, rows):
+            return float(torch.tensor(vals(tensor, rows)).mean()) if rows else None
+
+        out: Dict[str, Any] = {
+            "n_ablated_neurons": len(indices),
+            "positions": stats.get("positions"),
+            "baseline_entropy": float(stats.get("baseline_entropy", float("nan"))),
+            "baseline_max_prob": float(stats.get("baseline_max_prob", float("nan"))),
+            "baseline_margin": float(stats.get("baseline_margin", float("nan"))),
+            "baseline_accuracy": float(stats.get("baseline_accuracy", float("nan"))),
+        }
+        for tag, rows in groups.items():
+            if not rows:
+                continue
+            out[f"{tag}_mean_TE"] = mean_of(stats["te"], rows)
+            out[f"{tag}_mean_d_entropy"] = mean_of(stats["d_entropy"], rows)
+            out[f"{tag}_mean_abs_d_entropy"] = mean_of(stats["abs_d_entropy"], rows)
+            out[f"{tag}_mean_d_entropy_rel"] = mean_of(stats["d_entropy_rel"], rows)
+            out[f"{tag}_mean_flip_rate"] = mean_of(stats["flip_rate"], rows)
+            out[f"{tag}_mean_d_max_prob"] = mean_of(stats["d_max_prob"], rows)
+            out[f"{tag}_mean_entropy_up_frac"] = mean_of(stats["entropy_up_frac"], rows)
+            mpos = stats.get("d_entropy_pos")
+            if mpos is not None:
+                m, lo, hi = self._bootstrap_ci(mpos[rows, :], seed=seed)
+                out[f"{tag}_mean_d_entropy_ci"] = [m, lo, hi]
+        if groups.get("h_neuron") and groups.get("random_baseline"):
+            out["h_neuron_empirical_p_vs_random"] = self._empirical_p(
+                vals(stats["d_entropy"], groups["h_neuron"]),
+                vals(stats["d_entropy"], groups["random_baseline"]),
+            )
+        if groups.get("h_neuron") and groups.get("norm_matched"):
+            out["h_neuron_empirical_p_vs_norm_matched"] = self._empirical_p(
+                vals(stats["d_entropy"], groups["h_neuron"]),
+                vals(stats["d_entropy"], groups["norm_matched"]),
+            )
+        return out
+
+    def _run_intervene(self, backend: InferenceBackend) -> ExperimentResult:
+        """Sweep intervention strength (alpha) and report the confidence signature.
+
+        One forward-capture pass, then ``_ablate_neurons_forward`` per alpha on the
+        same neuron groups (their selected set, our H-Neurons, random and
+        norm-matched controls). Entropy rising monotonically with alpha while the
+        argmax-flip stays flat is the confidence-regulation dissociation.
+        """
+        ident, sequences, act_mean, _ = self._capture_sequences(backend)
+        score = ident["score"]
+        selected = ident["selected"]
+        norms = ident.get("norms")
+
+        h_layer = []
+        if self.probe_path:
+            h_layer = sorted({i for lyr, i in self._load_probe_neurons() if lyr == ident["layer"]})
+        norm_matched = []
+        if norms is not None and h_layer:
+            norm_matched = self._norm_matched_indices(
+                norms, h_layer, exclude=tuple(selected), seed=self.seed
+            )
+        # Random control drawn from the complement of every treated group.
+        rand_idx = self._random_control_indices(
+            score.numel(),
+            exclude=set(selected) | set(h_layer) | set(norm_matched),
+            count=self.random_baseline_count,
+            seed=self.seed,
+        )
+        indices = sorted(set(selected) | set(rand_idx) | set(h_layer) | set(norm_matched))
+        groups = {
+            "selected": [indices.index(i) for i in selected],
+            "h_neuron": [indices.index(i) for i in h_layer],
+            "random_baseline": [indices.index(i) for i in rand_idx],
+            "norm_matched": [indices.index(i) for i in norm_matched],
+        }
+
+        per_alpha = []
+        for alpha in self.intervene_alphas:
+            stats = self._ablate_neurons_forward(backend, sequences, act_mean, indices, alpha=alpha)
+            row = {"alpha": alpha, **self._group_stats(stats, indices, groups, self.seed)}
+            # Per-neuron values so a downstream two-sided null can be built (the
+            # group means alone only support a one-sided upper test).
+            row["d_entropy_by_index"] = {
+                str(indices[r]): float(stats["d_entropy"][r]) for r in range(len(indices))
+            }
+            row["flip_rate_by_index"] = {
+                str(indices[r]): float(stats["flip_rate"][r]) for r in range(len(indices))
+            }
+            row["abs_d_entropy_by_index"] = {
+                str(indices[r]): float(stats["abs_d_entropy"][r]) for r in range(len(indices))
+            }
+            per_alpha.append(row)
+
+        print("\n" + "=" * 66)
+        print("CONFIDENCE REGULATION -- INTERVENE (dose-response)")
+        print("=" * 66)
+        print(
+            f"Layer {ident['layer']} | {len(indices)} neurons | {len(sequences)} seq x {self.seq_len}"
+        )
+        print(
+            f"Baseline H={per_alpha[0]['baseline_entropy']:.4f} "
+            f"maxP={per_alpha[0]['baseline_max_prob']:.4f} "
+            f"acc={per_alpha[0]['baseline_accuracy']:.4f}"
+        )
+        print("-" * 66)
+        hdr = f"{'alpha':>6} {'group':>16} {'dH':>9} {'dH%':>7} {'flip':>7} {'up%':>6}"
+        print(hdr)
+        for row in per_alpha:
+            for tag in ("h_neuron", "selected", "random_baseline", "norm_matched"):
+                if row.get(f"{tag}_mean_d_entropy") is None:
+                    continue
+                print(
+                    f"{row['alpha']:>6.2f} {tag:>16} "
+                    f"{row[f'{tag}_mean_d_entropy']:>+9.4f} "
+                    f"{100 * row[f'{tag}_mean_d_entropy_rel']:>+6.2f}% "
+                    f"{row[f'{tag}_mean_flip_rate']:>7.3f} "
+                    f"{100 * row[f'{tag}_mean_entropy_up_frac']:>5.1f}%"
+                )
+        print("=" * 66)
+
+        metrics: Dict[str, Any] = {
+            "mode": "intervene",
+            "layer": ident["layer"],
+            "alphas": list(self.intervene_alphas),
+            "probe_path": self.probe_path,
+            "n_ablated_neurons": len(indices),
+            "n_sequences": len(sequences),
+            "seq_len": self.seq_len,
+            "eval_positions": self.eval_positions,
+            "ablated_indices": list(indices),
+            "group_indices": {tag: [indices[r] for r in rows] for tag, rows in groups.items()},
+            "per_alpha": per_alpha,
+            **{f"identify_{k}": v for k, v in ident["summary"].items()},
+        }
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy="n/a",
+            metrics=metrics,
+            metadata={
+                "description": self.description,
+                "ablated_indices": indices,
+                "groups": groups,
             },
         )
 
@@ -852,85 +1680,201 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             return self.mediate_engine
         return "forward" if self._has_post_ffn_norm(backend) else "analytic"
 
+    @staticmethod
+    def _distribution_stats(
+        logits: torch.Tensor, logp: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
+        """Per-position output-distribution statistics for the causal signature.
+
+        Returns entropy, max probability, top1-top2 margin and argmax. These let
+        an intervention be read as confidence-regulation (entropy moves, argmax
+        does not) versus a direct change to the prediction. Pass an already
+        computed ``logp`` (log-softmax of ``logits``) to avoid a second full-vocab
+        log-softmax pass per forward.
+        """
+        if logp is None:
+            logp = torch.log_softmax(logits.float(), dim=-1)
+        top2 = torch.topk(logp, 2, dim=-1).values
+        max_prob = top2[..., 0].exp()
+        return {
+            "entropy": -(logp.exp() * logp).sum(-1),
+            "max_prob": max_prob,
+            "margin": max_prob - top2[..., 1].exp(),
+            "argmax": logp.argmax(-1),
+        }
+
+    @staticmethod
+    def _empirical_p(target_vals: List[float], null_vals: List[float]) -> float:
+        """One-sided empirical p: fraction of the null >= the target mean.
+
+        Uses the add-one (conservative) estimator so a null of size R yields
+        p >= 1/(R+1). Returns NaN if either list is empty.
+        """
+        if not target_vals or not null_vals:
+            return float("nan")
+        target = sum(target_vals) / len(target_vals)
+        ge = sum(1 for v in null_vals if v >= target)
+        return (1 + ge) / (1 + len(null_vals))
+
+    @staticmethod
+    def _bootstrap_ci(
+        matrix: torch.Tensor, iters: int = 1000, seed: int = 0
+    ) -> Tuple[float, float, float]:
+        """Bootstrap CI over columns (positions) for the grand mean of ``matrix``.
+
+        Returns (mean, 2.5th percentile, 97.5th percentile). Columns are resampled
+        with replacement to respect per-position rather than per-neuron variance.
+        """
+        n, p = matrix.shape
+        if p == 0:
+            return float("nan"), float("nan"), float("nan")
+        g = torch.Generator().manual_seed(seed)
+        base = float(matrix.mean())
+        boots = sorted(
+            float(matrix[:, torch.randint(0, p, (p,), generator=g)].mean()) for _ in range(iters)
+        )
+        return base, boots[int(0.025 * iters)], boots[int(0.975 * iters)]
+
     def _ablate_neurons_forward(
         self,
         backend: InferenceBackend,
         sequences: List[Dict[str, torch.Tensor]],
         act_mean: torch.Tensor,
         indices: List[int],
+        alpha: float = 0.0,
     ) -> Dict[str, Any]:
-        """Causal mean-ablation via real forwards, batched over neurons.
+        """Causal intervention via real forwards, batched over neurons.
 
-        Required for architectures with a post-FFN norm (Gemma 2/3 family)
-        where no analytic shortcut exists. A single forward passes ``c``
-        copies of each sequence, one copy per ablated neuron (batch row), so
-        the run scales with ``ceil(n_neurons / c) * n_sequences`` forwards of
-        ``(c, T)`` instead of one ``(1, T)`` forward per neuron -- much larger
-        matmuls, far better CPU utilization. On CPU fp32 this is exactly
-        equivalent to per-neuron sequential runs (validated path).
+        ``alpha == 0`` replaces each target activation with its corpus mean (the
+        paper's ablation); ``alpha > 1`` amplifies it by that factor. Required
+        for architectures with a post-FFN norm (Gemma 2/3 family) where no
+        analytic shortcut exists. A single forward passes ``c`` copies of each
+        sequence, one copy per intervened neuron (batch row), so the run scales
+        with ``ceil(n_neurons / c) * n_sequences`` forwards of ``(c, T)`` instead
+        of one ``(1, T)`` forward per neuron -- much larger matmuls, far better
+        utilization. On CPU fp32 this is exactly equivalent to per-neuron
+        sequential runs (validated path).
 
-        Reports total causal effect only; the LN-mediated fraction is not
-        defined on these architectures.
+        Reports the total causal effect (mean |dLoss| per position) plus the
+        confidence signature: signed change in output entropy, argmax-flip rate
+        and change in max probability. The LN-mediated fraction is not defined
+        on these architectures.
         """
         device = backend.device
         mod = backend.hook_manager.get_mlp_down_proj_module(self._resolve_layer(backend))
-        te_sum = torch.zeros(len(indices))
+        n = len(indices)
+        acc = {
+            k: torch.zeros(n)
+            for k in (
+                "te",
+                "d_entropy",
+                "abs_d_entropy",
+                "flip_rate",
+                "d_max_prob",
+                "entropy_up_frac",
+            )
+        }
         counter = {"positions": 0}
         chunk = max(1, self.mediate_neuron_chunk)
 
-        def nominal():
-            losses = []
-            for seq in sequences:
-                tokens = seq["tokens"].to(device)
-                with torch.no_grad():
-                    out = backend.model(tokens)
-                logits = out.logits.float()[:, :-1]
-                lp = torch.log_softmax(logits, dim=-1)
-                loss = -lp.gather(-1, tokens[:, 1:].unsqueeze(-1)).squeeze(-1)
-                counter["positions"] += loss.numel()
-                losses.append(loss.cpu())
-            return torch.cat(losses)
-
-        def ablate_chunk(rows: List[int]):
-            # rows: global neuron rows in `indices`. Build one (c, T) forward
-            # per sequence with row j = sequence copy with neuron rows[j] ablated.
-            c = len(rows)
-            losses = []
-            neuron_cols = [indices[r] for r in rows]
-
-            def hook(m, inp):
-                new = inp[0].clone()
-                for j, col in enumerate(neuron_cols):
+        def intervene(m, inp, neuron_cols):
+            new = inp[0].clone()
+            for j, col in enumerate(neuron_cols):
+                if alpha == 0.0:
                     new[j, :, col] = act_mean[col].to(inp[0].device)
-                return (new,) + tuple(inp[1:])
-
-            h = mod.register_forward_pre_hook(hook)
-            for seq in sequences:
-                tokens = seq["tokens"].to(device)
-                inp = tokens.repeat(c, 1)
-                with torch.no_grad():
-                    out = backend.model(inp)
-                logits = out.logits.float()[:, :-1]
-                lp = torch.log_softmax(logits, dim=-1)
-                loss = -lp.gather(-1, inp[:, 1:].unsqueeze(-1)).squeeze(-1)
-                losses.append(loss.cpu())
-            h.remove()
-            return torch.cat(losses, dim=1)  # (c, total_positions)
+                else:
+                    new[j, :, col] = new[j, :, col] * alpha
+            return (new,) + tuple(inp[1:])
 
         with torch.no_grad():
-            base_l = nominal().reshape(-1)
-            for start in range(0, len(indices), chunk):
-                rows = list(range(start, min(start + chunk, len(indices))))
-                abl = ablate_chunk(rows)
-                te_sum[start : start + len(rows)] += (abl - base_l).abs().sum(dim=1)
-        te_mean = te_sum / max(1, counter["positions"])
-        zeros = torch.zeros(len(indices))
-        return {
-            "te": te_mean,
-            "de": zeros,
-            "mediated": None,
-            "positions": counter["positions"],
-        }
+            base_loss, base_ent, base_maxp, base_arg = [], [], [], []
+            base_margin, base_tgt = [], []
+            for seq in sequences:
+                tokens = seq["tokens"].to(device)
+                out = backend.model(tokens)
+                logits = out.logits.float()[:, :-1]
+                sl = _position_selector(self.eval_positions, logits.shape[1])
+                logits = logits[:, sl]
+                tgt = tokens[:, 1:][:, sl]
+                lp = torch.log_softmax(logits, dim=-1)
+                base_loss.append(-lp.gather(-1, tgt.unsqueeze(-1)).squeeze(-1).reshape(-1).cpu())
+                st = self._distribution_stats(logits, logp=lp)
+                base_ent.append(st["entropy"].reshape(-1).cpu())
+                base_maxp.append(st["max_prob"].reshape(-1).cpu())
+                base_margin.append(st["margin"].reshape(-1).cpu())
+                base_arg.append(st["argmax"].reshape(-1).cpu())
+                base_tgt.append(tgt.reshape(-1).cpu())
+                counter["positions"] += base_loss[-1].numel()
+            base_loss = torch.cat(base_loss)
+            base_ent = torch.cat(base_ent)
+            base_maxp = torch.cat(base_maxp)
+            base_margin = torch.cat(base_margin)
+            base_arg = torch.cat(base_arg)
+            base_tgt = torch.cat(base_tgt)
+            base_ent_sum = float(base_ent.sum())
+            base_maxp_sum = float(base_maxp.sum())
+            positions = counter["positions"]
+            # (n_neurons, positions) signed entropy deltas for bootstrap CIs.
+            d_ent_pos = torch.zeros(n, positions) if n * positions <= 20_000_000 else None
+
+            for start in range(0, n, chunk):
+                rows = list(range(start, min(start + chunk, n)))
+                neuron_cols = [indices[r] for r in rows]
+                c = len(rows)
+
+                def hook(m, inp, _cols=neuron_cols):
+                    return intervene(m, inp, _cols)
+
+                h = mod.register_forward_pre_hook(hook)
+                try:
+                    loss_rows, ent_rows, maxp_rows, arg_rows = [], [], [], []
+                    for seq in sequences:
+                        tokens = seq["tokens"].to(device)
+                        inp = tokens.repeat(c, 1)
+                        out = backend.model(inp)
+                        logits = out.logits.float()[:, :-1]
+                        sl = _position_selector(self.eval_positions, logits.shape[1])
+                        logits = logits[:, sl]
+                        lp = torch.log_softmax(logits, dim=-1)
+                        loss_rows.append(
+                            -lp.gather(-1, inp[:, 1:][:, sl].unsqueeze(-1)).squeeze(-1)
+                        )
+                        st = self._distribution_stats(logits, logp=lp)
+                        ent_rows.append(st["entropy"])
+                        maxp_rows.append(st["max_prob"])
+                        arg_rows.append(st["argmax"])
+                    loss = torch.cat(loss_rows, dim=1).cpu()
+                    ent = torch.cat(ent_rows, dim=1).cpu()
+                    maxp = torch.cat(maxp_rows, dim=1).cpu()
+                    arg = torch.cat(arg_rows, dim=1).cpu()
+                finally:
+                    h.remove()
+
+                d_ent = ent - base_ent
+                acc["te"][start : start + c] += (loss - base_loss).abs().sum(dim=1)
+                acc["d_entropy"][start : start + c] += d_ent.sum(dim=1)
+                acc["abs_d_entropy"][start : start + c] += d_ent.abs().sum(dim=1)
+                acc["flip_rate"][start : start + c] += (arg != base_arg).float().sum(dim=1)
+                acc["d_max_prob"][start : start + c] += (maxp - base_maxp).sum(dim=1)
+                acc["entropy_up_frac"][start : start + c] += (d_ent > 0).float().sum(dim=1)
+                if d_ent_pos is not None:
+                    d_ent_pos[start : start + c, :] = d_ent
+
+        pos = max(1, counter["positions"])
+        out = {k: acc[k] / pos for k in acc}
+        out["d_entropy_rel"] = acc["d_entropy"] / base_ent_sum if base_ent_sum else torch.zeros(n)
+        out["d_max_prob_rel"] = (
+            acc["d_max_prob"] / base_maxp_sum if base_maxp_sum else torch.zeros(n)
+        )
+        out["d_entropy_pos"] = d_ent_pos
+        out["baseline_entropy"] = float(base_ent.mean())
+        out["baseline_max_prob"] = float(base_maxp.mean())
+        out["baseline_margin"] = float(base_margin.mean())
+        out["baseline_accuracy"] = float((base_arg == base_tgt).float().mean())
+        out["positions"] = counter["positions"]
+        out["de"] = torch.zeros(n)
+        out["mediated"] = None
+        return out
 
     def _ablate_neurons(
         self,
@@ -1102,11 +2046,18 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     def _run_overlap(self, backend: InferenceBackend) -> ExperimentResult:
         """Jaccard overlap between identified entropy neurons and H-Neurons.
 
-        The comparison is restricted to the final layer, where the entropy-
-        neuron criterion is defined. Reports the hypergeometric expectation
-        under random placement so the observed overlap can be read as an
-        enrichment ratio.
+        ``overlap_layers='final'`` compares only the configured analysis layer
+        (paper-faithful, back-compatible). ``'probe'``/``'all'`` compare every
+        layer that hosts an H-Neuron (or every layer), emitting per-layer and
+        pooled overlap with hypergeometric p-values. The entropy criterion is
+        defined w.r.t. the final ``W_U``, so mid-layer descriptors are candidate
+        features rather than the operating mechanism.
         """
+        if self.overlap_layers == "final":
+            return self._run_overlap_single_layer(backend)
+        return self._run_overlap_multi_layer(backend)
+
+    def _run_overlap_single_layer(self, backend: InferenceBackend) -> ExperimentResult:
         ident = self._identify_dispatch(backend)
         analysis_layer = ident["layer"]
         d_mlp = ident["summary"]["d_mlp"]
@@ -1123,10 +2074,12 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         union_size = n_sel + n_h_final - len(overlap)
         jaccard = len(overlap) / union_size if union_size else 0.0
         enrichment = len(overlap) / expected if expected > 0 else 0.0
+        hypergeom_p = _hypergeom_sf(len(overlap), d_mlp, n_sel, n_h_final)
 
         metrics: Dict[str, Any] = {
             **{f"identify_{k}": v for k, v in ident["summary"].items()},
             "mode": "overlap",
+            "overlap_layers": "final",
             "probe_path": self.probe_path,
             "h_neurons_total": h_all_count,
             "h_neurons_in_analysis_layer": n_h_final,
@@ -1135,17 +2088,22 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "jaccard_analysis_layer": jaccard,
             "expected_random_overlap": expected,
             "enrichment_observed_over_random": enrichment,
+            "hypergeom_p": hypergeom_p,
         }
 
         print("\n" + "=" * 66)
         print("CONFIDENCE REGULATION -- OVERLAP")
         print("=" * 66)
         print(f"Probe                 : {self.probe_path}")
-        print(f"H-Neurons total       : {h_all_count} ({n_h_final} in final layer {final_layer})")
+        print(
+            f"H-Neurons total       : {h_all_count} "
+            f"({n_h_final} in analysis layer {analysis_layer})"
+        )
         print(f"Entropy neurons       : {n_sel}")
         print(f"Overlap               : {len(overlap)} {sorted(overlap)}")
         print(f"Jaccard (final layer) : {jaccard:.4f}")
         print(f"Expected at random    : {expected:.3f}  ->  enrichment x{enrichment:.2f}")
+        print(f"Hypergeometric p      : {hypergeom_p:.3e}")
         print("=" * 66)
 
         return ExperimentResult(
@@ -1159,6 +2117,102 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 "entropy_selected": sorted(selected_set),
                 "overlap": overlap,
             },
+        )
+
+    def _overlap_one_layer(self, backend, w_u, layer, h_indices) -> Dict[str, Any]:
+        w_out = self._get_w_out(backend, layer)
+        d_mlp = w_out.shape[1]
+        norms = w_out.norm(dim=0)
+        rho, _ = self._compute_rho(w_u, w_out, backend)
+        logit_vars = (
+            self._compute_logit_vars(w_u, w_out) if self.selection == "norm_logitvar" else None
+        )
+        selected = set(self._select_neurons(rho, norms, logit_vars))
+        h_set = set(h_indices)
+        overlap = sorted(h_set & selected)
+        n_sel, n_h = len(selected), len(h_set)
+        expected = n_sel * n_h / d_mlp if d_mlp else 0.0
+        union = n_sel + n_h - len(overlap)
+        return {
+            "layer": int(layer),
+            "n_neurons_in_layer": int(d_mlp),
+            "h_neurons": n_h,
+            "entropy_neurons": n_sel,
+            "overlap_count": len(overlap),
+            "overlap_neurons": overlap,
+            "expected_random_overlap": expected,
+            "enrichment_observed_over_random": (len(overlap) / expected) if expected else 0.0,
+            "jaccard": (len(overlap) / union) if union else 0.0,
+            "hypergeom_p": _hypergeom_sf(len(overlap), d_mlp, n_sel, n_h),
+        }
+
+    def _run_overlap_multi_layer(self, backend: InferenceBackend) -> ExperimentResult:
+        if self.neuron_family != "entropy":
+            raise ValueError("overlap_layers != 'final' supports neuron_family='entropy' only")
+        w_u = self._get_unembedding(backend)
+        h_pairs = self._load_probe_neurons()
+        if self.overlap_layers == "probe":
+            layers = sorted({lyr for lyr, _ in h_pairs})
+        else:
+            layers = list(range(backend.hook_manager.num_layers))
+
+        by_layer: Dict[int, List[int]] = {lyr: [] for lyr in layers}
+        for lyr, i in h_pairs:
+            if lyr in by_layer:
+                by_layer[lyr].append(i)
+
+        per_layer = [
+            self._overlap_one_layer(backend, w_u, layer, sorted(set(by_layer[layer])))
+            for layer in layers
+        ]
+        pop = sum(r["n_neurons_in_layer"] for r in per_layer)
+        tot_sel = sum(r["entropy_neurons"] for r in per_layer)
+        tot_h = sum(r["h_neurons"] for r in per_layer)
+        tot_ov = sum(r["overlap_count"] for r in per_layer)
+        pooled_expected = tot_sel * tot_h / pop if pop else 0.0
+        enrichment = (tot_ov / pooled_expected) if pooled_expected else 0.0
+        pooled_union = tot_sel + tot_h - tot_ov
+        pooled_jaccard = (tot_ov / pooled_union) if pooled_union else 0.0
+        metrics: Dict[str, Any] = {
+            "mode": "overlap",
+            "overlap_layers": self.overlap_layers,
+            "probe_path": self.probe_path,
+            "h_neurons_total": len(h_pairs),
+            "layers_analyzed": layers,
+            "pooled_entropy_neurons": tot_sel,
+            "pooled_h_neurons": tot_h,
+            "pooled_overlap_count": tot_ov,
+            "pooled_expected_random_overlap": pooled_expected,
+            "pooled_enrichment_observed_over_random": enrichment,
+            "pooled_jaccard": pooled_jaccard,
+            "pooled_hypergeom_p": _hypergeom_conv_sf(per_layer, tot_ov),
+            "per_layer": per_layer,
+        }
+
+        print("\n" + "=" * 66)
+        print(f"CONFIDENCE REGULATION -- OVERLAP ({self.overlap_layers} layers)")
+        print("=" * 66)
+        print(f"Probe             : {self.probe_path}")
+        print(f"Layers analysed   : {layers}")
+        print(f"Pooled overlap    : {tot_ov} / {tot_h} H-Neurons in {tot_sel} entropy neurons")
+        print(f"Expected at random: {pooled_expected:.4f}  ->  enrichment x{enrichment:.2f}")
+        print(f"Pooled Jaccard    : {pooled_jaccard:.4f}")
+        print(f"Pooled hypergeom p: {metrics['pooled_hypergeom_p']:.3e}")
+        print("-" * 66)
+        for r in per_layer:
+            print(
+                f"  L{r['layer']:>2} H={r['h_neurons']:>2} ent={r['entropy_neurons']:>4} "
+                f"ov={r['overlap_count']:>2} jac={r['jaccard']:.3f} "
+                f"enr={r['enrichment_observed_over_random']:5.1f} p={r['hypergeom_p']:.2e}"
+            )
+        print("=" * 66)
+
+        return ExperimentResult(
+            experiment_name=self.name,
+            model_name=backend.model_name,
+            prompt_strategy="n/a",
+            metrics=metrics,
+            metadata={"description": self.description, "per_layer": per_layer},
         )
 
     # ------------------------------------------------------------------
@@ -1380,6 +2434,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             return self._run_identify(backend)
         if self.mode == "mediate":
             return self._run_mediate(backend)
+        if self.mode == "intervene":
+            return self._run_intervene(backend)
         if self.mode == "overlap":
             return self._run_overlap(backend)
         if self.mode == "induction":

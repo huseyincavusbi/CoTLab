@@ -5,13 +5,17 @@ _target_: cotlab.experiments.ConfidenceRegulationExperiment
 name: confidence_regulation
 description: "Entropy-neuron identification and mediation (Stolfo et al., NeurIPS 2024)"
 
-# identify | mediate | overlap | full (mediate/overlap land in follow-up commits)
+# identify | mediate | overlap | intervene | induction | full
 mode: identify
 
 # top_n | top_percent (ranking metric: rho, per the authors' released code)
+# norm_logitvar: the paper's Fig. 2a heuristic — high output-weight norm AND
+# low logit variance (thresholds below).
 selection: top_n
 top_n: 20
 top_percent: 0.01
+norm_percentile_min: 99.0
+logit_var_percentile_max: 1.0
 
 # Bottom-k right singular vectors of W_U treated as the effective null space.
 # null defaults to max(1, round(0.01 * d_model)) — 12 for GPT-2 Small,
@@ -25,9 +29,26 @@ logit_chunk_size: 256
 # Corpus for mean activations; null uses an embedded default text
 # (original work used C4 — approximation, see module docstring).
 corpus_text: null
+# Real prompts for the forward passes instead of the embedded default:
+# .parquet / .jsonl / .txt. corpus_field selects the text column/key
+# (defaults to question -> text -> first).
+corpus_path: null
+corpus_field: null
+# Deterministic head-cap on corpus rows (full TriviaQA/NQ train splits hold
+# ~88k questions; the probes were fit on ~2k-sample subsets).
+corpus_max_rows: null
+# Position subset for the vocab-heavy forward statistics: null/all (default),
+# "last:N" or "stride:N". Trade-off: fewer positions = faster but changes the
+# averaging window (recorded in the results metadata).
+eval_positions: null
 n_tokens: 8192
 seq_len: 256
 mediate_sequences: 8
+# Forward-engine intervention scale: 0.0 = paper mean-ablation, >1 = amplify.
+mediate_alpha: 0.0
+# intervene mode: alpha values swept in one run (dose-response). 0.0 replaces
+# the activation with its corpus mean; >1 amplifies by that factor.
+intervene_alphas: [0.0, 2.0]
 # candidates = identified set + random baseline (CPU-friendly); "all" sweeps
 # every final-layer neuron like the authors.
 mediate_scope: candidates
@@ -37,6 +58,11 @@ random_baseline_count: 20
 # --- overlap mode ---
 # Probe JSON with H-Neuron indices (legacy "neurons" or "fit.h_neurons" format).
 probe_path: null
+# Which layers to compare against the probe: final (paper-faithful single
+# layer) | probe (every layer hosting an H-Neuron) | all (every layer).
+# Non-final modes are entropy-family only and report per-layer + pooled
+# overlap with hypergeometric p-values.
+overlap_layers: final
 
 # --- neuron family ---
 # entropy: null-space rho ranking + DE with frozen LayerNorm scale (Eq. 6)
@@ -56,6 +82,20 @@ layer: null
 # TransformerLens fold_ln equivalent). Required for correct null-space
 # identification — without it GPT-2 Small reproduction drops to 1/6.
 fold_final_norm: true
+
+# --- descriptor ---
+# static: the paper's weight-space rho (alignment of the raw w_out with the
+# unembedding null space; final-layer semantics).
+# propagated: effective rho after the write is carried to the final residual by
+# a data-estimated linear operator, so mid-layer neurons are scored by where the
+# write lands rather than where it is born; reduces to static at the final
+# layer. Requires a corpus forward pass (uses the mediate corpus settings).
+descriptor: static
+# Relative ridge on the operator's normal equations (needed when the corpus has
+# fewer positions than d_model).
+propagation_ridge: 0.001
+# Corpus sequences for the propagated descriptor; null reuses mediate_sequences.
+propagation_sequences: null
 
 seed: 42
 
