@@ -851,36 +851,77 @@ def test_g1_fidelity_propagated_equals_static_synthetic(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _tiny_backend(seed=0, n_layer=2, n_embd=32, d_mlp=64, vocab=64):
-    """Config-built tiny GPT-2 (no download) for hook/finite-difference tests."""
-    from transformers import GPT2Config, GPT2LMHeadModel
+def _tiny_backend(arch="gpt2", seed=0, vocab=64):
+    """Config-built tiny model (no download) for hook/finite-difference tests.
+
+    Covers the three canonical norm/MLP variants: ``gpt2`` (LayerNorm/GELU),
+    ``llama`` (RMSNorm/SwiGLU), ``gemma`` (RMSNorm/gated + post-FFN norm). The
+    text-dependent fake tokenizer makes distinct ``corpus_text`` values produce
+    distinct id streams (used by the G6 context check).
+    """
+    from transformers import (
+        GemmaConfig,
+        GemmaForCausalLM,
+        GPT2Config,
+        GPT2LMHeadModel,
+        LlamaConfig,
+        LlamaForCausalLM,
+    )
 
     from cotlab.patching.hooks import HookManager
 
     class _Tok:
         def __call__(self, text, return_tensors=None, add_special_tokens=False):
-            return {"input_ids": list(range(1, 33))}
+            ids = [(ord(c) % (vocab - 4)) + 1 for c in text if not c.isspace()]
+            return {"input_ids": ((ids or [1]) * 4)[:256]}
 
     class _Backend:
-        def __init__(self, model, tok):
+        def __init__(self, model):
             self.model = model
-            self.tokenizer = tok
+            self.tokenizer = _Tok()
             self.hook_manager = HookManager(model)
             self.device = "cpu"
-            self.model_name = "tiny-gpt2"
+            self.model_name = f"tiny-{arch}"
 
     torch.manual_seed(seed)
-    cfg = GPT2Config(
-        vocab_size=vocab,
-        n_positions=64,
-        n_embd=n_embd,
-        n_layer=n_layer,
-        n_head=2,
-        n_inner=d_mlp,
-        bos_token_id=1,
-        eos_token_id=2,
-    )
-    return _Backend(GPT2LMHeadModel(cfg).eval(), _Tok())
+    if arch == "gpt2":
+        cfg = GPT2Config(
+            vocab_size=vocab,
+            n_positions=128,
+            n_embd=32,
+            n_layer=2,
+            n_head=2,
+            n_inner=64,
+            bos_token_id=1,
+            eos_token_id=2,
+        )
+        model = GPT2LMHeadModel(cfg)
+    elif arch == "llama":
+        cfg = LlamaConfig(
+            vocab_size=vocab,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            max_position_embeddings=128,
+        )
+        model = LlamaForCausalLM(cfg)
+    elif arch == "gemma":
+        cfg = GemmaConfig(
+            vocab_size=vocab,
+            hidden_size=32,
+            intermediate_size=64,
+            num_hidden_layers=2,
+            num_attention_heads=2,
+            num_key_value_heads=2,
+            head_dim=16,
+            max_position_embeddings=128,
+        )
+        model = GemmaForCausalLM(cfg)
+    else:
+        raise ValueError(f"unknown arch: {arch}")
+    return _Backend(model.eval())
 
 
 def test_g1_fidelity_propagated_equals_static_real_model():
@@ -959,3 +1000,39 @@ def test_g3_stability_corpus_size():
     rho2, _ = exp2._propagated_rho(ident, backend)
     rho4, _ = exp4._propagated_rho(ident, backend)
     assert exp2._pearson(rho2, rho4) > 0.9
+
+
+# --- G5 Generality ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("arch", ["gpt2", "llama", "gemma"])
+def test_g5_generality_fidelity_across_architectures(arch):
+    backend = _tiny_backend(arch)
+    exp = ConfidenceRegulationExperiment(
+        descriptor="propagated",
+        top_n=4,
+        propagation_ridge=1e-6,
+        mediate_sequences=2,
+        seq_len=64,
+        seed=0,
+    )
+    ident = exp._identify_arrays(backend)
+    assert ident["layer"] == backend.hook_manager.num_layers - 1
+    rho_prop, _ = exp._propagated_rho(ident, backend)
+    assert torch.allclose(rho_prop, ident["rho"], atol=1e-3)
+
+
+@pytest.mark.parametrize("arch", ["gpt2", "llama", "gemma"])
+def test_g5_generality_groundtruth_across_architectures(arch):
+    backend = _tiny_backend(arch)
+    exp = ConfidenceRegulationExperiment(
+        layer=0, top_n=4, propagation_ridge=1e-6, seq_len=64, seed=0
+    )
+    ident = exp._identify_arrays(backend)
+    idx = ident["selected"]
+    post, final = exp._capture_residual_pair(backend, 0)
+    operator = exp._effective_operator(post, final, exp.propagation_ridge)
+    estimated = (operator @ ident["w_out"][:, idx]).T
+    measured = exp._finite_difference_writes(backend, 0, idx, eps=1e-2, sequences=1)
+    cosine = torch.nn.functional.cosine_similarity(estimated, measured, dim=1)
+    assert float(cosine.mean()) > 0.5
