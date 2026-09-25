@@ -511,6 +511,19 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 used.add(pick)
         return sorted(out)
 
+    @staticmethod
+    def _random_control_indices(population: int, exclude: set, count: int, seed: int) -> List[int]:
+        """Random neuron indices drawn from the complement of ``exclude``.
+
+        The control group must not overlap the treated groups (selected /
+        H-Neurons / norm-matched), otherwise a neuron is counted as both
+        treatment and control and contaminates the group means and p-values.
+        """
+        pool = [i for i in range(population) if i not in exclude]
+        rng = torch.Generator().manual_seed(seed)
+        draw = torch.randperm(len(pool), generator=rng)[: min(count, len(pool))].tolist()
+        return sorted(pool[j] for j in draw)
+
     def _identify_arrays(self, backend: InferenceBackend) -> Dict[str, Any]:
         """Compute all identify-mode quantities once; shared by all modes."""
         w_u = self._get_unembedding(backend)
@@ -1163,11 +1176,6 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         selected = ident["selected"]
         norms = ident.get("norms")
 
-        rng = torch.Generator().manual_seed(self.seed)
-        rand_idx = torch.randperm(score.numel(), generator=rng)[
-            : self.random_baseline_count
-        ].tolist()
-
         # Optional probe arm: intervene on our H-Neurons at the analysis layer
         # plus a norm-matched control group (the honest baseline for norm).
         h_layer: List[int] = []
@@ -1178,6 +1186,13 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             norm_matched = self._norm_matched_indices(
                 norms, h_layer, exclude=tuple(selected), seed=self.seed
             )
+        # Random control drawn from the complement of every treated group.
+        rand_idx = self._random_control_indices(
+            score.numel(),
+            exclude=set(selected) | set(h_layer) | set(norm_matched),
+            count=self.random_baseline_count,
+            seed=self.seed,
+        )
 
         if self.mediate_scope == "all":
             indices = list(range(score.numel()))
@@ -1495,10 +1510,6 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         selected = ident["selected"]
         norms = ident.get("norms")
 
-        rng = torch.Generator().manual_seed(self.seed)
-        rand_idx = torch.randperm(score.numel(), generator=rng)[
-            : self.random_baseline_count
-        ].tolist()
         h_layer = []
         if self.probe_path:
             h_layer = sorted({i for lyr, i in self._load_probe_neurons() if lyr == ident["layer"]})
@@ -1507,6 +1518,13 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             norm_matched = self._norm_matched_indices(
                 norms, h_layer, exclude=tuple(selected), seed=self.seed
             )
+        # Random control drawn from the complement of every treated group.
+        rand_idx = self._random_control_indices(
+            score.numel(),
+            exclude=set(selected) | set(h_layer) | set(norm_matched),
+            count=self.random_baseline_count,
+            seed=self.seed,
+        )
         indices = sorted(set(selected) | set(rand_idx) | set(h_layer) | set(norm_matched))
         groups = {
             "selected": [indices.index(i) for i in selected],

@@ -1067,3 +1067,19 @@ def test_g6_context_corpus_ranking_stable():
     rho_a, _ = exp_a._propagated_rho(ident, backend)
     rho_b, _ = exp_b._propagated_rho(ident, backend)
     assert exp_a._pearson(rho_a, rho_b) > 0.9
+
+
+def test_random_control_excludes_treated_groups():
+    excluded = {0, 1, 2, 3}
+    drawn = ConfidenceRegulationExperiment._random_control_indices(
+        population=20, exclude=excluded, count=5, seed=0
+    )
+    assert len(drawn) == 5
+    assert not (set(drawn) & excluded)
+    assert len(set(drawn)) == len(drawn)
+    # deterministic for a fixed seed, and capped by the available pool
+    assert drawn == ConfidenceRegulationExperiment._random_control_indices(20, excluded, 5, 0)
+    capped = ConfidenceRegulationExperiment._random_control_indices(
+        population=6, exclude={0, 1, 2, 3, 4}, count=10, seed=0
+    )
+    assert capped == [5]
