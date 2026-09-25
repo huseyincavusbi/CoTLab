@@ -743,8 +743,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
             def hook(_mod, _inp, output, _vec=vec):  # noqa: ANN001 - hook signature
                 if isinstance(output, tuple):
-                    return (output[0] + eps * _vec.to(output[0].dtype),) + output[1:]
-                return output + eps * _vec.to(output.dtype)
+                    delta = eps * _vec.to(device=output[0].device, dtype=output[0].dtype)
+                    return (output[0] + delta,) + output[1:]
+                delta = eps * _vec.to(device=output.device, dtype=output.dtype)
+                return output + delta
 
             handle = layer_mod.register_forward_hook(hook)
             try:
