@@ -836,3 +836,110 @@ def test_propagated_rho_equals_static_at_final_layer(monkeypatch):
     rho_static, _ = exp._compute_rho(w_u, w_out)
     assert torch.allclose(rho_prop, rho_static, atol=1e-5)
     assert diag["propagation_positions"] == 120
+
+
+# ---------------------------------------------------------------------------
+# propagated descriptor — real-model and finite-difference validation
+# ---------------------------------------------------------------------------
+
+
+def _tiny_backend(seed=0, n_layer=2, n_embd=32, d_mlp=64, vocab=64):
+    """Config-built tiny GPT-2 (no download) for hook/finite-difference tests."""
+    from transformers import GPT2Config, GPT2LMHeadModel
+
+    from cotlab.patching.hooks import HookManager
+
+    class _Tok:
+        def __call__(self, text, return_tensors=None, add_special_tokens=False):
+            return {"input_ids": list(range(1, 33))}
+
+    class _Backend:
+        def __init__(self, model, tok):
+            self.model = model
+            self.tokenizer = tok
+            self.hook_manager = HookManager(model)
+            self.device = "cpu"
+            self.model_name = "tiny-gpt2"
+
+    torch.manual_seed(seed)
+    cfg = GPT2Config(
+        vocab_size=vocab,
+        n_positions=64,
+        n_embd=n_embd,
+        n_layer=n_layer,
+        n_head=2,
+        n_inner=d_mlp,
+        bos_token_id=1,
+        eos_token_id=2,
+    )
+    return _Backend(GPT2LMHeadModel(cfg).eval(), _Tok())
+
+
+def test_propagated_rho_reduces_to_static_on_real_model():
+    backend = _tiny_backend()
+    exp = ConfidenceRegulationExperiment(
+        mode="identify",
+        descriptor="propagated",
+        top_n=4,
+        propagation_ridge=1e-6,
+        mediate_sequences=2,
+        seq_len=64,
+        seed=0,
+    )
+    ident = exp._identify_arrays(backend)
+    assert ident["layer"] == backend.hook_manager.num_layers - 1
+    rho_prop, _ = exp._propagated_rho(ident, backend)
+    assert torch.allclose(rho_prop, ident["rho"], atol=1e-3)
+
+
+def test_finite_difference_matches_estimated_propagation():
+    backend = _tiny_backend()
+    exp = ConfidenceRegulationExperiment(
+        mode="identify", layer=0, top_n=4, propagation_ridge=1e-6, seq_len=64, seed=0
+    )
+    ident = exp._identify_arrays(backend)
+    idx = ident["selected"]
+    post, final = exp._capture_residual_pair(backend, 0)
+    operator = exp._effective_operator(post, final, exp.propagation_ridge)
+    estimated = (operator @ ident["w_out"][:, idx]).T  # (m, d_model)
+    measured = exp._finite_difference_writes(backend, 0, idx, eps=1e-2, sequences=1)
+    cosine = torch.nn.functional.cosine_similarity(estimated, measured, dim=1)
+    assert float(cosine.mean()) > 0.8
+
+
+def test_effective_operator_recovers_known_map_and_shuffle_control():
+    torch.manual_seed(0)
+    post = torch.randn(2000, 16)
+    linear = torch.randn(16, 16)
+    final = post @ linear + 0.01 * torch.randn(2000, 16)
+    discovered = ConfidenceRegulationExperiment._effective_operator(post, final, ridge=0.0)
+    # J maps column residuals, so final = post @ linear means J = linear.T
+    assert (discovered.T - linear).abs().mean() < 0.05
+    shuffled = ConfidenceRegulationExperiment._effective_operator(
+        post, final[torch.randperm(2000)], ridge=0.0
+    )
+    # breaking the pairing must collapse the operator far below the real one
+    assert shuffled.abs().mean() < 0.25 * discovered.abs().mean()
+
+
+def test_effective_operator_ridge_finite_on_rank_deficient():
+    torch.manual_seed(0)
+    post = torch.randn(5, 12)
+    final = post @ torch.randn(12, 12)
+    operator = ConfidenceRegulationExperiment._effective_operator(post, final, ridge=1e-2)
+    assert operator.shape == (12, 12)
+    assert torch.isfinite(operator).all()
+
+
+def test_propagated_rho_stable_across_corpus_size():
+    backend = _tiny_backend()
+    exp2 = ConfidenceRegulationExperiment(
+        layer=0, top_n=4, propagation_ridge=1e-6, mediate_sequences=2, seq_len=64, seed=0
+    )
+    exp4 = ConfidenceRegulationExperiment(
+        layer=0, top_n=4, propagation_ridge=1e-6, mediate_sequences=4, seq_len=64, seed=0
+    )
+    ident = exp2._identify_arrays(backend)
+    rho2, _ = exp2._propagated_rho(ident, backend)
+    rho4, _ = exp4._propagated_rho(ident, backend)
+    assert exp2._pearson(rho2, rho4) > 0.9
