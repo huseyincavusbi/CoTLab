@@ -757,8 +757,16 @@ def test_percentile_rank_endpoints():
 
 
 # ---------------------------------------------------------------------------
-# propagated (effective-write) descriptor
+# propagated (effective-write) descriptor — config
 # ---------------------------------------------------------------------------
+#
+# Validation gates:
+#   G1 Fidelity    reduces to the paper's static rho at the final layer
+#   G2 Groundtruth matches the finite-difference propagated write
+#   G3 Stability   robust to ridge/corpus, not a spurious pairing
+#   G4 Validity    predicts causal function (follow-up experiment; not a test)
+#   G5 Generality  holds across dense / SwiGLU / gated architectures
+#   G6 Context     rho_prop ranking is stable across corpora
 
 
 def test_rejects_unknown_descriptor():
@@ -776,7 +784,7 @@ def test_rejects_nonpositive_propagation_sequences():
         ConfidenceRegulationExperiment(propagation_sequences=0)
 
 
-def test_effective_operator_identity_at_final_layer():
+def test_g1_fidelity_operator_identity_at_final_layer():
     torch.manual_seed(0)
     post = torch.randn(200, 8)
     operator = ConfidenceRegulationExperiment._effective_operator(post, post, ridge=0.0)
@@ -784,7 +792,7 @@ def test_effective_operator_identity_at_final_layer():
     assert torch.allclose(operator, torch.eye(8), atol=1e-5)
 
 
-def test_effective_operator_ridge_keeps_finite():
+def test_g3_stability_ridge_keeps_finite():
     torch.manual_seed(0)
     # fewer positions than dimensions -> rank deficient without ridge
     post = torch.randn(5, 12)
@@ -794,7 +802,7 @@ def test_effective_operator_ridge_keeps_finite():
     assert torch.isfinite(operator).all()
 
 
-def test_null_fraction_matches_static_rho():
+def test_g1_fidelity_null_fraction_matches_static_rho():
     torch.manual_seed(0)
     exp = ConfidenceRegulationExperiment(k_null=2)
     d, m = 16, 6
@@ -823,7 +831,7 @@ class _PropBackend:
         self.model = _PropModel(w_u)
 
 
-def test_propagated_rho_equals_static_at_final_layer(monkeypatch):
+def test_g1_fidelity_propagated_equals_static_synthetic(monkeypatch):
     torch.manual_seed(0)
     exp = ConfidenceRegulationExperiment(k_null=2, descriptor="propagated", propagation_ridge=0.0)
     d, m, vocab = 16, 6, 40
@@ -839,7 +847,7 @@ def test_propagated_rho_equals_static_at_final_layer(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# propagated descriptor — real-model and finite-difference validation
+# shared real-model helper (config-built tiny models, no download)
 # ---------------------------------------------------------------------------
 
 
@@ -875,7 +883,7 @@ def _tiny_backend(seed=0, n_layer=2, n_embd=32, d_mlp=64, vocab=64):
     return _Backend(GPT2LMHeadModel(cfg).eval(), _Tok())
 
 
-def test_propagated_rho_reduces_to_static_on_real_model():
+def test_g1_fidelity_propagated_equals_static_real_model():
     backend = _tiny_backend()
     exp = ConfidenceRegulationExperiment(
         mode="identify",
@@ -892,7 +900,7 @@ def test_propagated_rho_reduces_to_static_on_real_model():
     assert torch.allclose(rho_prop, ident["rho"], atol=1e-3)
 
 
-def test_finite_difference_matches_estimated_propagation():
+def test_g2_groundtruth_matches_finite_difference():
     backend = _tiny_backend()
     exp = ConfidenceRegulationExperiment(
         mode="identify", layer=0, top_n=4, propagation_ridge=1e-6, seq_len=64, seed=0
@@ -907,7 +915,7 @@ def test_finite_difference_matches_estimated_propagation():
     assert float(cosine.mean()) > 0.8
 
 
-def test_effective_operator_recovers_known_map_and_shuffle_control():
+def test_g2_groundtruth_recovers_known_map():
     torch.manual_seed(0)
     post = torch.randn(2000, 16)
     linear = torch.randn(16, 16)
@@ -915,14 +923,22 @@ def test_effective_operator_recovers_known_map_and_shuffle_control():
     discovered = ConfidenceRegulationExperiment._effective_operator(post, final, ridge=0.0)
     # J maps column residuals, so final = post @ linear means J = linear.T
     assert (discovered.T - linear).abs().mean() < 0.05
+
+
+def test_g3_stability_shuffle_control():
+    torch.manual_seed(0)
+    post = torch.randn(2000, 16)
+    linear = torch.randn(16, 16)
+    final = post @ linear + 0.01 * torch.randn(2000, 16)
+    real = ConfidenceRegulationExperiment._effective_operator(post, final, ridge=0.0)
     shuffled = ConfidenceRegulationExperiment._effective_operator(
         post, final[torch.randperm(2000)], ridge=0.0
     )
     # breaking the pairing must collapse the operator far below the real one
-    assert shuffled.abs().mean() < 0.25 * discovered.abs().mean()
+    assert shuffled.abs().mean() < 0.25 * real.abs().mean()
 
 
-def test_effective_operator_ridge_finite_on_rank_deficient():
+def test_g3_stability_ridge_rank_deficient():
     torch.manual_seed(0)
     post = torch.randn(5, 12)
     final = post @ torch.randn(12, 12)
@@ -931,7 +947,7 @@ def test_effective_operator_ridge_finite_on_rank_deficient():
     assert torch.isfinite(operator).all()
 
 
-def test_propagated_rho_stable_across_corpus_size():
+def test_g3_stability_corpus_size():
     backend = _tiny_backend()
     exp2 = ConfidenceRegulationExperiment(
         layer=0, top_n=4, propagation_ridge=1e-6, mediate_sequences=2, seq_len=64, seed=0
