@@ -930,7 +930,7 @@ def test_g1_fidelity_propagated_equals_static_real_model():
         mode="identify",
         descriptor="propagated",
         top_n=4,
-        # default ridge (1e-3): the final-layer identity must hold regardless
+        # default ridge (1e-3): direct-write architectures keep exact G1 fidelity
         mediate_sequences=2,
         seq_len=64,
         seed=0,
@@ -939,6 +939,28 @@ def test_g1_fidelity_propagated_equals_static_real_model():
     assert ident["layer"] == backend.hook_manager.num_layers - 1
     rho_prop, _ = exp._propagated_rho(ident, backend)
     assert torch.allclose(rho_prop, ident["rho"], atol=1e-3)
+
+
+def test_g1_fidelity_entangled_final_layer_uses_estimated_operator(monkeypatch):
+    torch.manual_seed(0)
+    exp = ConfidenceRegulationExperiment(k_null=2, descriptor="propagated", propagation_ridge=1e-3)
+    d, m, vocab = 16, 6, 40
+    w_u = torch.randn(vocab, d)
+    w_out = torch.randn(d, m)
+    backend = _PropBackend(w_u)
+    backend.hook_manager = type("_HM", (), {"num_layers": 1})()
+    post = torch.randn(120, d)
+    final = torch.randn(120, d)
+    operator = torch.randn(d, d)
+
+    monkeypatch.setattr(exp, "_capture_residual_pair", lambda _backend, _layer: (post, final))
+    monkeypatch.setattr(exp, "_effective_operator", lambda _post, _final, _ridge: operator)
+    monkeypatch.setattr(exp, "_has_post_ffn_norm", lambda _backend: True)
+
+    rho_prop, _ = exp._propagated_rho({"w_out": w_out, "layer": 0}, backend)
+    v_bottom, _ = exp._null_basis(w_u, 2, None)
+    expected = exp._null_fraction(v_bottom, operator @ w_out)
+    assert torch.allclose(rho_prop, expected, atol=1e-6)
 
 
 def test_g2_groundtruth_matches_finite_difference():
@@ -1005,13 +1027,16 @@ def test_g3_stability_corpus_size():
 # --- G5 Generality ---------------------------------------------------------
 
 
-@pytest.mark.parametrize("arch", ["gpt2", "llama", "gemma"])
-def test_g5_generality_fidelity_across_architectures(arch):
+@pytest.mark.parametrize(
+    ("arch", "expect_static_match"),
+    [("gpt2", True), ("llama", True), ("gemma", False)],
+)
+def test_g5_generality_fidelity_across_architectures(arch, expect_static_match):
     backend = _tiny_backend(arch)
     exp = ConfidenceRegulationExperiment(
         descriptor="propagated",
         top_n=4,
-        # default ridge (1e-3): the final-layer identity must hold regardless
+        # direct-write architectures keep exact final-layer G1 fidelity
         mediate_sequences=2,
         seq_len=64,
         seed=0,
@@ -1019,7 +1044,10 @@ def test_g5_generality_fidelity_across_architectures(arch):
     ident = exp._identify_arrays(backend)
     assert ident["layer"] == backend.hook_manager.num_layers - 1
     rho_prop, _ = exp._propagated_rho(ident, backend)
-    assert torch.allclose(rho_prop, ident["rho"], atol=1e-3)
+    if expect_static_match:
+        assert torch.allclose(rho_prop, ident["rho"], atol=1e-3)
+    else:
+        assert not torch.allclose(rho_prop, ident["rho"], atol=1e-3)
 
 
 @pytest.mark.parametrize("arch", ["gpt2", "llama", "gemma"])
