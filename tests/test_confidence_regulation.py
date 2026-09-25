@@ -930,7 +930,7 @@ def test_g1_fidelity_propagated_equals_static_real_model():
         mode="identify",
         descriptor="propagated",
         top_n=4,
-        propagation_ridge=1e-6,
+        # default ridge (1e-3): the final-layer identity must hold regardless
         mediate_sequences=2,
         seq_len=64,
         seed=0,
@@ -1011,7 +1011,7 @@ def test_g5_generality_fidelity_across_architectures(arch):
     exp = ConfidenceRegulationExperiment(
         descriptor="propagated",
         top_n=4,
-        propagation_ridge=1e-6,
+        # default ridge (1e-3): the final-layer identity must hold regardless
         mediate_sequences=2,
         seq_len=64,
         seed=0,

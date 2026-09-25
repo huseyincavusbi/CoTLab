@@ -678,7 +678,14 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         k = min(k, d_model)
         v_bottom, _ = self._null_basis(w_u, k, backend)
         post, final = self._capture_residual_pair(backend, ident["layer"])
-        operator = self._effective_operator(post, final, self.propagation_ridge)
+        num_layers = getattr(getattr(backend, "hook_manager", None), "num_layers", None)
+        if num_layers is not None and ident["layer"] == num_layers - 1:
+            # At the final layer the write enters the final residual directly, so
+            # the propagation operator is the identity -- exact regardless of the
+            # configured ridge (which would otherwise shrink it and break G1).
+            operator = torch.eye(post.shape[1], dtype=post.dtype)
+        else:
+            operator = self._effective_operator(post, final, self.propagation_ridge)
         writes = operator @ ident["w_out"]
         rho_prop = self._null_fraction(v_bottom, writes)
         diag = {
