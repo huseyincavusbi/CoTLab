@@ -25,15 +25,19 @@
 `descriptor: propagated` replaces the paper's static, final-layer null-space
 fraction `rho` with an *effective* one: each neuron's write is carried to the
 final residual by a data-estimated linear operator and scored against the same
-null basis. It reduces **exactly** to the static `rho` at the final layer, so it
-is only a re-parameterization where the paper is defined (mid-layer neurons are
-scored by where the write lands, not where it is born).
+null basis. For **write-direct** architectures (no post-FFN norm) it reduces
+**exactly** to the static `rho` at the final layer, so it is only a
+re-parameterization where the paper is defined (mid-layer neurons are scored by
+where the write lands, not where it is born). For gated models with a
+`post_feedforward_layernorm` (Gemma 2/3, MedGemma) the write is normalized
+before the residual add, so the map is estimated from the down-projection write
+point and `rho_prop` need not equal the static `rho`.
 
 Validation gates (see `tests/test_confidence_regulation.py`):
 
 | Gate | Checks |
 |------|--------|
-| **G1 Fidelity** | reduces to the paper's static `rho` at the final layer |
+| **G1 Fidelity** | reduces to the paper's static `rho` at the final layer (write-direct architectures) |
 | **G2 Ground-truth** | matches the finite-difference propagated write |
 | **G3 Stability** | robust to ridge/corpus; not a spurious pairing |
 | **G4 Validity** | predicts causal function — follow-up experiment (not a unit test) |

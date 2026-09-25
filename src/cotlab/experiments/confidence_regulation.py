@@ -33,7 +33,8 @@ identify:
     carries the write to the final residual with a data-estimated linear
     operator and scores its effective null-space fraction, so mid-layer
     neurons are judged by where the write lands; it reduces to ``static`` at
-    the final layer.
+    the final layer for write-direct architectures, while post-FFN-norm models
+    (Gemma 2/3, MedGemma) estimate the map from the down-projection write point.
 
 mediate:
     Causal mediation via analytic mean-ablation on the cached final residual
@@ -629,21 +630,36 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         den = writes.norm(dim=0).clamp_min(1e-12)
         return num / den
 
-    def _capture_residual_pair(self, backend: InferenceBackend, layer: int):
-        """Corpus capture of (post-layer residual, final-norm input) pairs.
+    def _write_point_module(self, backend: InferenceBackend, layer: int):
+        """Module whose output is the neuron's residual write point.
 
-        Both are ``(n_positions, d_model)`` fp32 CPU tensors. Hooks the layer
-        block output (residual after ``layer``) and the final-norm input (the
-        residual read by the unembedding path). Deliberately independent of the
-        identify dispatch so it can be called from identify mode without
-        recursion.
+        Without a post-FFN norm the down-projection output is added straight to
+        the residual, so the layer block output is the write point. With one
+        (Gemma 2/3, MedGemma) the write first passes through
+        ``post_feedforward_layernorm``; the down-projection output is then the
+        write point, so the estimated operator captures that normalization
+        instead of silently assuming it away.
+        """
+        if self._has_post_ffn_norm(backend):
+            return backend.hook_manager.get_mlp_down_proj_module(layer)
+        return backend.hook_manager.get_layer_module(layer)
+
+    def _capture_residual_pair(self, backend: InferenceBackend, layer: int):
+        """Corpus capture of (write point, final-norm input) pairs.
+
+        Both are ``(n_positions, d_model)`` fp32 CPU tensors. The write point is
+        the module from :meth:`_write_point_module` (layer output, or the
+        down-projection output for post-FFN-norm architectures); the final-norm
+        input is the residual read by the unembedding path. Deliberately
+        independent of the identify dispatch so it can be called from identify
+        mode without recursion.
         """
         device = backend.device
         batches = self._build_corpus_batches(backend)
         norm_mod = self._resolve_final_norm_module(backend)
         if norm_mod is None:
             raise ValueError("could not resolve the final normalization module")
-        layer_mod = backend.hook_manager.get_layer_module(layer)
+        write_mod = self._write_point_module(backend, layer)
         captured: Dict[str, torch.Tensor] = {}
 
         def grab_post(_mod, _inp, output):
@@ -652,7 +668,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         def grab_final(_mod, inp):
             captured["final"] = inp[0]
 
-        handle_post = layer_mod.register_forward_hook(grab_post)
+        handle_post = write_mod.register_forward_hook(grab_post)
         handle_final = norm_mod.register_forward_pre_hook(grab_final)
         posts: List[torch.Tensor] = []
         finals: List[torch.Tensor] = []
@@ -691,15 +707,16 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         k = min(k, d_model)
         v_bottom, _ = self._null_basis(w_u, k, backend)
         post, final = self._capture_residual_pair(backend, ident["layer"])
-        num_layers = getattr(getattr(backend, "hook_manager", None), "num_layers", None)
-        if (
-            num_layers is not None
-            and ident["layer"] == num_layers - 1
-            and not self._has_post_ffn_norm(backend)
-        ):
-            # At the final layer, only architectures without a post-FFN norm have
-            # a direct write -> residual path. There J is exactly identity and we
-            # keep that exactness independent of ridge.
+        hook_manager = getattr(backend, "hook_manager", None)
+        at_final = hook_manager is not None and ident["layer"] == hook_manager.num_layers - 1
+        post_ffn_norm = self._has_post_ffn_norm(backend) if hook_manager is not None else False
+        if at_final and not post_ffn_norm:
+            # The write already enters the final residual directly, so the
+            # operator is the identity -- exact regardless of ridge (which would
+            # otherwise shrink it and break G1). Architectures with a post-FFN
+            # norm (Gemma 2/3, MedGemma) are excluded: their write is normalized
+            # before the residual add, so the map is estimated from the
+            # down-projection write point instead.
             operator = torch.eye(post.shape[1], dtype=post.dtype)
         else:
             operator = self._effective_operator(post, final, self.propagation_ridge)
@@ -722,20 +739,21 @@ class ConfidenceRegulationExperiment(BaseExperiment):
     ) -> torch.Tensor:
         """Ground-truth propagated writes via finite differences.
 
-        For each neuron ``i``, adds ``eps * w_out_i`` to the analysis-layer
-        residual at every position, re-forwards the downstream layers, and
-        averages ``(h_L' - h_L) / eps`` over positions. The result
-        ``(len(indices), d_model)`` is the empirically measured propagation of
-        each write -- the reference the data-estimated operator is validated
-        against (``_effective_operator``). Perturbing all positions at once is a
-        corpus-average response; eps controls the finite-difference bias.
+        For each neuron ``i``, adds ``eps * w_out_i`` at the write point (the
+        layer output, or the down-projection output for post-FFN-norm models),
+        re-forwards the downstream layers, and averages ``(h_L' - h_L) / eps``
+        over positions. The result ``(len(indices), d_model)`` is the empirically
+        measured propagation of each write -- the reference the data-estimated
+        operator is validated against (``_effective_operator``). Perturbing all
+        positions at once is a corpus-average response; eps controls the
+        finite-difference bias.
         """
         device = backend.device
         batches = self._build_corpus_batches(backend)
         norm_mod = self._resolve_final_norm_module(backend)
         if norm_mod is None:
             raise ValueError("could not resolve the final normalization module")
-        layer_mod = backend.hook_manager.get_layer_module(layer)
+        write_mod = self._write_point_module(backend, layer)
         w_out = self._get_w_out(backend, layer)
         idx = list(indices)
         if not idx:
@@ -772,7 +790,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
                 delta = eps * _vec.to(device=output.device, dtype=output.dtype)
                 return output + delta
 
-            handle = layer_mod.register_forward_hook(hook)
+            handle = write_mod.register_forward_hook(hook)
             try:
                 perturbed = run_all()
                 deltas = [

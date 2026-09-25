@@ -860,8 +860,8 @@ def _tiny_backend(arch="gpt2", seed=0, vocab=64):
     distinct id streams (used by the G6 context check).
     """
     from transformers import (
-        GemmaConfig,
-        GemmaForCausalLM,
+        Gemma2Config,
+        Gemma2ForCausalLM,
         GPT2Config,
         GPT2LMHeadModel,
         LlamaConfig,
@@ -908,7 +908,9 @@ def _tiny_backend(arch="gpt2", seed=0, vocab=64):
         )
         model = LlamaForCausalLM(cfg)
     elif arch == "gemma":
-        cfg = GemmaConfig(
+        # Gemma 2 (gated MLP + post_feedforward_layernorm) -- exercises the
+        # post-FFN-norm write path.
+        cfg = Gemma2Config(
             vocab_size=vocab,
             hidden_size=32,
             intermediate_size=64,
@@ -918,7 +920,7 @@ def _tiny_backend(arch="gpt2", seed=0, vocab=64):
             head_dim=16,
             max_position_embeddings=128,
         )
-        model = GemmaForCausalLM(cfg)
+        model = Gemma2ForCausalLM(cfg)
     else:
         raise ValueError(f"unknown arch: {arch}")
     return _Backend(model.eval())
@@ -1027,11 +1029,10 @@ def test_g3_stability_corpus_size():
 # --- G5 Generality ---------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("arch", "expect_static_match"),
-    [("gpt2", True), ("llama", True), ("gemma", False)],
-)
-def test_g5_generality_fidelity_across_architectures(arch, expect_static_match):
+@pytest.mark.parametrize("arch", ["gpt2", "llama"])
+def test_g5_generality_fidelity_across_architectures(arch):
+    # Without a post-FFN norm the write reaches the residual directly, so the
+    # propagated descriptor reduces exactly to static rho at the final layer.
     backend = _tiny_backend(arch)
     exp = ConfidenceRegulationExperiment(
         descriptor="propagated",
@@ -1044,14 +1045,33 @@ def test_g5_generality_fidelity_across_architectures(arch, expect_static_match):
     ident = exp._identify_arrays(backend)
     assert ident["layer"] == backend.hook_manager.num_layers - 1
     rho_prop, _ = exp._propagated_rho(ident, backend)
-    if expect_static_match:
-        assert torch.allclose(rho_prop, ident["rho"], atol=1e-3)
-    else:
-        assert not torch.allclose(rho_prop, ident["rho"], atol=1e-3)
+    assert torch.allclose(rho_prop, ident["rho"], atol=1e-3)
 
 
-@pytest.mark.parametrize("arch", ["gpt2", "llama", "gemma"])
-def test_g5_generality_groundtruth_across_architectures(arch):
+def test_g5_generality_post_ffn_norm_uses_write_point():
+    # Gemma-style layers normalize the MLP write before the residual add, so the
+    # map is estimated from the down-projection write point (not assumed to be
+    # the identity).
+    backend = _tiny_backend("gemma")
+    exp = ConfidenceRegulationExperiment(
+        descriptor="propagated", top_n=4, mediate_sequences=2, seq_len=64, seed=0
+    )
+    assert exp._has_post_ffn_norm(backend)
+    assert exp._write_point_module(backend, 0) is backend.hook_manager.get_mlp_down_proj_module(0)
+    ident = exp._identify_arrays(backend)
+    rho_prop, _ = exp._propagated_rho(ident, backend)
+    assert rho_prop.shape == ident["rho"].shape
+    assert torch.isfinite(rho_prop).all()
+
+
+@pytest.mark.parametrize(
+    ("arch", "min_cos"),
+    [("gpt2", 0.8), ("llama", 0.5), ("gemma", 0.3)],
+)
+def test_g5_generality_groundtruth_across_architectures(arch, min_cos):
+    # Thresholds loosen with the post-FFN norm: RMSNorm re-scales the perturbed
+    # write, so the data-averaged linear map tracks the finite-difference
+    # response less tightly than in the write-direct architectures.
     backend = _tiny_backend(arch)
     exp = ConfidenceRegulationExperiment(
         layer=0, top_n=4, propagation_ridge=1e-6, seq_len=64, seed=0
@@ -1063,7 +1083,7 @@ def test_g5_generality_groundtruth_across_architectures(arch):
     estimated = (operator @ ident["w_out"][:, idx]).T
     measured = exp._finite_difference_writes(backend, 0, idx, eps=1e-2, sequences=1)
     cosine = torch.nn.functional.cosine_similarity(estimated, measured, dim=1)
-    assert float(cosine.mean()) > 0.5
+    assert float(cosine.mean()) > min_cos
 
 
 # --- G6 Context ------------------------------------------------------------
