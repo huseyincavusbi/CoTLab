@@ -1140,3 +1140,21 @@ def test_random_control_excludes_treated_groups():
         population=6, exclude={0, 1, 2, 3, 4}, count=10, seed=0
     )
     assert capped == [5]
+
+
+def test_hypergeom_conv_sf_single_layer_matches_hypergeom():
+    from cotlab.experiments.confidence_regulation import _hypergeom_conv_sf, _hypergeom_sf
+
+    layer = {"n_neurons_in_layer": 100, "entropy_neurons": 10, "h_neurons": 8}
+    assert _hypergeom_conv_sf([layer], 3) == pytest.approx(_hypergeom_sf(3, 100, 10, 8))
+
+
+def test_hypergeom_conv_sf_pools_independent_layers():
+    from cotlab.experiments.confidence_regulation import _hypergeom_conv_sf
+
+    layers = [
+        {"n_neurons_in_layer": 50, "entropy_neurons": 5, "h_neurons": 4},
+        {"n_neurons_in_layer": 80, "entropy_neurons": 8, "h_neurons": 6},
+    ]
+    assert _hypergeom_conv_sf(layers, 0) == pytest.approx(1.0, abs=1e-9)
+    assert 0.0 <= _hypergeom_conv_sf(layers, 10) <= 1.0

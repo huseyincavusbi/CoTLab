@@ -101,6 +101,45 @@ def _hypergeom_sf(k: int, population: int, successes: int, draws: int) -> float:
     return float(tail / denom)
 
 
+def _hypergeom_pmf(population: int, successes: int, draws: int) -> Dict[int, float]:
+    """Hypergeometric probability mass ``P(X = k)`` for ``k`` in the support."""
+    from math import comb
+
+    if population <= 0 or draws <= 0 or successes <= 0:
+        return {0: 1.0}
+    lo = max(0, draws - (population - successes))
+    hi = min(successes, draws)
+    denom = comb(population, draws)
+    if denom == 0:
+        return {0: 1.0}
+    return {
+        k: comb(successes, k) * comb(population - successes, draws - k) / denom
+        for k in range(lo, hi + 1)
+    }
+
+
+def _hypergeom_conv_sf(per_layer: List[Dict[str, Any]], observed: int) -> float:
+    """Upper tail of the sum of independent per-layer hypergeometric counts.
+
+    The pooled overlap null is **layer-stratified**: each layer's H-Neurons are
+    placed at random among that layer's neurons, so layer widths, identified
+    counts and H-Neuron counts all differ. Pooling everything into a single
+    hypergeometric treats the layers as exchangeable and mis-states the null.
+    Convolving the per-layer PMFs gives the exact distribution of the total.
+    """
+    dist: Dict[int, float] = {0: 1.0}
+    for r in per_layer:
+        pmf = _hypergeom_pmf(
+            int(r["n_neurons_in_layer"]), int(r["entropy_neurons"]), int(r["h_neurons"])
+        )
+        nxt: Dict[int, float] = {}
+        for a, pa in dist.items():
+            for b, pb in pmf.items():
+                nxt[a + b] = nxt.get(a + b, 0.0) + pa * pb
+        dist = nxt
+    return float(sum(p for k, p in dist.items() if k >= observed))
+
+
 def _position_selector(spec: Optional[str], n_positions: int) -> slice:
     """Slice for the position axis given an ``eval_positions`` spec.
 
@@ -2132,6 +2171,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         tot_ov = sum(r["overlap_count"] for r in per_layer)
         pooled_expected = tot_sel * tot_h / pop if pop else 0.0
         enrichment = (tot_ov / pooled_expected) if pooled_expected else 0.0
+        pooled_union = tot_sel + tot_h - tot_ov
+        pooled_jaccard = (tot_ov / pooled_union) if pooled_union else 0.0
         metrics: Dict[str, Any] = {
             "mode": "overlap",
             "overlap_layers": self.overlap_layers,
@@ -2143,7 +2184,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "pooled_overlap_count": tot_ov,
             "pooled_expected_random_overlap": pooled_expected,
             "pooled_enrichment_observed_over_random": enrichment,
-            "pooled_hypergeom_p": _hypergeom_sf(tot_ov, pop, tot_sel, tot_h),
+            "pooled_jaccard": pooled_jaccard,
+            "pooled_hypergeom_p": _hypergeom_conv_sf(per_layer, tot_ov),
             "per_layer": per_layer,
         }
 
@@ -2154,6 +2196,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         print(f"Layers analysed   : {layers}")
         print(f"Pooled overlap    : {tot_ov} / {tot_h} H-Neurons in {tot_sel} entropy neurons")
         print(f"Expected at random: {pooled_expected:.4f}  ->  enrichment x{enrichment:.2f}")
+        print(f"Pooled Jaccard    : {pooled_jaccard:.4f}")
         print(f"Pooled hypergeom p: {metrics['pooled_hypergeom_p']:.3e}")
         print("-" * 66)
         for r in per_layer:
