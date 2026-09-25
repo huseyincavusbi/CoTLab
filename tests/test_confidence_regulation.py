@@ -1036,3 +1036,34 @@ def test_g5_generality_groundtruth_across_architectures(arch):
     measured = exp._finite_difference_writes(backend, 0, idx, eps=1e-2, sequences=1)
     cosine = torch.nn.functional.cosine_similarity(estimated, measured, dim=1)
     assert float(cosine.mean()) > 0.5
+
+
+# --- G6 Context ------------------------------------------------------------
+
+
+def test_g6_context_corpus_ranking_stable():
+    backend = _tiny_backend("gpt2")
+    corpus_a = " ".join("alpha beta gamma delta epsilon zeta eta theta" for _ in range(20))
+    corpus_b = " ".join("one two three four five six seven eight nine ten" for _ in range(20))
+    exp_a = ConfidenceRegulationExperiment(
+        layer=0,
+        top_n=6,
+        propagation_ridge=1e-6,
+        mediate_sequences=4,
+        seq_len=64,
+        corpus_text=corpus_a,
+        seed=0,
+    )
+    exp_b = ConfidenceRegulationExperiment(
+        layer=0,
+        top_n=6,
+        propagation_ridge=1e-6,
+        mediate_sequences=4,
+        seq_len=64,
+        corpus_text=corpus_b,
+        seed=0,
+    )
+    ident = exp_a._identify_arrays(backend)
+    rho_a, _ = exp_a._propagated_rho(ident, backend)
+    rho_b, _ = exp_b._propagated_rho(ident, backend)
+    assert exp_a._pearson(rho_a, rho_b) > 0.9
