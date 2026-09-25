@@ -591,19 +591,23 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         The estimate is a *data-averaged linear* map: it captures downstream
         attention and nonlinearity on average rather than a single Jacobian at
         one point. Ridge stabilises the normal equations when the corpus has
-        fewer positions than ``d_model``.
+        fewer positions than ``d_model``; the solve is QR-based (row-augmented
+        least squares) so the condition number is not squared the way it is in
+        the normal equations.
         """
         post_c = post - post.mean(dim=0, keepdim=True)
         final_c = final - final.mean(dim=0, keepdim=True)
         n, d = post_c.shape
-        denom = max(n - 1, 1)
-        c_pp = (post_c.T @ post_c) / denom
-        c_fp = (final_c.T @ post_c) / denom
-        lam = ridge * float(torch.diagonal(c_pp).mean().clamp_min(1e-12))
-        reg = c_pp + lam * torch.eye(d, dtype=c_pp.dtype)
-        # normal equations: J = c_fp @ c_pp^-1  <=>  J^T = reg^-1 c_fp^T
-        j_t = torch.linalg.solve(reg, c_fp.T)
-        return j_t.T
+        scale = float((post_c.pow(2).sum(dim=0) / max(n - 1, 1)).mean().clamp_min(1e-12))
+        lam = (ridge * scale) ** 0.5
+        if lam > 0:
+            eye = torch.eye(d, dtype=post_c.dtype)
+            a = torch.cat([post_c, lam * eye], dim=0)
+            b = torch.cat([final_c, torch.zeros(d, d, dtype=final_c.dtype)], dim=0)
+        else:
+            a, b = post_c, final_c
+        # least squares for X (d, d) with final_c ~ post_c @ X, so J = X^T
+        return torch.linalg.lstsq(a, b).solution.T
 
     @staticmethod
     def _null_fraction(v_bottom: torch.Tensor, writes: torch.Tensor) -> torch.Tensor:
