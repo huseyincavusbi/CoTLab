@@ -28,6 +28,13 @@ identify:
     it entered their named set through earlier manual analysis
     (Gurnee et al., arXiv:2401.12181).
 
+    The ``descriptor`` config selects how alignment is measured. ``static``
+    (default) uses the raw ``w_out`` -- final-layer semantics. ``propagated``
+    carries the write to the final residual with a data-estimated linear
+    operator and scores its effective null-space fraction, so mid-layer
+    neurons are judged by where the write lands; it reduces to ``static`` at
+    the final layer.
+
 mediate:
     Causal mediation via analytic mean-ablation on the cached final residual
     stream (paper Eqs. 4-6). Each candidate neuron's activation is set to its
