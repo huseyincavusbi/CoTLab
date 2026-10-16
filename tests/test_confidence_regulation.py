@@ -1158,3 +1158,179 @@ def test_hypergeom_conv_sf_pools_independent_layers():
     ]
     assert _hypergeom_conv_sf(layers, 0) == pytest.approx(1.0, abs=1e-9)
     assert 0.0 <= _hypergeom_conv_sf(layers, 10) <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# twin interchangeability (#91): correlation ranking
+# ---------------------------------------------------------------------------
+
+
+def _toy_acts():
+    torch.manual_seed(0)
+    acts = torch.randn(200, 12)
+    acts[:, 5] = acts[:, 2] * 2.0 + 0.01 * torch.randn(200)
+    acts[:, 9] = -acts[:, 2] + 0.01 * torch.randn(200)
+    return acts
+
+
+def test_twin_ranking_recovers_planted_twins_in_order():
+    twins = ConfidenceRegulationExperiment._twin_indices(_toy_acts(), [2], top_k=2)
+    assert twins[2][0] == 5
+    assert twins[2][1] == 9
+
+
+def test_twin_ranking_never_returns_self_or_excluded():
+    twins = ConfidenceRegulationExperiment._twin_indices(_toy_acts(), [2], top_k=5, exclude={2, 5})
+    assert 2 not in twins[2]
+    assert 5 not in twins[2]
+    assert len(twins[2]) == 5
+
+
+def test_twin_ranking_zero_k_or_no_targets_is_empty():
+    acts = _toy_acts()
+    assert ConfidenceRegulationExperiment._twin_indices(acts, [2], top_k=0) == {2: []}
+    assert ConfidenceRegulationExperiment._twin_indices(acts, [], top_k=3) == {}
+
+
+def test_twin_ranking_zero_variance_target_is_empty():
+    acts = _toy_acts()
+    acts[:, 3] = 1.0
+    assert ConfidenceRegulationExperiment._twin_indices(acts, [3], top_k=2) == {3: []}
+
+
+def test_twin_ranking_is_deterministic():
+    acts = _toy_acts()
+    first = ConfidenceRegulationExperiment._twin_indices(acts, [2, 7], top_k=3)
+    second = ConfidenceRegulationExperiment._twin_indices(acts, [2, 7], top_k=3)
+    assert first == second
+
+
+def test_twin_top_k_defaults_off_and_rejects_negative():
+    assert ConfidenceRegulationExperiment(mode="intervene").twin_top_k == 0
+    assert ConfidenceRegulationExperiment(mode="intervene", twin_top_k=2).twin_top_k == 2
+    with pytest.raises(ValueError, match="twin_top_k"):
+        ConfidenceRegulationExperiment(mode="intervene", twin_top_k=-1)
+
+
+# ---------------------------------------------------------------------------
+# twin interchangeability (#91): intervene wiring + equivalence gates
+# ---------------------------------------------------------------------------
+
+
+def _fake_forward_stats(m):
+    return {
+        "te": torch.full((m,), 0.1),
+        "d_entropy": torch.arange(m).float() * 0.01,
+        "abs_d_entropy": torch.arange(m).float() * 0.01,
+        "flip_rate": torch.full((m,), 0.02),
+        "d_max_prob": torch.zeros(m),
+        "entropy_up_frac": torch.full((m,), 0.5),
+        "d_entropy_rel": torch.zeros(m),
+        "d_max_prob_rel": torch.zeros(m),
+        "d_entropy_pos": torch.zeros(m, 4),
+        "baseline_entropy": 1.0,
+        "baseline_max_prob": 0.5,
+        "baseline_margin": 0.2,
+        "baseline_accuracy": 0.3,
+        "positions": 4,
+        "de": torch.zeros(m),
+        "mediated": None,
+    }
+
+
+def test_apply_intervention_matches_scalar_indexing_semantics():
+    torch.manual_seed(0)
+    new = torch.randn(2, 5, 4)
+    mean = torch.randn(4)
+    ref = new.clone()
+    ConfidenceRegulationExperiment._apply_intervention(new, 0, [1, 3], 0.0, mean)
+    assert torch.equal(new[0, :, 1], mean[1].expand(5))
+    assert torch.equal(new[0, :, 3], mean[3].expand(5))
+    assert torch.equal(new[1], ref[1])  # untouched row
+    ConfidenceRegulationExperiment._apply_intervention(new, 1, [2], 2.0, mean)
+    assert torch.allclose(new[1, :, 2], ref[1, :, 2] * 2.0)
+
+
+def test_ablate_neurons_forward_delegates_singleton_groups(monkeypatch):
+    exp = ConfidenceRegulationExperiment(mode="intervene")
+    seen = {}
+
+    def fake_rows(backend, seqs, act_mean, row_groups, alpha=0.0):
+        seen["groups"] = row_groups
+        seen["alpha"] = alpha
+        return {"ok": True}
+
+    monkeypatch.setattr(exp, "_ablate_rows_forward", fake_rows)
+    assert exp._ablate_neurons_forward(None, [], torch.zeros(3), [2, 0], alpha=2.0) == {"ok": True}
+    assert seen["groups"] == [[2], [0]]
+    assert seen["alpha"] == 2.0
+
+
+def _twins_run(monkeypatch, twin_top_k):
+    n = 6
+    torch.manual_seed(0)
+    acts = torch.randn(10, n)
+    acts[:, 4] = acts[:, 1] * 2.0 + 0.01 * torch.randn(10)
+    exp = ConfidenceRegulationExperiment(
+        mode="intervene",
+        layer=0,
+        top_n=1,
+        random_baseline_count=2,
+        intervene_alphas=[0.0],
+        probe_path="fake.json",
+        twin_top_k=twin_top_k,
+        seed=0,
+    )
+    backend = _fake_backend(_FakeHookManager(4))
+    ident = {
+        "score": torch.zeros(n),
+        "selected": [0],
+        "norms": torch.arange(n).float(),
+        "layer": 0,
+        "summary": {"d_mlp": n},
+    }
+    seqs = [{"acts": acts}]
+    monkeypatch.setattr(exp, "_capture_sequences", lambda b: (ident, seqs, acts.mean(0), None))
+    monkeypatch.setattr(exp, "_load_probe_neurons", lambda: [(0, 1)])
+    monkeypatch.setattr(
+        exp,
+        "_ablate_neurons_forward",
+        lambda b, s, m, idx, alpha=0.0: _fake_forward_stats(len(idx)),
+    )
+    seen = {}
+
+    def fake_groups(b, s, m, groups, alpha=0.0):
+        seen["groups"] = groups
+        return _fake_forward_stats(len(groups))
+
+    monkeypatch.setattr(exp, "_ablate_groups_forward", fake_groups)
+    return exp._run_intervene(backend).metrics, seen
+
+
+def test_twins_arm_reports_solo_vs_joint_and_excludes_twins(monkeypatch):
+    m, seen = _twins_run(monkeypatch, twin_top_k=2)
+    assert m["twin_top_k"] == 2
+    assert m["twins"]["1"][0] == 4  # planted twin ranks first
+    assert len(m["twins"]["1"]) == 2
+    treated = {1} | set(m["twins"]["1"]) | {0}
+    assert not (set(m["group_indices"]["random_baseline"]) & treated)
+    assert seen["groups"] == [[1] + m["twins"]["1"]]
+    row = m["per_alpha"][0]
+    assert "1" in row["twins_solo_vs_joint"]
+    cell = row["twins_solo_vs_joint"]["1"]
+    assert cell["twins"] == m["twins"]["1"]
+    assert set(cell) == {
+        "twins",
+        "solo_d_entropy",
+        "joint_d_entropy",
+        "solo_flip_rate",
+        "joint_flip_rate",
+    }
+
+
+def test_twins_arm_off_is_silent(monkeypatch):
+    m, seen = _twins_run(monkeypatch, twin_top_k=0)
+    assert m["twins"] == {}
+    assert seen == {}
+    for row in m["per_alpha"]:
+        assert "twins_solo_vs_joint" not in row

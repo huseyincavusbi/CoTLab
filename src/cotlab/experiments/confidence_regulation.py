@@ -255,6 +255,11 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         mediate_scope: str = "candidates",
         mediate_neuron_chunk: int = 16,
         random_baseline_count: int = 20,
+        # Twin interchangeability (#91): per target neuron, jointly ablate it
+        # with its ``twin_top_k`` most correlated neurons (activation Pearson
+        # |r| over the forward corpus) and compare solo vs joint effects.
+        # 0 (default) disables the twins arm: intervene runs exactly as before.
+        twin_top_k: int = 0,
         # Forward-engine intervention scale on target activations: 0.0 is the
         # paper's mean-ablation, 1.0 is a no-op, >1 amplifies.
         mediate_alpha: float = 0.0,
@@ -294,6 +299,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             raise ValueError(f"mediate_alpha must be >= 0, got {mediate_alpha}")
         if intervene_alphas is not None and any(a < 0 for a in intervene_alphas):
             raise ValueError(f"intervene_alphas must be >= 0, got {intervene_alphas}")
+        if twin_top_k < 0:
+            raise ValueError(f"twin_top_k must be >= 0, got {twin_top_k}")
         if corpus_max_rows is not None and corpus_max_rows <= 0:
             raise ValueError(f"corpus_max_rows must be a positive int, got {corpus_max_rows}")
         if eval_positions is not None:
@@ -343,6 +350,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.mediate_scope = mediate_scope
         self.mediate_neuron_chunk = mediate_neuron_chunk
         self.random_baseline_count = random_baseline_count
+        self.twin_top_k = twin_top_k
         self.mediate_alpha = mediate_alpha
         self.intervene_alphas = list(intervene_alphas) if intervene_alphas else [0.0, 2.0]
         self.probe_path = probe_path
@@ -563,6 +571,45 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         rng = torch.Generator().manual_seed(seed)
         draw = torch.randperm(len(pool), generator=rng)[: min(count, len(pool))].tolist()
         return sorted(pool[j] for j in draw)
+
+    @staticmethod
+    def _twin_indices(
+        acts: torch.Tensor,
+        targets: List[int],
+        top_k: int,
+        exclude: set = frozenset(),
+    ) -> Dict[int, List[int]]:
+        """Top-``top_k`` correlated twins per target neuron (#91).
+
+        Ranks every other neuron by Pearson |r| of its activation column
+        against the target's column over the forward corpus (``acts`` is
+        ``(positions, d_mlp)``). Zero-variance columns score 0. Ties break
+        by lower index, so the ranking is deterministic. Neurons in
+        ``exclude`` (the target set itself plus all other treated groups)
+        are never returned as twins.
+        """
+        if top_k <= 0 or not targets:
+            return {j: [] for j in targets}
+        x = acts.float()
+        xc = x - x.mean(dim=0, keepdim=True)
+        var = (xc * xc).sum(dim=0)
+        denom = torch.sqrt(var)
+        twins: Dict[int, List[int]] = {}
+        for j in targets:
+            if denom[j] == 0:
+                twins[j] = []
+                continue
+            cov = xc.T @ xc[:, j]
+            with torch.no_grad():
+                r = cov / (denom * denom[j]).clamp_min(1e-12)
+            score = r.abs()
+            score[j] = -1.0
+            for e in exclude:
+                if 0 <= e < score.numel():
+                    score[e] = -1.0
+            order = sorted(range(score.numel()), key=lambda i: (-float(score[i]), i))
+            twins[j] = [i for i in order[:top_k] if float(score[i]) >= 0.0]
+        return twins
 
     def _identify_arrays(self, backend: InferenceBackend) -> Dict[str, Any]:
         """Compute all identify-mode quantities once; shared by all modes."""
@@ -1581,10 +1628,25 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             norm_matched = self._norm_matched_indices(
                 norms, h_layer, exclude=tuple(selected), seed=self.seed
             )
+        # Twins arm (#91): top-k correlated partners per H-Neuron, ranked on
+        # the forward corpus. Inactive (empty) unless twin_top_k > 0.
+        twins: Dict[int, List[int]] = {}
+        if self.twin_top_k > 0 and h_layer and sequences:
+            acts_flat = torch.cat(
+                [s["acts"].reshape(-1, s["acts"].shape[-1]) for s in sequences],
+                dim=0,
+            )
+            twins = self._twin_indices(
+                acts_flat,
+                h_layer,
+                self.twin_top_k,
+                exclude=set(selected) | set(h_layer) | set(norm_matched),
+            )
+        twin_ids = {t for group in twins.values() for t in group}
         # Random control drawn from the complement of every treated group.
         rand_idx = self._random_control_indices(
             score.numel(),
-            exclude=set(selected) | set(h_layer) | set(norm_matched),
+            exclude=set(selected) | set(h_layer) | set(norm_matched) | twin_ids,
             count=self.random_baseline_count,
             seed=self.seed,
         )
@@ -1597,9 +1659,24 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         }
 
         per_alpha = []
+        joint_groups = [[h] + twins.get(h, []) for h in h_layer] if twins else []
         for alpha in self.intervene_alphas:
             stats = self._ablate_neurons_forward(backend, sequences, act_mean, indices, alpha=alpha)
             row = {"alpha": alpha, **self._group_stats(stats, indices, groups, self.seed)}
+            if joint_groups:
+                jstats = self._ablate_groups_forward(
+                    backend, sequences, act_mean, joint_groups, alpha=alpha
+                )
+                row["twins_solo_vs_joint"] = {
+                    str(h): {
+                        "twins": list(twins[h]),
+                        "solo_d_entropy": float(stats["d_entropy"][indices.index(h)]),
+                        "joint_d_entropy": float(jstats["d_entropy"][g]),
+                        "solo_flip_rate": float(stats["flip_rate"][indices.index(h)]),
+                        "joint_flip_rate": float(jstats["flip_rate"][g]),
+                    }
+                    for g, h in enumerate(h_layer)
+                }
             # Per-neuron values so a downstream two-sided null can be built (the
             # group means alone only support a one-sided upper test).
             row["d_entropy_by_index"] = {
@@ -1651,6 +1728,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "eval_positions": self.eval_positions,
             "ablated_indices": list(indices),
             "group_indices": {tag: [indices[r] for r in rows] for tag, rows in groups.items()},
+            "twin_top_k": self.twin_top_k,
+            "twins": {str(h): list(t) for h, t in twins.items()},
             "per_alpha": per_alpha,
             **{f"identify_{k}": v for k, v in ident["summary"].items()},
         }
@@ -1760,9 +1839,57 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         and change in max probability. The LN-mediated fraction is not defined
         on these architectures.
         """
+        return self._ablate_rows_forward(
+            backend, sequences, act_mean, [[i] for i in indices], alpha=alpha
+        )
+
+    def _ablate_groups_forward(
+        self,
+        backend: InferenceBackend,
+        sequences: List[Dict[str, torch.Tensor]],
+        act_mean: torch.Tensor,
+        row_groups: List[List[int]],
+        alpha: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Joint-group forward ablation: one batch row per neuron *set* (#91).
+
+        Same numerics and reporting as :meth:`_ablate_neurons_forward`, but
+        row ``j`` intervenes on every column of ``row_groups[j]`` at once, so
+        a target neuron can be ablated jointly with its correlated twins and
+        compared against its solo (singleton-group) effect.
+        """
+        return self._ablate_rows_forward(backend, sequences, act_mean, row_groups, alpha=alpha)
+
+    @staticmethod
+    def _apply_intervention(
+        new: torch.Tensor,
+        row: int,
+        cols: List[int],
+        alpha: float,
+        act_mean: torch.Tensor,
+    ) -> None:
+        """Mean-ablate (``alpha == 0``) or amplify the row's columns in place."""
+        if alpha == 0.0:
+            new[row, :, cols] = act_mean[cols].to(new.device)
+        else:
+            new[row, :, cols] = new[row, :, cols] * alpha
+
+    def _ablate_rows_forward(
+        self,
+        backend: InferenceBackend,
+        sequences: List[Dict[str, torch.Tensor]],
+        act_mean: torch.Tensor,
+        row_groups: List[List[int]],
+        alpha: float = 0.0,
+    ) -> Dict[str, Any]:
+        """Shared forward-ablation core: one batch row per column group.
+
+        A singleton group per neuron reproduces :meth:`_ablate_neurons_forward`
+        exactly (same indexing values, same accumulation order).
+        """
         device = backend.device
         mod = backend.hook_manager.get_mlp_down_proj_module(self._resolve_layer(backend))
-        n = len(indices)
+        n = len(row_groups)
         acc = {
             k: torch.zeros(n)
             for k in (
@@ -1777,13 +1904,10 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         counter = {"positions": 0}
         chunk = max(1, self.mediate_neuron_chunk)
 
-        def intervene(m, inp, neuron_cols):
+        def intervene(m, inp, row_groups):
             new = inp[0].clone()
-            for j, col in enumerate(neuron_cols):
-                if alpha == 0.0:
-                    new[j, :, col] = act_mean[col].to(inp[0].device)
-                else:
-                    new[j, :, col] = new[j, :, col] * alpha
+            for j, cols in enumerate(row_groups):
+                self._apply_intervention(new, j, cols, alpha, act_mean)
             return (new,) + tuple(inp[1:])
 
         with torch.no_grad():
@@ -1819,11 +1943,11 @@ class ConfidenceRegulationExperiment(BaseExperiment):
 
             for start in range(0, n, chunk):
                 rows = list(range(start, min(start + chunk, n)))
-                neuron_cols = [indices[r] for r in rows]
+                groups = [row_groups[r] for r in rows]
                 c = len(rows)
 
-                def hook(m, inp, _cols=neuron_cols):
-                    return intervene(m, inp, _cols)
+                def hook(m, inp, _groups=groups):
+                    return intervene(m, inp, _groups)
 
                 h = mod.register_forward_pre_hook(hook)
                 try:
