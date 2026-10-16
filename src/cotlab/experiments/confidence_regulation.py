@@ -255,6 +255,11 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         mediate_scope: str = "candidates",
         mediate_neuron_chunk: int = 16,
         random_baseline_count: int = 20,
+        # Twin interchangeability (#91): per target neuron, jointly ablate it
+        # with its ``twin_top_k`` most correlated neurons (activation Pearson
+        # |r| over the forward corpus) and compare solo vs joint effects.
+        # 0 (default) disables the twins arm: intervene runs exactly as before.
+        twin_top_k: int = 0,
         # Forward-engine intervention scale on target activations: 0.0 is the
         # paper's mean-ablation, 1.0 is a no-op, >1 amplifies.
         mediate_alpha: float = 0.0,
@@ -294,6 +299,8 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             raise ValueError(f"mediate_alpha must be >= 0, got {mediate_alpha}")
         if intervene_alphas is not None and any(a < 0 for a in intervene_alphas):
             raise ValueError(f"intervene_alphas must be >= 0, got {intervene_alphas}")
+        if twin_top_k < 0:
+            raise ValueError(f"twin_top_k must be >= 0, got {twin_top_k}")
         if corpus_max_rows is not None and corpus_max_rows <= 0:
             raise ValueError(f"corpus_max_rows must be a positive int, got {corpus_max_rows}")
         if eval_positions is not None:
@@ -343,6 +350,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         self.mediate_scope = mediate_scope
         self.mediate_neuron_chunk = mediate_neuron_chunk
         self.random_baseline_count = random_baseline_count
+        self.twin_top_k = twin_top_k
         self.mediate_alpha = mediate_alpha
         self.intervene_alphas = list(intervene_alphas) if intervene_alphas else [0.0, 2.0]
         self.probe_path = probe_path
@@ -563,6 +571,45 @@ class ConfidenceRegulationExperiment(BaseExperiment):
         rng = torch.Generator().manual_seed(seed)
         draw = torch.randperm(len(pool), generator=rng)[: min(count, len(pool))].tolist()
         return sorted(pool[j] for j in draw)
+
+    @staticmethod
+    def _twin_indices(
+        acts: torch.Tensor,
+        targets: List[int],
+        top_k: int,
+        exclude: set = frozenset(),
+    ) -> Dict[int, List[int]]:
+        """Top-``top_k`` correlated twins per target neuron (#91).
+
+        Ranks every other neuron by Pearson |r| of its activation column
+        against the target's column over the forward corpus (``acts`` is
+        ``(positions, d_mlp)``). Zero-variance columns score 0. Ties break
+        by lower index, so the ranking is deterministic. Neurons in
+        ``exclude`` (the target set itself plus all other treated groups)
+        are never returned as twins.
+        """
+        if top_k <= 0 or not targets:
+            return {j: [] for j in targets}
+        x = acts.float()
+        xc = x - x.mean(dim=0, keepdim=True)
+        var = (xc * xc).sum(dim=0)
+        denom = torch.sqrt(var)
+        twins: Dict[int, List[int]] = {}
+        for j in targets:
+            if denom[j] == 0:
+                twins[j] = []
+                continue
+            cov = xc.T @ xc[:, j]
+            with torch.no_grad():
+                r = cov / (denom * denom[j]).clamp_min(1e-12)
+            score = r.abs()
+            score[j] = -1.0
+            for e in exclude:
+                if 0 <= e < score.numel():
+                    score[e] = -1.0
+            order = sorted(range(score.numel()), key=lambda i: (-float(score[i]), i))
+            twins[j] = [i for i in order[:top_k] if float(score[i]) >= 0.0]
+        return twins
 
     def _identify_arrays(self, backend: InferenceBackend) -> Dict[str, Any]:
         """Compute all identify-mode quantities once; shared by all modes."""
