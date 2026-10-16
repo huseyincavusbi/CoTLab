@@ -1729,7 +1729,7 @@ class ConfidenceRegulationExperiment(BaseExperiment):
             "ablated_indices": list(indices),
             "group_indices": {tag: [indices[r] for r in rows] for tag, rows in groups.items()},
             "twin_top_k": self.twin_top_k,
-            "twins": {str(h): list(twins.get(h, [])) for h in h_layer},
+            "twins": {str(h): list(t) for h, t in twins.items()},
             "per_alpha": per_alpha,
             **{f"identify_{k}": v for k, v in ident["summary"].items()},
         }
