@@ -1158,3 +1158,55 @@ def test_hypergeom_conv_sf_pools_independent_layers():
     ]
     assert _hypergeom_conv_sf(layers, 0) == pytest.approx(1.0, abs=1e-9)
     assert 0.0 <= _hypergeom_conv_sf(layers, 10) <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# twin interchangeability (#91): correlation ranking
+# ---------------------------------------------------------------------------
+
+
+def _toy_acts():
+    torch.manual_seed(0)
+    acts = torch.randn(200, 12)
+    acts[:, 5] = acts[:, 2] * 2.0 + 0.01 * torch.randn(200)
+    acts[:, 9] = -acts[:, 2] + 0.01 * torch.randn(200)
+    return acts
+
+
+def test_twin_ranking_recovers_planted_twins_in_order():
+    twins = ConfidenceRegulationExperiment._twin_indices(_toy_acts(), [2], top_k=2)
+    assert twins[2][0] == 5
+    assert twins[2][1] == 9
+
+
+def test_twin_ranking_never_returns_self_or_excluded():
+    twins = ConfidenceRegulationExperiment._twin_indices(_toy_acts(), [2], top_k=5, exclude={2, 5})
+    assert 2 not in twins[2]
+    assert 5 not in twins[2]
+    assert len(twins[2]) == 5
+
+
+def test_twin_ranking_zero_k_or_no_targets_is_empty():
+    acts = _toy_acts()
+    assert ConfidenceRegulationExperiment._twin_indices(acts, [2], top_k=0) == {2: []}
+    assert ConfidenceRegulationExperiment._twin_indices(acts, [], top_k=3) == {}
+
+
+def test_twin_ranking_zero_variance_target_is_empty():
+    acts = _toy_acts()
+    acts[:, 3] = 1.0
+    assert ConfidenceRegulationExperiment._twin_indices(acts, [3], top_k=2) == {3: []}
+
+
+def test_twin_ranking_is_deterministic():
+    acts = _toy_acts()
+    first = ConfidenceRegulationExperiment._twin_indices(acts, [2, 7], top_k=3)
+    second = ConfidenceRegulationExperiment._twin_indices(acts, [2, 7], top_k=3)
+    assert first == second
+
+
+def test_twin_top_k_defaults_off_and_rejects_negative():
+    assert ConfidenceRegulationExperiment(mode="intervene").twin_top_k == 0
+    assert ConfidenceRegulationExperiment(mode="intervene", twin_top_k=2).twin_top_k == 2
+    with pytest.raises(ValueError, match="twin_top_k"):
+        ConfidenceRegulationExperiment(mode="intervene", twin_top_k=-1)
